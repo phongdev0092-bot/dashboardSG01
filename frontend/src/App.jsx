@@ -1359,35 +1359,25 @@ export default function App() {
 
                               {/* Progress RT Columns */}
                               <TableCell align="center">
-                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.3 }}>
-                                  <Typography variant="body2" sx={{ fontWeight: 700, color: emp.rt_tk_status === 'PASS' ? '#2e7d32' : (emp.rt_tk_status === 'FAIL' ? '#d32f2f' : '#5f6368') }}>
-                                    {emp.rt_tk_fmt || '-'}
-                                  </Typography>
-                                  {emp.rt_tk_status && emp.rt_tk_status !== 'NONE' && (
-                                    <Chip
-                                      label={emp.rt_tk_status === 'PASS' ? 'Đạt' : 'Không đạt'}
-                                      size="small"
-                                      color={emp.rt_tk_status === 'PASS' ? 'success' : 'error'}
-                                      sx={{ height: 18, fontSize: '10px', fontWeight: 800 }}
-                                    />
-                                  )}
-                                </Box>
+                                <Typography variant="body2" sx={{
+                                  fontWeight: 800,
+                                  color: (emp.rt_tk_hours !== null && emp.rt_tk_hours !== undefined && !isNaN(emp.rt_tk_hours))
+                                    ? (emp.rt_tk_hours <= 18.0 ? '#2e7d32' : '#d32f2f')
+                                    : '#5f6368'
+                                }}>
+                                  {emp.rt_tk_fmt || '-'}
+                                </Typography>
                               </TableCell>
 
                               <TableCell align="center" sx={{ borderRight: '1px solid #ffe0b2' }}>
-                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.3 }}>
-                                  <Typography variant="body2" sx={{ fontWeight: 700, color: emp.rt_bt_status === 'PASS' ? '#2e7d32' : (emp.rt_bt_status === 'FAIL' ? '#d32f2f' : '#5f6368') }}>
-                                    {emp.rt_bt_fmt || '-'}
-                                  </Typography>
-                                  {emp.rt_bt_status && emp.rt_bt_status !== 'NONE' && (
-                                    <Chip
-                                      label={emp.rt_bt_status === 'PASS' ? 'Đạt' : 'Không đạt'}
-                                      size="small"
-                                      color={emp.rt_bt_status === 'PASS' ? 'success' : 'error'}
-                                      sx={{ height: 18, fontSize: '10px', fontWeight: 800 }}
-                                    />
-                                  )}
-                                </Box>
+                                <Typography variant="body2" sx={{
+                                  fontWeight: 800,
+                                  color: (emp.rt_bt_hours !== null && emp.rt_bt_hours !== undefined && !isNaN(emp.rt_bt_hours))
+                                    ? (emp.rt_bt_hours <= 8.0 ? '#2e7d32' : '#d32f2f')
+                                    : '#5f6368'
+                                }}>
+                                  {emp.rt_bt_fmt || '-'}
+                                </Typography>
                               </TableCell>
 
                               {/* CLL30N Column */}
