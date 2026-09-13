@@ -2279,7 +2279,7 @@ export default function App() {
           anchor="right"
           open={drawerOpen}
           onClose={() => setDrawerOpen(false)}
-          PaperProps={{ sx: { width: { xs: '100%', md: 800 }, p: 3 } }}
+          PaperProps={{ sx: { width: { xs: '100%', md: 950 }, p: 3 } }}
         >
           {selectedEmployee && (
             <Box>
@@ -2303,6 +2303,7 @@ export default function App() {
               <Tabs value={activeTab} onChange={(e, v) => setActiveTab(v)} sx={{ mb: 2 }}>
                 <Tab label={`Triển Khai (TK) (${empDetails?.tk_tickets?.length || 0})`} />
                 <Tab label={`Bảo Trì (BT) (${empDetails?.bt_tickets?.length || 0})`} />
+                <Tab label={`CLL30N (Ca Lặp) (${empDetails?.cll_tickets?.length || 0})`} />
               </Tabs>
 
               {loadingDetails ? (
@@ -2352,7 +2353,7 @@ export default function App() {
                     </TableBody>
                   </Table>
                 </TableContainer>
-              ) : (
+              ) : activeTab === 1 ? (
                 <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e0e0e0', borderRadius: 2 }}>
                   <Table size="small">
                     <TableHead sx={{ backgroundColor: '#f8f9fa' }}>
@@ -2385,6 +2386,44 @@ export default function App() {
                           </TableCell>
                         </TableRow>
                       ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              ) : (
+                <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e0e0e0', borderRadius: 2 }}>
+                  <Table size="small">
+                    <TableHead sx={{ backgroundColor: '#f8f9fa' }}>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 700, width: 40 }}>STT</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Số HĐ</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Khách Hàng</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>TG Hoàn Tất</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Tình Trạng Đầu Vào (Col AF)</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Hướng Xử Lý (Col AI)</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {empDetails?.cll_tickets?.map((t, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell sx={{ color: '#5f6368' }}>{idx + 1}</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }}>{t.contract_no}</TableCell>
+                          <TableCell>{t.customer_name || '-'}</TableCell>
+                          <TableCell sx={{ whiteSpace: 'nowrap' }}>{t.dt_complete || '-'}</TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>{t.tinh_trang_dau_vao || '-'}</Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.8125rem', color: '#1a73e8', fontWeight: 500 }}>{t.huong_xu_ly || '-'}</Typography>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {(!empDetails?.cll_tickets || empDetails.cll_tickets.length === 0) && (
+                        <TableRow>
+                          <TableCell colSpan={6} align="center" sx={{ py: 3, color: '#5f6368' }}>
+                            Không có ca lặp CLL30N trong khoảng thời gian này
+                          </TableCell>
+                        </TableRow>
+                      )}
                     </TableBody>
                   </Table>
                 </TableContainer>

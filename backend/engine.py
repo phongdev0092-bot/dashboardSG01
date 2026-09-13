@@ -82,18 +82,25 @@ class KPIEngine:
                 else:
                     try:
                         print("Fetching live CLL30N data for cache...", flush=True)
-                        url_cll = f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=168764867'
+                        url_cll = 'https://docs.google.com/spreadsheets/d/1JtMBIXmgQ37ne9a_QYb6ZuN6mWwgJHIC-kSjKEb-56w/export?format=csv&gid=1484730732'
                         res_cll = requests.get(url_cll, timeout=60)
                         if res_cll.status_code == 200:
-                            df_cll = pd.read_csv(io.BytesIO(res_cll.content), encoding='utf-8', low_memory=False, dtype=str)
+                            df_cll = pd.read_csv(io.BytesIO(res_cll.content), encoding='utf-8', low_memory=False, dtype=str, on_bad_lines='skip')
                             col_hd = df_cll.columns[0] if len(df_cll.columns) > 0 else 'Số HĐ'
+                            col_kh = df_cll.columns[1] if len(df_cll.columns) > 1 else 'Khách Hàng'
                             col_nv = df_cll.columns[3] if len(df_cll.columns) > 3 else 'Nhân viên'
                             col_tg = df_cll.columns[6] if len(df_cll.columns) > 6 else 'Tg hoàn tất'
+                            col_af = df_cll.columns[31] if len(df_cll.columns) > 31 else '(Cấp 1)Tình trạng đầu vào'
+                            col_ai = df_cll.columns[34] if len(df_cll.columns) > 34 else '(Cấp 1)Hướng xử lý'
                             df_cll['Số HĐ'] = df_cll[col_hd].astype(str).str.strip().str.upper()
+                            df_cll['Khách Hàng'] = df_cll[col_kh].astype(str).str.strip()
                             df_cll['Nhân viên'] = df_cll[col_nv].astype(str).str.strip().str.upper()
+                            df_cll['Tg hoàn tất'] = df_cll[col_tg].astype(str).str.strip()
+                            df_cll['tinh_trang_dau_vao'] = df_cll[col_af].fillna('-').astype(str).str.strip()
+                            df_cll['huong_xu_ly'] = df_cll[col_ai].fillna('-').astype(str).str.strip()
                             df_cll['dt_complete'] = pd.to_datetime(df_cll[col_tg], dayfirst=True, errors='coerce')
                             df_cll['date_complete'] = df_cll['dt_complete'].dt.date
-                            df_cll = df_cll[['Số HĐ', 'Nhân viên', 'date_complete', 'dt_complete']]
+                            df_cll = df_cll[['Số HĐ', 'Khách Hàng', 'Nhân viên', 'Tg hoàn tất', 'tinh_trang_dau_vao', 'huong_xu_ly', 'date_complete', 'dt_complete']]
                             df_cll.to_pickle(CACHE_DIR / "cll30n.pkl.gz")
                             self.cll30n_df = df_cll
                             print(f"Fetched & cached CLL30N data! {len(df_cll)} rows", flush=True)
@@ -178,14 +185,14 @@ class KPIEngine:
             except Exception as e_lt:
                 print(f"Warning: Failed to download Lịch Trực CSV: {e_lt}", flush=True)
 
-            # Fetch CLL30N Sheet (GID: 168764867)
+            # Fetch CLL30N Sheet (GID: 1484730732)
             print("Fetching live CLL30N data...", flush=True)
             df_cll30n = pd.DataFrame()
             try:
-                url_cll = f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=168764867'
+                url_cll = 'https://docs.google.com/spreadsheets/d/1JtMBIXmgQ37ne9a_QYb6ZuN6mWwgJHIC-kSjKEb-56w/export?format=csv&gid=1484730732'
                 res_cll = requests.get(url_cll, timeout=40)
                 if res_cll.status_code == 200:
-                    df_cll30n = pd.read_csv(io.BytesIO(res_cll.content), encoding='utf-8', low_memory=False, dtype=str)
+                    df_cll30n = pd.read_csv(io.BytesIO(res_cll.content), encoding='utf-8', low_memory=False, dtype=str, on_bad_lines='skip')
                     print(f"Loaded live CLL30N CSV! {len(df_cll30n)} rows", flush=True)
             except Exception as e_cll:
                 print(f"Warning: Failed to fetch CLL30N CSV: {e_cll}", flush=True)
@@ -245,13 +252,20 @@ class KPIEngine:
             # Process CLL30N
             if not df_cll30n.empty:
                 col_hd = df_cll30n.columns[0] if len(df_cll30n.columns) > 0 else 'Số HĐ'
+                col_kh = df_cll30n.columns[1] if len(df_cll30n.columns) > 1 else 'Khách Hàng'
                 col_nv = df_cll30n.columns[3] if len(df_cll30n.columns) > 3 else 'Nhân viên'
                 col_tg = df_cll30n.columns[6] if len(df_cll30n.columns) > 6 else 'Tg hoàn tất'
+                col_af = df_cll30n.columns[31] if len(df_cll30n.columns) > 31 else '(Cấp 1)Tình trạng đầu vào'
+                col_ai = df_cll30n.columns[34] if len(df_cll30n.columns) > 34 else '(Cấp 1)Hướng xử lý'
                 df_cll30n['Số HĐ'] = df_cll30n[col_hd].astype(str).str.strip().str.upper()
+                df_cll30n['Khách Hàng'] = df_cll30n[col_kh].astype(str).str.strip()
                 df_cll30n['Nhân viên'] = df_cll30n[col_nv].astype(str).str.strip().str.upper()
+                df_cll30n['Tg hoàn tất'] = df_cll30n[col_tg].astype(str).str.strip()
+                df_cll30n['tinh_trang_dau_vao'] = df_cll30n[col_af].fillna('-').astype(str).str.strip()
+                df_cll30n['huong_xu_ly'] = df_cll30n[col_ai].fillna('-').astype(str).str.strip()
                 df_cll30n['dt_complete'] = pd.to_datetime(df_cll30n[col_tg], dayfirst=True, errors='coerce')
                 df_cll30n['date_complete'] = df_cll30n['dt_complete'].dt.date
-                df_cll30n = df_cll30n[['Số HĐ', 'Nhân viên', 'date_complete', 'dt_complete']]
+                df_cll30n = df_cll30n[['Số HĐ', 'Khách Hàng', 'Nhân viên', 'Tg hoàn tất', 'tinh_trang_dau_vao', 'huong_xu_ly', 'date_complete', 'dt_complete']]
                 df_cll30n.to_pickle(CACHE_DIR / "cll30n.pkl.gz")
 
             # Process KH Co Cls
@@ -653,24 +667,33 @@ class KPIEngine:
                 'is_swap': bool(row.get('is_swap', False))
             })
 
-        # BT tickets list
-        bt_list = []
-        for _, row in bt.iterrows():
-            bt_list.append({
-                'contract_no': str(row.get('Số HĐ', '')),
-                'customer_name': str(row.get('Tên Khách Hàng', '')),
-                'dt_created': str(row.get('TG Tạo', '')),
-                'dt_complete': str(row.get('TG Hoàn Tất', '')),
-                'dung_hen': int(row.get('dung_hen', 0)),
-                'rt_fmt': self.format_rt(row.get('rt_hours')),
-                'issue_location': str(row.get('Vị trí xảy ra sự cố', '')),
-                'reason': str(row.get('Lý do', ''))
-            })
+        # CLL tickets list
+        cll = self.cll30n_df[self.cll30n_df['Nhân viên'] == acc].copy() if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
+
+        if not cll.empty and 'date_complete' in cll.columns:
+            if start_date:
+                s_d = pd.to_datetime(start_date).date()
+                cll = cll[cll['date_complete'] >= s_d]
+            if end_date:
+                e_d = pd.to_datetime(end_date).date()
+                cll = cll[cll['date_complete'] <= e_d]
+
+        cll_list = []
+        if not cll.empty:
+            for _, row in cll.iterrows():
+                cll_list.append({
+                    'contract_no': str(row.get('Số HĐ', '')),
+                    'customer_name': str(row.get('Khách Hàng', '')),
+                    'dt_complete': str(row.get('Tg hoàn tất', '')),
+                    'tinh_trang_dau_vao': str(row.get('tinh_trang_dau_vao', '-')),
+                    'huong_xu_ly': str(row.get('huong_xu_ly', '-'))
+                })
 
         return {
             'employee_info': meta,
             'tk_tickets': tk_list,
-            'bt_tickets': bt_list
+            'bt_tickets': bt_list,
+            'cll_tickets': cll_list
         }
 
     # =========================================================================
