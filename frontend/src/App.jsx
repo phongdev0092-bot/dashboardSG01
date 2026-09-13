@@ -899,7 +899,7 @@ export default function App() {
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 
                 {/* OVERALL KPI METRIC CARDS ROW - FULL WIDTH GRID */}
-                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', lg: 'repeat(5, 1fr)' }, gap: 2, width: '100%' }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(6, 1fr)' }, gap: 2, width: '100%' }}>
                   
                   {/* Card 1: Triển khai */}
                   <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #d2e3fc', borderLeft: '6px solid #1a73e8', backgroundColor: '#ffffff', height: '100%' }}>
@@ -958,56 +958,96 @@ export default function App() {
                   </Card>
 
                   {/* Card 3: RT-TK */}
-                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #d2e3fc', borderLeft: '6px solid #4285f4', backgroundColor: '#ffffff', height: '100%' }}>
+                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #d2e3fc', borderLeft: `6px solid ${summary.rt_tk_status === 'PASS' ? '#2e7d32' : '#d32f2f'}`, backgroundColor: '#ffffff', height: '100%' }}>
                     <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                         <Typography variant="overline" sx={{ color: '#1967d2', fontWeight: 800 }}>
-                          TIẾN ĐỘ RT-TK
+                          {"RT-TK (<= 18H)"}
                         </Typography>
-                        <TimerIcon sx={{ color: '#4285f4', fontSize: 22 }} />
+                        <TimerIcon sx={{ color: summary.rt_tk_status === 'PASS' ? '#2e7d32' : '#d32f2f', fontSize: 22 }} />
                       </Box>
-                      <Typography variant="h4" sx={{ fontWeight: 800, color: '#1967d2', letterSpacing: '-1px' }}>
+                      <Typography variant="h4" sx={{ fontWeight: 800, color: summary.rt_tk_status === 'PASS' ? '#2e7d32' : '#d32f2f', letterSpacing: '-1px' }}>
                         {summary.rt_tk_fmt || '-'}
                       </Typography>
-                      <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.5 }}>
-                        TG xử lý TB Triển khai
-                      </Typography>
+                      <Box sx={{ mt: 1 }}>
+                        <Chip
+                          label={summary.rt_tk_status === 'PASS' ? "ĐẠT (<= 18H)" : "KHÔNG ĐẠT (> 18H)"}
+                          size="small"
+                          color={summary.rt_tk_status === 'PASS' ? 'success' : 'error'}
+                          sx={{ fontWeight: 800, fontSize: '11px', height: 22 }}
+                        />
+                      </Box>
                     </CardContent>
                   </Card>
 
                   {/* Card 4: RT-BT */}
-                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #ffe0b2', borderLeft: '6px solid #f57c00', backgroundColor: '#ffffff', height: '100%' }}>
+                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #ffe0b2', borderLeft: `6px solid ${summary.rt_bt_status === 'PASS' ? '#2e7d32' : '#d32f2f'}`, backgroundColor: '#ffffff', height: '100%' }}>
                     <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                         <Typography variant="overline" sx={{ color: '#e65100', fontWeight: 800 }}>
-                          TIẾN ĐỘ RT-BT
+                          {"RT-BT (<= 8H)"}
                         </Typography>
-                        <TimerIcon sx={{ color: '#f57c00', fontSize: 22 }} />
+                        <TimerIcon sx={{ color: summary.rt_bt_status === 'PASS' ? '#2e7d32' : '#d32f2f', fontSize: 22 }} />
                       </Box>
-                      <Typography variant="h4" sx={{ fontWeight: 800, color: '#e65100', letterSpacing: '-1px' }}>
+                      <Typography variant="h4" sx={{ fontWeight: 800, color: summary.rt_bt_status === 'PASS' ? '#2e7d32' : '#d32f2f', letterSpacing: '-1px' }}>
                         {summary.rt_bt_fmt || '-'}
                       </Typography>
-                      <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.5 }}>
-                        TG xử lý TB Bảo trì
-                      </Typography>
+                      <Box sx={{ mt: 1 }}>
+                        <Chip
+                          label={summary.rt_bt_status === 'PASS' ? "ĐẠT (<= 8H)" : "KHÔNG ĐẠT (> 8H)"}
+                          size="small"
+                          color={summary.rt_bt_status === 'PASS' ? 'success' : 'error'}
+                          sx={{ fontWeight: 800, fontSize: '11px', height: 22 }}
+                        />
+                      </Box>
                     </CardContent>
                   </Card>
 
-                  {/* Card 5: TỔNG ĐÚNG HẸN */}
-                  <Card elevation={0} sx={{ borderRadius: 3, background: 'linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%)', color: '#ffffff', boxShadow: '0 4px 12px rgba(26,115,232,0.25)', height: '100%' }}>
+                  {/* Card 5: CLL30N */}
+                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #e1bee7', borderLeft: `6px solid ${summary.cll30n_status === 'PASS' ? '#2e7d32' : '#d32f2f'}`, backgroundColor: '#ffffff', height: '100%' }}>
+                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                        <Typography variant="overline" sx={{ color: '#7b1fa2', fontWeight: 800 }}>
+                          {"CLL30N (<= 7%)"}
+                        </Typography>
+                        <TrendingUpIcon sx={{ color: summary.cll30n_status === 'PASS' ? '#2e7d32' : '#d32f2f', fontSize: 22 }} />
+                      </Box>
+                      <Typography variant="h4" sx={{ fontWeight: 800, color: summary.cll30n_status === 'PASS' ? '#2e7d32' : '#d32f2f', letterSpacing: '-1px' }}>
+                        {summary.cll30n_pct || 0}%
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.2 }}>
+                        HĐ: {summary.cll30n_count || 0} / {summary.kh_cls_count || 0}
+                      </Typography>
+                      <Box sx={{ mt: 0.8 }}>
+                        <Chip
+                          label={summary.cll30n_status === 'PASS' ? "ĐẠT (<= 7%)" : "KHÔNG ĐẠT (> 7%)"}
+                          size="small"
+                          color={summary.cll30n_status === 'PASS' ? 'success' : 'error'}
+                          sx={{ fontWeight: 800, fontSize: '11px', height: 22 }}
+                        />
+                      </Box>
+                    </CardContent>
+                  </Card>
+
+                  {/* Card 6: TỔNG ĐÚNG HẸN */}
+                  <Card elevation={0} sx={{ borderRadius: 3, background: summary.dung_hen_status === 'PASS' ? 'linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%)' : 'linear-gradient(135deg, #c62828 0%, #b71c1c 100%)', color: '#ffffff', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', height: '100%' }}>
                     <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                         <Typography variant="overline" sx={{ opacity: 0.9, fontWeight: 800 }}>
                           TỔNG ĐÚNG HẸN
                         </Typography>
-                        <TrendingUpIcon sx={{ color: '#ffffff', fontSize: 22 }} />
+                        <CheckCircleIcon sx={{ color: '#ffffff', fontSize: 22 }} />
                       </Box>
-                      <Typography variant="h3" sx={{ fontWeight: 800, letterSpacing: '-1px' }}>
+                      <Typography variant="h4" sx={{ fontWeight: 800, letterSpacing: '-1px' }}>
                         {summary.total_dung_hen_pct || 0}%
                       </Typography>
-                      <Typography variant="caption" sx={{ opacity: 0.9, fontWeight: 500, display: 'block', mt: 0.5 }}>
-                        Tổng Khối Lượng: {summary.total_work_volume || 0} Phiếu
-                      </Typography>
+                      <Box sx={{ mt: 1 }}>
+                        <Chip
+                          label={summary.dung_hen_status === 'PASS' ? "ĐẠT (>= 97.2%)" : "KHÔNG ĐẠT (< 97.2%)"}
+                          size="small"
+                          sx={{ fontWeight: 800, fontSize: '11px', height: 22, backgroundColor: 'rgba(255,255,255,0.25)', color: '#ffffff' }}
+                        />
+                      </Box>
                     </CardContent>
                   </Card>
 
@@ -1184,7 +1224,11 @@ export default function App() {
                             </TableCell>
 
                             <TableCell colSpan={2} align="center" sx={{ fontWeight: 800, backgroundColor: '#fff3e0', color: '#e65100', borderRight: '1px solid #ffe0b2', borderBottom: '1px solid #ffe0b2', fontSize: '13px', py: 1 }}>
-                              TIẾN ĐỘ
+                              TIẾN ĐỘ (RT)
+                            </TableCell>
+
+                            <TableCell colSpan={1} align="center" sx={{ fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7', borderBottom: '1px solid #e1bee7', fontSize: '13px', py: 1 }}>
+                              CHẤT LƯỢNG LẶP
                             </TableCell>
 
                             <TableCell colSpan={3} align="center" sx={{ fontWeight: 800, backgroundColor: '#e6f4ea', color: '#1e8e3e', borderRight: '1px solid #ceead6', borderBottom: '1px solid #ceead6', fontSize: '13px', py: 1 }}>
@@ -1233,7 +1277,7 @@ export default function App() {
                                 direction={orderBy === 'rt_tk_hours' ? order : 'asc'}
                                 onClick={() => handleRequestSort('rt_tk_hours')}
                               >
-                                RT-TK
+                                {"RT-TK (<=18H)"}
                               </TableSortLabel>
                             </TableCell>
 
@@ -1243,7 +1287,17 @@ export default function App() {
                                 direction={orderBy === 'rt_bt_hours' ? order : 'asc'}
                                 onClick={() => handleRequestSort('rt_bt_hours')}
                               >
-                                RT-BT
+                                {"RT-BT (<=8H)"}
+                              </TableSortLabel>
+                            </TableCell>
+
+                            <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7' }}>
+                              <TableSortLabel
+                                active={orderBy === 'cll30n_pct'}
+                                direction={orderBy === 'cll30n_pct' ? order : 'asc'}
+                                onClick={() => handleRequestSort('cll30n_pct')}
+                              >
+                                {"CLL30N (%) (<=7%)"}
                               </TableSortLabel>
                             </TableCell>
 
@@ -1253,7 +1307,7 @@ export default function App() {
                                 direction={orderBy === 'total_dung_hen_pct' ? order : 'asc'}
                                 onClick={() => handleRequestSort('total_dung_hen_pct')}
                               >
-                                TỔNG ĐÚNG HẸN (%)
+                                {"TỔNG ĐÚNG HẸN (>=97.2%)"}
                               </TableSortLabel>
                             </TableCell>
 
@@ -1300,15 +1354,59 @@ export default function App() {
                               <TableCell align="center" sx={{ fontWeight: 600, color: '#5f6368', borderRight: '1px solid #d2e3fc' }}>{emp.tk_swap_volume || 0}</TableCell>
 
                               {/* Progress RT Columns */}
-                              <TableCell align="center" sx={{ color: '#b06000', fontWeight: 600 }}>{emp.rt_tk_fmt || '-'}</TableCell>
-                              <TableCell align="center" sx={{ color: '#b06000', fontWeight: 600, borderRight: '1px solid #ffe0b2' }}>{emp.rt_bt_fmt || '-'}</TableCell>
+                              <TableCell align="center">
+                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.3 }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 700, color: emp.rt_tk_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
+                                    {emp.rt_tk_fmt || '-'}
+                                  </Typography>
+                                  {emp.rt_tk_hours && (
+                                    <Chip
+                                      label={emp.rt_tk_status === 'PASS' ? 'Đạt' : 'Không đạt'}
+                                      size="small"
+                                      color={emp.rt_tk_status === 'PASS' ? 'success' : 'error'}
+                                      sx={{ height: 18, fontSize: '10px', fontWeight: 800 }}
+                                    />
+                                  )}
+                                </Box>
+                              </TableCell>
+
+                              <TableCell align="center" sx={{ borderRight: '1px solid #ffe0b2' }}>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.3 }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 700, color: emp.rt_bt_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
+                                    {emp.rt_bt_fmt || '-'}
+                                  </Typography>
+                                  {emp.rt_bt_hours && (
+                                    <Chip
+                                      label={emp.rt_bt_status === 'PASS' ? 'Đạt' : 'Không đạt'}
+                                      size="small"
+                                      color={emp.rt_bt_status === 'PASS' ? 'success' : 'error'}
+                                      sx={{ height: 18, fontSize: '10px', fontWeight: 800 }}
+                                    />
+                                  )}
+                                </Box>
+                              </TableCell>
+
+                              {/* CLL30N Column */}
+                              <TableCell align="center" sx={{ backgroundColor: '#fcf8fe', borderRight: '1px solid #e1bee7' }}>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.3 }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 800, color: emp.cll30n_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
+                                    {emp.cll30n_pct || 0}%
+                                  </Typography>
+                                  <Chip
+                                    label={emp.cll30n_status === 'PASS' ? 'Đạt' : 'Không đạt'}
+                                    size="small"
+                                    color={emp.cll30n_status === 'PASS' ? 'success' : 'error'}
+                                    sx={{ height: 18, fontSize: '10px', fontWeight: 800 }}
+                                  />
+                                </Box>
+                              </TableCell>
 
                               {/* Commit Percentages */}
                               <TableCell align="center" sx={{ backgroundColor: '#f6fbf7' }}>
                                 <Chip
-                                  label={`${emp.total_dung_hen_pct || 0}%`}
+                                  label={`${emp.total_dung_hen_pct || 0}% (${emp.dung_hen_status === 'PASS' ? 'Đạt' : 'Không đạt'})`}
                                   size="small"
-                                  color={emp.total_dung_hen_pct >= 90 ? 'success' : emp.total_dung_hen_pct >= 80 ? 'warning' : 'error'}
+                                  color={emp.dung_hen_status === 'PASS' ? 'success' : 'error'}
                                   sx={{ fontWeight: 800, borderRadius: '12px' }}
                                 />
                               </TableCell>

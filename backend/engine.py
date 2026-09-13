@@ -30,6 +30,8 @@ class KPIEngine:
         self.ton_tk_df = pd.DataFrame()
         self.ton_bt_df = pd.DataFrame()
         self.lt_df = pd.DataFrame()
+        self.cll30n_df = pd.DataFrame()
+        self.kh_cls_df = pd.DataFrame()
         self.emp_map = {}
         self.team_leads = []
         self.regions = []
@@ -60,6 +62,8 @@ class KPIEngine:
         lt_cache = _get_path("lt")
         ton_tk_cache = _get_path("ton_tk")
         ton_bt_cache = _get_path("ton_bt")
+        cll30n_cache = _get_path("cll30n")
+        kh_cls_cache = _get_path("kh_cls")
 
         if hr_cache.exists() and tk_cache.exists() and bt_cache.exists():
             try:
@@ -73,6 +77,10 @@ class KPIEngine:
                     self.ton_tk_df = pd.read_pickle(ton_tk_cache)
                 if ton_bt_cache.exists():
                     self.ton_bt_df = pd.read_pickle(ton_bt_cache)
+                if cll30n_cache.exists():
+                    self.cll30n_df = pd.read_pickle(cll30n_cache)
+                if kh_cls_cache.exists():
+                    self.kh_cls_df = pd.read_pickle(kh_cls_cache)
                 self.last_sync_time = datetime.datetime.fromtimestamp(hr_cache.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
                 self._process_metadata()
                 print(f"Cache loaded successfully! Sync time: {self.last_sync_time}", flush=True)
@@ -123,12 +131,38 @@ class KPIEngine:
                 res_lt = requests.get(self._get_lt_sheet_url(), timeout=30)
                 if res_lt.status_code == 200 and len(res_lt.content) > 50:
                     df_lt = pd.read_csv(io.BytesIO(res_lt.content), encoding='utf-8', header=None, low_memory=False, dtype=str)
-                    df_lt.to_pickle(CACHE_DIR / "lt.pkl")
+                    df_lt.to_pickle(CACHE_DIR / "lt.pkl.gz")
                     print(f"Loaded live Lịch Trực CSV! {len(df_lt)} rows", flush=True)
                 else:
                     print(f"Lịch Trực sheet returned status {res_lt.status_code}. (Cần chia sẻ 'Bất kỳ ai có liên kết đều có thể xem')", flush=True)
             except Exception as e_lt:
                 print(f"Warning: Failed to download Lịch Trực CSV: {e_lt}", flush=True)
+
+            # Fetch CLL30N Sheet (GID: 168764867)
+            print("Fetching live CLL30N data...", flush=True)
+            df_cll30n = pd.DataFrame()
+            try:
+                url_cll = f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=168764867'
+                res_cll = requests.get(url_cll, timeout=40)
+                if res_cll.status_code == 200:
+                    df_cll30n = pd.read_csv(io.BytesIO(res_cll.content), encoding='utf-8', low_memory=False, dtype=str)
+                    print(f"Loaded live CLL30N CSV! {len(df_cll30n)} rows", flush=True)
+            except Exception as e_cll:
+                print(f"Warning: Failed to fetch CLL30N CSV: {e_cll}", flush=True)
+
+            # Fetch KH Co Cls Sheet (GID: 0)
+            print("Fetching live KH Co Cls data...", flush=True)
+            df_kh_cls = pd.DataFrame()
+            try:
+                url_cls = 'https://docs.google.com/spreadsheets/d/1JtMBIXmgQ37ne9a_QYb6ZuN6mWwgJHIC/export?format=csv&gid=0'
+                res_cls = requests.get(url_cls, timeout=30)
+                if res_cls.status_code == 200:
+                    df_kh_cls = pd.read_csv(io.BytesIO(res_cls.content), encoding='utf-8', low_memory=False, dtype=str, on_bad_lines='skip')
+                    print(f"Loaded live KH Co Cls CSV! {len(df_kh_cls)} rows", flush=True)
+                else:
+                    print(f"KH Co Cls sheet returned status {res_cls.status_code}.", flush=True)
+            except Exception as e_cls:
+                print(f"Warning: Failed to fetch KH Co Cls CSV: {e_cls}", flush=True)
 
             # Process HR
             df_hr['Inside Account'] = df_hr['Inside Account'].astype(str).str.strip().str.upper()
@@ -168,15 +202,35 @@ class KPIEngine:
             rt_sec_bt = (df_bt['dt_complete'] - df_bt['dt_created']).dt.total_seconds()
             df_bt['rt_hours'] = np.where(rt_sec_bt >= 0, rt_sec_bt / 3600.0, np.nan)
 
+            # Process CLL30N
+            if not df_cll30n.empty:
+                col_nv = df_cll30n.columns[3] if len(df_cll30n.columns) > 3 else 'Nhân viên'
+                col_tg = df_cll30n.columns[6] if len(df_cll30n.columns) > 6 else 'Tg hoàn tất'
+                df_cll30n['Nhân viên'] = df_cll30n[col_nv].astype(str).str.strip().str.upper()
+                df_cll30n['dt_complete'] = pd.to_datetime(df_cll30n[col_tg], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                df_cll30n['date_complete'] = df_cll30n['dt_complete'].dt.date
+                df_cll30n.to_pickle(CACHE_DIR / "cll30n.pkl.gz")
+
+            # Process KH Co Cls
+            if not df_kh_cls.empty:
+                col_nv = df_kh_cls.columns[3] if len(df_kh_cls.columns) > 3 else 'Nhân viên'
+                col_tg = df_kh_cls.columns[6] if len(df_kh_cls.columns) > 6 else 'TG Hoàn Tất'
+                df_kh_cls['Nhân viên'] = df_kh_cls[col_nv].astype(str).str.strip().str.upper()
+                df_kh_cls['dt_complete'] = pd.to_datetime(df_kh_cls[col_tg], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                df_kh_cls['date_complete'] = df_kh_cls['dt_complete'].dt.date
+                df_kh_cls.to_pickle(CACHE_DIR / "kh_cls.pkl.gz")
+
             # Save to Cache
-            df_hr.to_pickle(CACHE_DIR / "hr.pkl")
-            df_tk.to_pickle(CACHE_DIR / "tk.pkl")
-            df_bt.to_pickle(CACHE_DIR / "bt.pkl")
+            df_hr.to_pickle(CACHE_DIR / "hr.pkl.gz")
+            df_tk.to_pickle(CACHE_DIR / "tk.pkl.gz")
+            df_bt.to_pickle(CACHE_DIR / "bt.pkl.gz")
 
             self.hr_df = df_hr
             self.tk_df = df_tk
             self.bt_df = df_bt
             self.lt_df = df_lt
+            self.cll30n_df = df_cll30n
+            self.kh_cls_df = df_kh_cls
             self.last_sync_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
             self._process_metadata()
@@ -237,6 +291,26 @@ class KPIEngine:
             tk = tk[tk['date_complete'] <= e_d]
             bt = bt[bt['date_complete'] <= e_d]
 
+        # Filter CLL30N & KH Co Cls
+        cll = self.cll30n_df.copy() if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
+        cls = self.kh_cls_df.copy() if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else pd.DataFrame()
+
+        if not cll.empty and 'date_complete' in cll.columns:
+            if start_date:
+                s_d = pd.to_datetime(start_date).date()
+                cll = cll[cll['date_complete'] >= s_d]
+            if end_date:
+                e_d = pd.to_datetime(end_date).date()
+                cll = cll[cll['date_complete'] <= e_d]
+
+        if not cls.empty and 'date_complete' in cls.columns:
+            if start_date:
+                s_d = pd.to_datetime(start_date).date()
+                cls = cls[cls['date_complete'] >= s_d]
+            if end_date:
+                e_d = pd.to_datetime(end_date).date()
+                cls = cls[cls['date_complete'] <= e_d]
+
         # Get list of accounts matching metadata filters
         allowed_accounts = set(self.emp_map.keys())
 
@@ -255,10 +329,14 @@ class KPIEngine:
                 if s in k or s in v['name'].upper() or s in str(v['code']).upper()
             }
 
-        # Filter TK & BT by allowed accounts if any filter is set
+        # Filter TK & BT & CLL by allowed accounts if any filter is set
         if team_lead or region or partner or block or search:
             tk = tk[tk['Nhân viên'].isin(allowed_accounts)]
             bt = bt[bt['Nhân viên'].isin(allowed_accounts)]
+            if not cll.empty and 'Nhân viên' in cll.columns:
+                cll = cll[cll['Nhân viên'].isin(allowed_accounts)]
+            if not cls.empty and 'Nhân viên' in cls.columns:
+                cls = cls[cls['Nhân viên'].isin(allowed_accounts)]
 
         # 2. Overall Aggregations
         # TK Valid (Excluding Gsafe and Swap for KPIs)
@@ -284,12 +362,31 @@ class KPIEngine:
         tot_all = tk_tot + bt_tot
         total_dh_pct = round((tot_1 / tot_all * 100), 2) if tot_all > 0 else 0.0
 
+        # CLL30N % Aggregation
+        cll_tot = len(cll)
+        cls_tot = len(cls)
+        cll30n_pct = round((cll_tot / cls_tot * 100), 2) if cls_tot > 0 else 0.0
+
+        # Status rules:
+        # 1. Đúng Hẹn >= 97.2% -> PASS
+        # 2. RT-TK <= 18H -> PASS
+        # 3. RT-BT <= 8H -> PASS
+        # 4. CLL30N <= 7% -> PASS
+        dung_hen_status = 'PASS' if total_dh_pct >= 97.2 else 'FAIL'
+        rt_tk_status = 'PASS' if (rt_tk_avg is None or rt_tk_avg <= 18.0) else 'FAIL'
+        rt_bt_status = 'PASS' if (rt_bt_avg is None or rt_bt_avg <= 8.0) else 'FAIL'
+        cll30n_status = 'PASS' if cll30n_pct <= 7.0 else 'FAIL'
+
         # Swap breakdown by transaction type
         swap_counts = tk_swap['Loại giao dịch'].value_counts().to_dict()
 
         # 3. Employee-level Aggregations
-        # All employees in current filtered dataset
         active_accs = set(tk['Nhân viên'].dropna().unique()) | set(bt['Nhân viên'].dropna().unique())
+        if not cll.empty and 'Nhân viên' in cll.columns:
+            active_accs |= set(cll['Nhân viên'].dropna().unique())
+        if not cls.empty and 'Nhân viên' in cls.columns:
+            active_accs |= set(cls['Nhân viên'].dropna().unique())
+
         if team_lead or region or partner or block or search:
             active_accs &= allowed_accounts
 
@@ -300,6 +397,8 @@ class KPIEngine:
         tk_swap_grp = tk_swap.groupby('Nhân viên')
         tk_gsafe_grp = tk_gsafe.groupby('Nhân viên')
         bt_grp = bt.groupby('Nhân viên')
+        cll_grp = cll.groupby('Nhân viên') if not cll.empty and 'Nhân viên' in cll.columns else {}
+        cls_grp = cls.groupby('Nhân viên') if not cls.empty and 'Nhân viên' in cls.columns else {}
 
         # Cache pre-aggregated dicts
         tk_v_dict = {
@@ -328,6 +427,9 @@ class KPIEngine:
                 'total': len(group)
             } for acc, group in bt_grp
         }
+
+        cll_dict = {acc: len(group) for acc, group in cll_grp} if not isinstance(cll_grp, dict) else {}
+        cls_dict = {acc: len(group) for acc, group in cls_grp} if not isinstance(cls_grp, dict) else {}
 
         for acc in sorted(active_accs):
             meta = self.emp_map.get(acc, {
@@ -362,6 +464,17 @@ class KPIEngine:
             rt_tk_val = e_tk_v['rt_avg']
             rt_bt_val = e_bt['rt_avg']
 
+            # Employee CLL30N calculation
+            e_cll_count = cll_dict.get(acc, 0)
+            e_cls_count = cls_dict.get(acc, 0)
+            e_cll30n_pct = round((e_cll_count / e_cls_count * 100), 2) if e_cls_count > 0 else 0.0
+
+            # Employee evaluation rule statuses
+            e_dh_status = 'PASS' if e_tot_dh >= 97.2 else 'FAIL'
+            e_rt_tk_status = 'PASS' if (pd.isna(rt_tk_val) or rt_tk_val <= 18.0) else 'FAIL'
+            e_rt_bt_status = 'PASS' if (pd.isna(rt_bt_val) or rt_bt_val <= 8.0) else 'FAIL'
+            e_cll30n_status = 'PASS' if e_cll30n_pct <= 7.0 else 'FAIL'
+
             emp_rows.append({
                 'account': acc,
                 'name': meta['name'],
@@ -378,6 +491,7 @@ class KPIEngine:
                 'tk_dung_hen_pct': e_tk_dh,
                 'rt_tk_hours': round(float(rt_tk_val), 2) if pd.notna(rt_tk_val) else None,
                 'rt_tk_fmt': self.format_rt(rt_tk_val),
+                'rt_tk_status': e_rt_tk_status,
                 
                 # Swap & Gsafe counts
                 'tk_swap_volume': e_tk_s['total'],
@@ -392,9 +506,17 @@ class KPIEngine:
                 'bt_dung_hen_pct': e_bt_dh,
                 'rt_bt_hours': round(float(rt_bt_val), 2) if pd.notna(rt_bt_val) else None,
                 'rt_bt_fmt': self.format_rt(rt_bt_val),
+                'rt_bt_status': e_rt_bt_status,
+
+                # CLL30N KPIs
+                'cll30n_count': e_cll_count,
+                'kh_cls_count': e_cls_count,
+                'cll30n_pct': e_cll30n_pct,
+                'cll30n_status': e_cll30n_status,
 
                 # Overall Total
                 'total_dung_hen_pct': e_tot_dh,
+                'dung_hen_status': e_dh_status,
                 'total_completed_work': e_tk_tot + e_tk_s['total'] + e_bt_tot
             })
 
@@ -425,6 +547,7 @@ class KPIEngine:
                 'tk_dung_hen_0': tk_0,
                 'rt_tk_hours': round(float(rt_tk_avg), 2) if rt_tk_avg and pd.notna(rt_tk_avg) else None,
                 'rt_tk_fmt': self.format_rt(rt_tk_avg),
+                'rt_tk_status': rt_tk_status,
                 
                 # Swap & Gsafe & All Transaction Breakdown
                 'tk_swap_volume': len(tk_swap),
@@ -440,9 +563,17 @@ class KPIEngine:
                 'bt_dung_hen_0': bt_0,
                 'rt_bt_hours': round(float(rt_bt_avg), 2) if rt_bt_avg and pd.notna(rt_bt_avg) else None,
                 'rt_bt_fmt': self.format_rt(rt_bt_avg),
+                'rt_bt_status': rt_bt_status,
+
+                # CLL30N
+                'cll30n_count': cll_tot,
+                'kh_cls_count': cls_tot,
+                'cll30n_pct': cll30n_pct,
+                'cll30n_status': cll30n_status,
 
                 # Total
                 'total_dung_hen_pct': total_dh_pct,
+                'dung_hen_status': dung_hen_status,
                 'total_work_volume': len(tk) + len(bt)
             },
             'employees': emp_rows
