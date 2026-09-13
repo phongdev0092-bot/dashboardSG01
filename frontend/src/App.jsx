@@ -1387,7 +1387,7 @@ export default function App() {
                                     {emp.cll30n_pct || 0}%
                                   </Typography>
                                   <Typography variant="caption" sx={{ color: '#5f6368', fontSize: '10px' }}>
-                                    ({emp.cll30n_count || 0} HĐ)
+                                    {emp.kh_cls_count > 0 ? `(${emp.cll30n_count || 0}/${emp.kh_cls_count} HĐ)` : `(${emp.cll30n_count || 0} HĐ)`}
                                   </Typography>
                                 </Box>
                               </TableCell>
