@@ -2,7 +2,7 @@ services:
   - type: web
     name: tool-kpi-dashboard
     env: python
-    buildCommand: "pip install -r backend/requirements.txt && npm --prefix frontend install && npm --prefix frontend run build"
+    buildCommand: "pip install -r backend/requirements.txt"
     startCommand: "python backend/main.py"
     envVars:
       - key: PORT
