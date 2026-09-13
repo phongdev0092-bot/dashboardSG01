@@ -1,0 +1,913 @@
+import pandas as pd
+import numpy as np
+import requests
+import io
+import os
+import sys
+import time
+import datetime
+from pathlib import Path
+import re
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
+SHEET_ID = '17QLc9SlfpPPrR-d1R2BkBxA7DmCI5ZCuhmQffP5F6pY'
+GIDS = {
+    'HR': '32204814',
+    'TK': '0',
+    'BT': '1109348771'
+}
+
+CACHE_DIR = Path(__file__).parent / "data_cache"
+
+class KPIEngine:
+    def __init__(self):
+        self.hr_df = pd.DataFrame()
+        self.tk_df = pd.DataFrame()
+        self.bt_df = pd.DataFrame()
+        self.ton_tk_df = pd.DataFrame()
+        self.ton_bt_df = pd.DataFrame()
+        self.lt_df = pd.DataFrame()
+        self.emp_map = {}
+        self.team_leads = []
+        self.regions = []
+        self.partners = []
+        self.blocks = []
+        self.last_sync_time = None
+        self.is_syncing = False
+        self.sync_error = None
+        CACHE_DIR.mkdir(exist_ok=True, parents=True)
+        self.load_cache_or_fetch()
+
+    def _get_sheet_url(self, gid: str) -> str:
+        return f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={gid}'
+
+    def _get_lt_sheet_url(self) -> str:
+        return 'https://docs.google.com/spreadsheets/d/1qd8O1bqbtHmbPUO_HhZv07YS9c27bo1QMWh4yvmQr2U/export?format=csv&gid=0'
+
+    def load_cache_or_fetch(self):
+        hr_cache = CACHE_DIR / "hr.pkl"
+        tk_cache = CACHE_DIR / "tk.pkl"
+        bt_cache = CACHE_DIR / "bt.pkl"
+        lt_cache = CACHE_DIR / "lt.pkl"
+        ton_tk_cache = CACHE_DIR / "ton_tk.pkl"
+        ton_bt_cache = CACHE_DIR / "ton_bt.pkl"
+
+        if hr_cache.exists() and tk_cache.exists() and bt_cache.exists():
+            try:
+                print("Loading data from local cache...", flush=True)
+                self.hr_df = pd.read_pickle(hr_cache)
+                self.tk_df = pd.read_pickle(tk_cache)
+                self.bt_df = pd.read_pickle(bt_cache)
+                if lt_cache.exists():
+                    self.lt_df = pd.read_pickle(lt_cache)
+                if ton_tk_cache.exists():
+                    self.ton_tk_df = pd.read_pickle(ton_tk_cache)
+                if ton_bt_cache.exists():
+                    self.ton_bt_df = pd.read_pickle(ton_bt_cache)
+                self.last_sync_time = datetime.datetime.fromtimestamp(hr_cache.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                self._process_metadata()
+                print(f"Cache loaded successfully! Sync time: {self.last_sync_time}", flush=True)
+                return
+            except Exception as e:
+                print(f"Cache load failed: {e}. Fetching live data...", flush=True)
+
+        self.sync_live_data()
+
+    def sync_live_data(self):
+        if self.is_syncing:
+            return False, "Sync already in progress"
+        
+        self.is_syncing = True
+        self.sync_error = None
+        t0 = time.time()
+        
+        try:
+            print("Fetching live HR data...", flush=True)
+            res_hr = requests.get(self._get_sheet_url(GIDS['HR']), timeout=30)
+            df_hr = pd.read_csv(io.BytesIO(res_hr.content), encoding='utf-8', dtype=str)
+            
+            print("Fetching live Trien Khai (TK) data...", flush=True)
+            res_tk = requests.get(self._get_sheet_url(GIDS['TK']), timeout=60)
+            df_tk = pd.read_csv(io.BytesIO(res_tk.content), encoding='utf-8', low_memory=False)
+
+            print("Fetching live Bao Tri (BT) data...", flush=True)
+            res_bt = requests.get(self._get_sheet_url(GIDS['BT']), timeout=60)
+            df_bt = pd.read_csv(io.BytesIO(res_bt.content), encoding='utf-8', low_memory=False)
+
+            # Fetch Tồn Triển Khai & Tồn Bảo Trì from Sheet 1XIkHDecRAsL5fq4ZtRDkyQiiDh0vDXz6mk607P_T1Qo
+            ton_sid = '1XIkHDecRAsL5fq4ZtRDkyQiiDh0vDXz6mk607P_T1Qo'
+            print("Fetching live Tồn Triển Khai (GID 334356138) data...", flush=True)
+            url_ton_tk = f'https://docs.google.com/spreadsheets/d/{ton_sid}/export?format=csv&gid=334356138'
+            res_ton_tk = requests.get(url_ton_tk, timeout=40)
+            df_ton_tk = pd.read_csv(io.BytesIO(res_ton_tk.content), encoding='utf-8', dtype=str, low_memory=False)
+            df_ton_tk.to_pickle(CACHE_DIR / "ton_tk.pkl")
+
+            print("Fetching live Tồn Bảo Trì (GID 1224453787) data...", flush=True)
+            url_ton_bt = f'https://docs.google.com/spreadsheets/d/{ton_sid}/export?format=csv&gid=1224453787'
+            res_ton_bt = requests.get(url_ton_bt, timeout=40)
+            df_ton_bt = pd.read_csv(io.BytesIO(res_ton_bt.content), encoding='utf-8', dtype=str, low_memory=False)
+            df_ton_bt.to_pickle(CACHE_DIR / "ton_bt.pkl")
+
+            print("Fetching live Lich Truc (LT) data...", flush=True)
+            df_lt = pd.DataFrame()
+            try:
+                res_lt = requests.get(self._get_lt_sheet_url(), timeout=30)
+                if res_lt.status_code == 200 and len(res_lt.content) > 50:
+                    df_lt = pd.read_csv(io.BytesIO(res_lt.content), encoding='utf-8', header=None, low_memory=False, dtype=str)
+                    df_lt.to_pickle(CACHE_DIR / "lt.pkl")
+                    print(f"Loaded live Lịch Trực CSV! {len(df_lt)} rows", flush=True)
+                else:
+                    print(f"Lịch Trực sheet returned status {res_lt.status_code}. (Cần chia sẻ 'Bất kỳ ai có liên kết đều có thể xem')", flush=True)
+            except Exception as e_lt:
+                print(f"Warning: Failed to download Lịch Trực CSV: {e_lt}", flush=True)
+
+            # Process HR
+            df_hr['Inside Account'] = df_hr['Inside Account'].astype(str).str.strip().str.upper()
+            df_hr['Họ Tên NV'] = df_hr['Họ Tên NV'].astype(str).str.strip()
+            df_hr['Họ tên Đội trưởng'] = df_hr['Họ tên Đội trưởng'].astype(str).str.strip()
+            df_hr['Vùng'] = df_hr['Vùng'].astype(str).str.strip()
+            df_hr['Đối tác'] = df_hr['Đối tác'].astype(str).str.strip()
+            df_hr['Block'] = df_hr['Block'].astype(str).str.strip()
+
+            # Process TK
+            df_tk['Nhân viên'] = df_tk['Nhân viên'].astype(str).str.strip().str.upper()
+            df_tk['Số hợp đồng'] = df_tk['Số hợp đồng'].astype(str).str.strip()
+            df_tk['Gói dịch vụ'] = df_tk['Gói dịch vụ'].astype(str).str.strip()
+            df_tk['Loại giao dịch'] = df_tk['Loại giao dịch'].astype(str).str.strip()
+            
+            df_tk['is_gsafe'] = (df_tk['Số hợp đồng'].str.startswith('SGG', na=False)) & \
+                                (df_tk['Gói dịch vụ'].str.lower() == 'offnet')
+            df_tk['is_swap'] = df_tk['Loại giao dịch'].str.contains('Swap', case=False, na=False)
+            df_tk['dung_hen'] = pd.to_numeric(df_tk['Đúng hẹn'], errors='coerce').fillna(0).astype(int)
+            
+            df_tk['dt_complete'] = pd.to_datetime(df_tk['Ngày hoàn tất PTC'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+            df_tk['dt_created'] = pd.to_datetime(df_tk['TG tạo PTC'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+            df_tk['date_complete'] = df_tk['dt_complete'].dt.date
+            
+            rt_sec = (df_tk['dt_complete'] - df_tk['dt_created']).dt.total_seconds()
+            df_tk['rt_hours'] = np.where(rt_sec >= 0, rt_sec / 3600.0, np.nan)
+
+            # Process BT
+            df_bt['Nhân viên'] = df_bt['Nhân viên'].astype(str).str.strip().str.upper()
+            df_bt['Số HĐ'] = df_bt['Số HĐ'].astype(str).str.strip()
+            df_bt['dung_hen'] = pd.to_numeric(df_bt['Đúng hẹn'], errors='coerce').fillna(0).astype(int)
+            
+            df_bt['dt_complete'] = pd.to_datetime(df_bt['TG Hoàn Tất'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+            df_bt['dt_created'] = pd.to_datetime(df_bt['TG Tạo'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+            df_bt['date_complete'] = df_bt['dt_complete'].dt.date
+            
+            rt_sec_bt = (df_bt['dt_complete'] - df_bt['dt_created']).dt.total_seconds()
+            df_bt['rt_hours'] = np.where(rt_sec_bt >= 0, rt_sec_bt / 3600.0, np.nan)
+
+            # Save to Cache
+            df_hr.to_pickle(CACHE_DIR / "hr.pkl")
+            df_tk.to_pickle(CACHE_DIR / "tk.pkl")
+            df_bt.to_pickle(CACHE_DIR / "bt.pkl")
+
+            self.hr_df = df_hr
+            self.tk_df = df_tk
+            self.bt_df = df_bt
+            self.lt_df = df_lt
+            self.last_sync_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            self._process_metadata()
+            elapsed = time.time() - t0
+            print(f"Synced live data in {elapsed:.2f}s!", flush=True)
+            self.is_syncing = False
+            return True, f"Synced in {elapsed:.2f}s"
+
+        except Exception as e:
+            self.sync_error = str(e)
+            self.is_syncing = False
+            print(f"Sync error: {e}", flush=True)
+            return False, str(e)
+
+    def _process_metadata(self):
+        # Build employee metadata map
+        self.emp_map = {}
+        for _, row in self.hr_df.iterrows():
+            acc = row.get('Inside Account', '')
+            if acc and acc != 'NAN':
+                self.emp_map[acc] = {
+                    'account': acc,
+                    'name': row.get('Họ Tên NV', acc),
+                    'code': row.get('Mã NV', ''),
+                    'team_lead': row.get('Họ tên Đội trưởng', ''),
+                    'region': row.get('Vùng', ''),
+                    'partner': row.get('Đối tác', ''),
+                    'block': row.get('Block', ''),
+                    'position': row.get('Chức danh', ''),
+                    'status': row.get('Tình trạng Hợp đồng', '')
+                }
+
+        # Dynamic dropdown options
+        self.team_leads = sorted([x for x in self.hr_df['Họ tên Đội trưởng'].dropna().unique() if str(x).strip() and str(x) != 'nan'])
+        self.regions = sorted([x for x in self.hr_df['Vùng'].dropna().unique() if str(x).strip() and str(x) != 'nan'])
+        self.partners = sorted([x for x in self.hr_df['Đối tác'].dropna().unique() if str(x).strip() and str(x) != 'nan'])
+        self.blocks = sorted([x for x in self.hr_df['Block'].dropna().unique() if str(x).strip() and str(x) != 'nan'])
+
+    def format_rt(self, val_hours):
+        if pd.isna(val_hours) or val_hours is None or val_hours < 0:
+            return "-"
+        return f"{val_hours:.2f}H"
+
+    def get_kpi_report(self, start_date=None, end_date=None, team_lead=None, region=None, partner=None, block=None, search=None):
+        t0 = time.time()
+        
+        # 1. Date Filtering
+        tk = self.tk_df.copy()
+        bt = self.bt_df.copy()
+
+        if start_date:
+            s_d = pd.to_datetime(start_date).date()
+            tk = tk[tk['date_complete'] >= s_d]
+            bt = bt[bt['date_complete'] >= s_d]
+
+        if end_date:
+            e_d = pd.to_datetime(end_date).date()
+            tk = tk[tk['date_complete'] <= e_d]
+            bt = bt[bt['date_complete'] <= e_d]
+
+        # Get list of accounts matching metadata filters
+        allowed_accounts = set(self.emp_map.keys())
+
+        if team_lead:
+            allowed_accounts &= {k for k, v in self.emp_map.items() if v['team_lead'] == team_lead}
+        if region:
+            allowed_accounts &= {k for k, v in self.emp_map.items() if v['region'] == region}
+        if partner:
+            allowed_accounts &= {k for k, v in self.emp_map.items() if v['partner'] == partner}
+        if block:
+            allowed_accounts &= {k for k, v in self.emp_map.items() if v['block'] == block}
+        if search:
+            s = search.strip().upper()
+            allowed_accounts &= {
+                k for k, v in self.emp_map.items() 
+                if s in k or s in v['name'].upper() or s in str(v['code']).upper()
+            }
+
+        # Filter TK & BT by allowed accounts if any filter is set
+        if team_lead or region or partner or block or search:
+            tk = tk[tk['Nhân viên'].isin(allowed_accounts)]
+            bt = bt[bt['Nhân viên'].isin(allowed_accounts)]
+
+        # 2. Overall Aggregations
+        # TK Valid (Excluding Gsafe and Swap for KPIs)
+        tk_valid = tk[~tk['is_gsafe'] & ~tk['is_swap']]
+        tk_swap = tk[tk['is_swap']]
+        tk_gsafe = tk[tk['is_gsafe']]
+
+        tk_1 = int((tk_valid['dung_hen'] == 1).sum())
+        tk_0 = int((tk_valid['dung_hen'] == 0).sum())
+        tk_tot = tk_1 + tk_0
+        tk_dh_pct = round((tk_1 / tk_tot * 100), 2) if tk_tot > 0 else 0.0
+        rt_tk_avg = float(tk_valid['rt_hours'].mean()) if len(tk_valid) > 0 else None
+
+        # BT Valid
+        bt_1 = int((bt['dung_hen'] == 1).sum())
+        bt_0 = int((bt['dung_hen'] == 0).sum())
+        bt_tot = bt_1 + bt_0
+        bt_dh_pct = round((bt_1 / bt_tot * 100), 2) if bt_tot > 0 else 0.0
+        rt_bt_avg = float(bt['rt_hours'].mean()) if len(bt) > 0 else None
+
+        # Total Đúng Hẹn %
+        tot_1 = tk_1 + bt_1
+        tot_all = tk_tot + bt_tot
+        total_dh_pct = round((tot_1 / tot_all * 100), 2) if tot_all > 0 else 0.0
+
+        # Swap breakdown by transaction type
+        swap_counts = tk_swap['Loại giao dịch'].value_counts().to_dict()
+
+        # 3. Employee-level Aggregations
+        # All employees in current filtered dataset
+        active_accs = set(tk['Nhân viên'].dropna().unique()) | set(bt['Nhân viên'].dropna().unique())
+        if team_lead or region or partner or block or search:
+            active_accs &= allowed_accounts
+
+        emp_rows = []
+        
+        # Group by employee for fast computation
+        tk_valid_grp = tk_valid.groupby('Nhân viên')
+        tk_swap_grp = tk_swap.groupby('Nhân viên')
+        tk_gsafe_grp = tk_gsafe.groupby('Nhân viên')
+        bt_grp = bt.groupby('Nhân viên')
+
+        # Cache pre-aggregated dicts
+        tk_v_dict = {
+            acc: {
+                'c1': (group['dung_hen'] == 1).sum(),
+                'c0': (group['dung_hen'] == 0).sum(),
+                'rt_avg': group['rt_hours'].mean(),
+                'total': len(group)
+            } for acc, group in tk_valid_grp
+        }
+
+        tk_s_dict = {
+            acc: {
+                'total': len(group),
+                'breakdown': group['Loại giao dịch'].value_counts().to_dict()
+            } for acc, group in tk_swap_grp
+        }
+
+        tk_g_dict = {acc: len(group) for acc, group in tk_gsafe_grp}
+
+        bt_v_dict = {
+            acc: {
+                'c1': (group['dung_hen'] == 1).sum(),
+                'c0': (group['dung_hen'] == 0).sum(),
+                'rt_avg': group['rt_hours'].mean(),
+                'total': len(group)
+            } for acc, group in bt_grp
+        }
+
+        for acc in sorted(active_accs):
+            meta = self.emp_map.get(acc, {
+                'account': acc,
+                'name': acc,
+                'code': '-',
+                'team_lead': '-',
+                'region': '-',
+                'partner': '-',
+                'block': '-'
+            })
+
+            e_tk_v = tk_v_dict.get(acc, {'c1': 0, 'c0': 0, 'rt_avg': None, 'total': 0})
+            e_tk_s = tk_s_dict.get(acc, {'total': 0, 'breakdown': {}})
+            e_tk_g = tk_g_dict.get(acc, 0)
+            e_bt = bt_v_dict.get(acc, {'c1': 0, 'c0': 0, 'rt_avg': None, 'total': 0})
+
+            e_tk_1 = int(e_tk_v['c1'])
+            e_tk_0 = int(e_tk_v['c0'])
+            e_tk_tot = e_tk_1 + e_tk_0
+            e_tk_dh = round((e_tk_1 / e_tk_tot * 100), 2) if e_tk_tot > 0 else 0.0
+
+            e_bt_1 = int(e_bt['c1'])
+            e_bt_0 = int(e_bt['c0'])
+            e_bt_tot = e_bt_1 + e_bt_0
+            e_bt_dh = round((e_bt_1 / e_bt_tot * 100), 2) if e_bt_tot > 0 else 0.0
+
+            e_tot_1 = e_tk_1 + e_bt_1
+            e_tot_all = e_tk_tot + e_bt_tot
+            e_tot_dh = round((e_tot_1 / e_tot_all * 100), 2) if e_tot_all > 0 else 0.0
+
+            rt_tk_val = e_tk_v['rt_avg']
+            rt_bt_val = e_bt['rt_avg']
+
+            emp_rows.append({
+                'account': acc,
+                'name': meta['name'],
+                'code': meta['code'],
+                'team_lead': meta['team_lead'],
+                'region': meta['region'],
+                'partner': meta['partner'],
+                'block': meta['block'],
+                
+                # Triển Khai KPIs
+                'tk_kpi_volume': e_tk_tot,
+                'tk_dung_hen_1': e_tk_1,
+                'tk_dung_hen_0': e_tk_0,
+                'tk_dung_hen_pct': e_tk_dh,
+                'rt_tk_hours': round(float(rt_tk_val), 2) if pd.notna(rt_tk_val) else None,
+                'rt_tk_fmt': self.format_rt(rt_tk_val),
+                
+                # Swap & Gsafe counts
+                'tk_swap_volume': e_tk_s['total'],
+                'tk_swap_breakdown': e_tk_s['breakdown'],
+                'tk_gsafe_volume': e_tk_g,
+                'tk_total_all_types': e_tk_tot + e_tk_s['total'] + e_tk_g,
+
+                # Bảo Trì KPIs
+                'bt_volume': e_bt_tot,
+                'bt_dung_hen_1': e_bt_1,
+                'bt_dung_hen_0': e_bt_0,
+                'bt_dung_hen_pct': e_bt_dh,
+                'rt_bt_hours': round(float(rt_bt_val), 2) if pd.notna(rt_bt_val) else None,
+                'rt_bt_fmt': self.format_rt(rt_bt_val),
+
+                # Overall Total
+                'total_dung_hen_pct': e_tot_dh,
+                'total_completed_work': e_tk_tot + e_tk_s['total'] + e_bt_tot
+            })
+
+        execution_time_ms = round((time.time() - t0) * 1000, 2)
+
+        return {
+            'metadata': {
+                'last_sync_time': self.last_sync_time,
+                'execution_time_ms': execution_time_ms,
+                'total_employees_count': len(emp_rows),
+                'filters_applied': {
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'team_lead': team_lead,
+                    'region': region,
+                    'partner': partner,
+                    'block': block,
+                    'search': search
+                }
+            },
+            'overall_summary': {
+                'total_nv_active': len(emp_rows),
+                
+                # TK
+                'tk_volume_kpi': tk_tot,
+                'tk_dung_hen_pct': tk_dh_pct,
+                'tk_dung_hen_1': tk_1,
+                'tk_dung_hen_0': tk_0,
+                'rt_tk_hours': round(float(rt_tk_avg), 2) if rt_tk_avg and pd.notna(rt_tk_avg) else None,
+                'rt_tk_fmt': self.format_rt(rt_tk_avg),
+                
+                # Swap & Gsafe & All Transaction Breakdown
+                'tk_swap_volume': len(tk_swap),
+                'tk_swap_counts': swap_counts,
+                'tk_gsafe_volume': len(tk_gsafe),
+                'all_tx_type_counts': tk['Loại giao dịch'].value_counts().to_dict() if 'Loại giao dịch' in tk.columns else {},
+                'tk_valid_tx_type_counts': tk_valid['Loại giao dịch'].value_counts().to_dict() if 'Loại giao dịch' in tk_valid.columns else {},
+
+                # BT
+                'bt_volume': len(bt),
+                'bt_dung_hen_pct': bt_dh_pct,
+                'bt_dung_hen_1': bt_1,
+                'bt_dung_hen_0': bt_0,
+                'rt_bt_hours': round(float(rt_bt_avg), 2) if rt_bt_avg and pd.notna(rt_bt_avg) else None,
+                'rt_bt_fmt': self.format_rt(rt_bt_avg),
+
+                # Total
+                'total_dung_hen_pct': total_dh_pct,
+                'total_work_volume': len(tk) + len(bt)
+            },
+            'employees': emp_rows
+        }
+
+    def get_employee_details(self, account: str, start_date=None, end_date=None):
+        acc = account.strip().upper()
+        meta = self.emp_map.get(acc, {'account': acc, 'name': acc})
+
+        tk = self.tk_df[self.tk_df['Nhân viên'] == acc].copy()
+        bt = self.bt_df[self.bt_df['Nhân viên'] == acc].copy()
+
+        if start_date:
+            s_d = pd.to_datetime(start_date).date()
+            tk = tk[tk['date_complete'] >= s_d]
+            bt = bt[bt['date_complete'] >= s_d]
+
+        if end_date:
+            e_d = pd.to_datetime(end_date).date()
+            tk = tk[tk['date_complete'] <= e_d]
+            bt = bt[bt['date_complete'] <= e_d]
+
+        # TK tickets list
+        tk_list = []
+        for _, row in tk.iterrows():
+            tk_list.append({
+                'contract_no': str(row.get('Số hợp đồng', '')),
+                'customer_name': str(row.get('Tên khách hàng', '')),
+                'service_package': str(row.get('Gói dịch vụ', '')),
+                'tx_type': str(row.get('Loại giao dịch', '')),
+                'dt_created': str(row.get('TG tạo PTC', '')),
+                'dt_complete': str(row.get('Ngày hoàn tất PTC', '')),
+                'dung_hen': int(row.get('dung_hen', 0)),
+                'rt_fmt': self.format_rt(row.get('rt_hours')),
+                'is_gsafe': bool(row.get('is_gsafe', False)),
+                'is_swap': bool(row.get('is_swap', False))
+            })
+
+        # BT tickets list
+        bt_list = []
+        for _, row in bt.iterrows():
+            bt_list.append({
+                'contract_no': str(row.get('Số HĐ', '')),
+                'customer_name': str(row.get('Tên Khách Hàng', '')),
+                'dt_created': str(row.get('TG Tạo', '')),
+                'dt_complete': str(row.get('TG Hoàn Tất', '')),
+                'dung_hen': int(row.get('dung_hen', 0)),
+                'rt_fmt': self.format_rt(row.get('rt_hours')),
+                'issue_location': str(row.get('Vị trí xảy ra sự cố', '')),
+                'reason': str(row.get('Lý do', ''))
+            })
+
+        return {
+            'employee_info': meta,
+            'tk_tickets': tk_list,
+            'bt_tickets': bt_list
+        }
+
+    # =========================================================================
+    # LỊCH TRỰC ENGINE METHODS (CONNECTED TO LIVE HR, TK, BT & LỊCH TRỰC DATA)
+    # =========================================================================
+    def get_thresholds(self):
+        return getattr(self, 'thresholds', {'tiLeTrucMin': 50.0, 'tonPerNsMax': 5.0})
+
+    def save_thresholds(self, ti_le_truc_min: float, ton_per_ns_max: float):
+        self.thresholds = {
+            'tiLeTrucMin': float(ti_le_truc_min),
+            'tonPerNsMax': float(ton_per_ns_max)
+        }
+        return self.thresholds
+
+    def _parse_date_str(self, val):
+        import re
+        s = str(val or '').strip()
+        if not s or s == 'nan' or s == 'Chưa có lịch hẹn':
+            return None
+        m = re.search(r'(\d{1,4})[/\-](\d{1,2})[/\-](\d{1,4})', s)
+        if m:
+            p1, p2, p3 = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if p1 > 1000: # yyyy-mm-dd
+                y, m_val, d = p1, p2, p3
+            else: # dd-mm-yyyy
+                d, m_val, y = p1, p2, p3
+            try:
+                return datetime.date(y, m_val, d)
+            except Exception:
+                return None
+        return None
+
+    def _get_nhan_su_by_block(self):
+        if self.hr_df.empty:
+            return {}, {}
+        
+        df_hr = self.hr_df.copy()
+        
+        # Build HR account map from Cột G (Inside Account), Cột F (Mã NV), Cột K (Email)
+        hr_map = {}
+        block_ns_info = {}
+
+        for _, row in df_hr.iterrows():
+            acc = str(row.get('Inside Account', '')).strip().upper()
+            ma_nv = str(row.get('Mã NV', '')).strip().upper()
+            email = str(row.get('Email', '')).strip().upper()
+            block = str(row.get('Block', '')).strip()
+            dt = str(row.get('Họ tên Đội trưởng', '')).strip()
+            status = str(row.get('Tình trạng Tài khoản', '')).strip().upper()
+            is_active = (status == 'ACTIVE' or status == 'BÌNH THƯỜNG' or not status)
+
+            info = {
+                'block': block,
+                'truong': dt,
+                'is_active': is_active,
+                'email': email,
+                'acc': acc,
+                'ma_nv': ma_nv
+            }
+
+            if acc: hr_map[acc] = info
+            if ma_nv: hr_map[ma_nv] = info
+            if email: hr_map[email] = info
+
+            if block:
+                if block not in block_ns_info:
+                    block_ns_info[block] = {'truongActive': '', 'truongAny': '', 'activeCount': 0, 'totalCount': 0}
+                block_ns_info[block]['totalCount'] += 1
+                if not block_ns_info[block]['truongAny'] and dt:
+                    block_ns_info[block]['truongAny'] = dt
+                if is_active:
+                    block_ns_info[block]['activeCount'] += 1
+                    if not block_ns_info[block]['truongActive'] and dt:
+                        block_ns_info[block]['truongActive'] = dt
+
+        res_blocks = {}
+        for b, v in block_ns_info.items():
+            res_blocks[b] = {
+                'truong': v['truongActive'] or v['truongAny'] or '(chưa rõ)',
+                'activeCount': v['activeCount'],
+                'totalCount': v['totalCount']
+            }
+
+        return res_blocks, hr_map
+
+    def _get_ton_tk_parsed(self, hr_map):
+        df_ton_tk = getattr(self, 'ton_tk_df', pd.DataFrame())
+        if df_ton_tk.empty:
+            df_ton_tk = self.tk_df
+        if df_ton_tk.empty:
+            return []
+        
+        cols = list(df_ton_tk.columns)
+        ns_col = cols[17] if len(cols) > 17 else 'Nhân sự'
+        s_col = cols[18] if len(cols) > 18 else 'TG Hẹn xanh'
+        t_col = cols[19] if len(cols) > 19 else 'TG Hẹn đỏ'
+
+        tk_rows = []
+        for _, r in df_ton_tk.iterrows():
+            ns = str(r.get(ns_col, '')).strip().upper()
+            s = str(r.get(s_col, '')).strip()
+            t = str(r.get(t_col, '')).strip()
+            hen_raw = s if (s and s != 'nan') else (t if (t and t != 'nan') else 'Chưa có lịch hẹn')
+            dt_hen = self._parse_date_str(hen_raw)
+
+            info = hr_map.get(ns, {})
+            block = info.get('block') or str(r.get('Block nhân sự', r.get('Block', ''))).strip() or '(Không xác định)'
+
+            tk_rows.append({
+                'ns': ns,
+                'block': block,
+                'hen_raw': hen_raw,
+                'dt_hen': dt_hen
+            })
+        return tk_rows
+
+    def _get_ton_bt_parsed(self, hr_map):
+        df_ton_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
+        if df_ton_bt.empty:
+            return []
+        
+        cols = list(df_ton_bt.columns)
+        k_col = cols[10] if len(cols) > 10 else 'Ngày hẹn Xanh'
+        l_col = cols[11] if len(cols) > 11 else 'Ngày hẹn đỏ'
+        ns_col = cols[18] if len(cols) > 18 else 'Nhân sự'
+
+        bt_rows = []
+        for _, r in df_ton_bt.iterrows():
+            ns = str(r.get(ns_col, '')).strip().upper()
+            k = str(r.get(k_col, '')).strip()
+            l = str(r.get(l_col, '')).strip()
+            hen_raw = k if (k and k != 'nan') else (l if (l and l != 'nan') else 'Chưa có lịch hẹn')
+            dt_hen = self._parse_date_str(hen_raw)
+
+            info = hr_map.get(ns, {})
+            block = info.get('block') or str(r.get('Block', '')).strip() or '(Không xác định)'
+
+            bt_rows.append({
+                'ns': ns,
+                'block': block,
+                'hen_raw': hen_raw,
+                'dt_hen': dt_hen
+            })
+        return bt_rows
+
+    def _compute_shift_for_date(self, date_obj):
+        day = date_obj.day
+        month = date_obj.month
+        year = date_obj.year
+        day_col_idx = 4 + day # Day1 = index 5, Day13 = index 17
+
+        res = {}
+        if not hasattr(self, 'lt_df') or self.lt_df.empty:
+            return res
+
+        _, hr_map = self._get_nhan_su_by_block()
+
+        for idx, r in self.lt_df.iterrows():
+            vals = list(r.values)
+            if len(vals) < 38:
+                continue
+
+            m_raw = str(vals[36] or '').strip()
+            y_raw = str(vals[37] or '').strip()
+
+            m_match = re.search(r'\d+', m_raw)
+            y_match = re.search(r'\d+', y_raw)
+
+            if not m_match or not y_match:
+                continue
+
+            row_month = int(m_match.group(0))
+            row_year = int(y_match.group(0))
+
+            if row_month != month or row_year != year:
+                continue
+
+            shift = str(vals[day_col_idx] or '').strip().upper()
+            if shift == 'CA1':
+                mail = str(vals[0] or '').strip().upper()
+                info = hr_map.get(mail, {})
+                block = info.get('block') or str(vals[4] or '').strip() or '(Không xác định)'
+                res[block] = res.get(block, 0) + 1
+
+        return res
+
+    def get_lich_truc_dashboard(self, date_str=None):
+        if not date_str:
+            base_date = datetime.date.today()
+        else:
+            try:
+                base_date = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+            except Exception:
+                base_date = datetime.date.today()
+
+        d0 = base_date
+        d1 = base_date + datetime.timedelta(days=1)
+        d2 = base_date + datetime.timedelta(days=2)
+
+        ns_by_block, hr_map = self._get_nhan_su_by_block()
+        tk_list = self._get_ton_tk_parsed(hr_map)
+        bt_list = self._get_ton_bt_parsed(hr_map)
+
+        df_tk_p = pd.DataFrame(tk_list) if tk_list else pd.DataFrame(columns=['ns', 'block', 'hen_raw', 'dt_hen'])
+        df_bt_p = pd.DataFrame(bt_list) if bt_list else pd.DataFrame(columns=['ns', 'block', 'hen_raw', 'dt_hen'])
+
+        d0_shifts = self._compute_shift_for_date(d0)
+        d1_shifts = self._compute_shift_for_date(d1)
+        d2_shifts = self._compute_shift_for_date(d2)
+
+        all_blocks = sorted(list(set(
+            list(ns_by_block.keys()) +
+            list(d0_shifts.keys()) +
+            list(df_tk_p['block'].unique() if not df_tk_p.empty else []) +
+            list(df_bt_p['block'].unique() if not df_bt_p.empty else [])
+        )))
+
+        tot_tk_map = df_tk_p.groupby('block').size().to_dict() if not df_tk_p.empty else {}
+        tot_bt_map = df_bt_p.groupby('block').size().to_dict() if not df_bt_p.empty else {}
+
+        tk_0_map = df_tk_p[df_tk_p['dt_hen'] == d0].groupby('block').size().to_dict() if not df_tk_p.empty else {}
+        bt_0_map = df_bt_p[df_bt_p['dt_hen'] == d0].groupby('block').size().to_dict() if not df_bt_p.empty else {}
+
+        tk_1_map = df_tk_p[df_tk_p['dt_hen'] == d1].groupby('block').size().to_dict() if not df_tk_p.empty else {}
+        bt_1_map = df_bt_p[df_bt_p['dt_hen'] == d1].groupby('block').size().to_dict() if not df_bt_p.empty else {}
+
+        tk_2_map = df_tk_p[df_tk_p['dt_hen'] == d2].groupby('block').size().to_dict() if not df_tk_p.empty else {}
+        bt_2_map = df_bt_p[df_bt_p['dt_hen'] == d2].groupby('block').size().to_dict() if not df_bt_p.empty else {}
+
+        summary_table = []
+        for block in all_blocks:
+            if not block or block == 'nan':
+                continue
+            ns_info = ns_by_block.get(block, {'truong': '(chưa rõ)', 'activeCount': 0})
+            sl_active = ns_info['activeCount']
+            doi_truong = ns_info['truong']
+
+            # Total Backlog Across All Dates
+            tot_tk = tot_tk_map.get(block, 0)
+            tot_bt = tot_bt_map.get(block, 0)
+            tot_all = tot_tk + tot_bt
+
+            # Date X (d0)
+            ca1_0 = d0_shifts.get(block, 0)
+            tk_0 = tk_0_map.get(block, 0)
+            bt_0 = bt_0_map.get(block, 0)
+            ton_0 = tk_0 + bt_0
+
+            ti_le_truc = round((ca1_0 / sl_active) * 100.0, 1) if sl_active > 0 else 0.0
+            ton_per_ns = round(ton_0 / ca1_0, 2) if ca1_0 > 0 else ("∞" if ton_0 > 0 else 0)
+            ton_du_kien = round(tot_all / sl_active, 2) if sl_active > 0 else ("∞" if tot_all > 0 else 0)
+
+            # Date X+1 (d1)
+            ca1_1 = d1_shifts.get(block, 0)
+            tk_1 = tk_1_map.get(block, 0)
+            bt_1 = bt_1_map.get(block, 0)
+            ton_1 = tk_1 + bt_1
+            ton_du_kien_1 = round(ton_1 / ca1_1, 2) if ca1_1 > 0 else ("∞" if ton_1 > 0 else 0)
+
+            # Date X+2 (d2)
+            ca1_2 = d2_shifts.get(block, 0)
+            tk_2 = tk_2_map.get(block, 0)
+            bt_2 = bt_2_map.get(block, 0)
+            ton_2 = tk_2 + bt_2
+            ton_du_kien_2 = round(ton_2 / ca1_2, 2) if ca1_2 > 0 else ("∞" if ton_2 > 0 else 0)
+
+            summary_table.append({
+                'block': block,
+                'doiTruong': doi_truong,
+                'slActive': sl_active,
+                'totTK': tot_tk,
+                'totBT': tot_bt,
+                'totAll': tot_all,
+                'tonTK0': tk_0,
+                'tonBT0': bt_0,
+                'ton0': ton_0,
+                'ca1Ngay0': ca1_0,
+                'tiLeTruc': ti_le_truc,
+                'tonPerNs': ton_per_ns,
+                'tonDuKien': ton_du_kien,
+                'ca1Ngay1': ca1_1,
+                'ton1': ton_1,
+                'tonDuKien1': ton_du_kien_1,
+                'ca1Ngay2': ca1_2,
+                'ton2': ton_2,
+                'tonDuKien2': ton_du_kien_2
+            })
+
+        ca1_total_0 = sum(r['ca1Ngay0'] for r in summary_table)
+        active_total = sum(r['slActive'] for r in summary_table)
+        ton_total_sum = sum(r['totAll'] for r in summary_table)
+
+        return {
+            'generatedAt': datetime.datetime.now().strftime('%d/%m/%Y %H:%M'),
+            'date0': d0.strftime('%d/%m/%Y'),
+            'date1': d1.strftime('%d/%m/%Y'),
+            'date2': d2.strftime('%d/%m/%Y'),
+            'ca1Total0': ca1_total_0,
+            'activeTotal': active_total,
+            'tonTotal': ton_total_sum,
+            'summaryTable': summary_table
+        }
+
+    def get_lich_truc_chitiet(self, month=0, year=0, doi_truong="__ALL__"):
+        header = ['CodeStaff', 'Name', 'Partner', 'Block'] + [f'Day{i}' for i in range(1, 32)] + ['Months', 'Years']
+        data = []
+
+        if not hasattr(self, 'lt_df') or self.lt_df.empty:
+            return {'header': header, 'data': []}
+
+        _, hr_map = self._get_nhan_su_by_block()
+        target_month = int(month) if month and int(month) > 0 else datetime.datetime.now().month
+        target_year = int(year) if year and int(year) > 0 else datetime.datetime.now().year
+
+        for idx, r in self.lt_df.iterrows():
+            vals = list(r.values)
+            if len(vals) < 38:
+                continue
+
+            m_raw = str(vals[36] or '').strip()
+            y_raw = str(vals[37] or '').strip()
+
+            m_match = re.search(r'\d+', m_raw)
+            y_match = re.search(r'\d+', y_raw)
+
+            if not m_match or not y_match:
+                continue
+
+            row_month = int(m_match.group(0))
+            row_year = int(y_match.group(0))
+
+            if target_month > 0 and row_month != target_month:
+                continue
+            if target_year > 0 and row_year != target_year:
+                continue
+
+            mail = str(vals[0] or '').strip().upper()
+            info = hr_map.get(mail, {})
+            lead = info.get('truong') or ''
+
+            if doi_truong and doi_truong != "__ALL__" and lead != doi_truong:
+                continue
+
+            # Extract values B..AL (indices 1 to 37)
+            vals_b_al = [str(vals[i] or '').strip() for i in range(1, 38)]
+
+            data.append({
+                'row': idx + 2,
+                'mail': mail,
+                'doiTruong': lead,
+                'values': vals_b_al
+            })
+
+        return {
+            'header': header,
+            'data': data
+        }
+
+    def add_lich_truc_row(self, mail: str, values_b_to_al: list):
+        new_row = [mail] + [str(v) for v in values_b_to_al]
+        if not hasattr(self, 'lt_df') or self.lt_df.empty:
+            header = ['Mail', 'CodeStaff', 'Name', 'Partner', 'Block'] + [f'Day{i}' for i in range(1, 32)] + ['Months', 'Years']
+            self.lt_df = pd.DataFrame([header, new_row])
+        else:
+            new_df = pd.DataFrame([new_row])
+            self.lt_df = pd.concat([self.lt_df, new_df], ignore_index=True)
+        
+        self.lt_df.to_pickle(CACHE_DIR / "lt.pkl")
+        return {"ok": True}
+
+    def update_lich_truc_row(self, row_number: int, values_b_to_al: list):
+        if not hasattr(self, 'lt_df') or self.lt_df.empty:
+            return {"ok": False, "error": "No Lịch Trực data loaded"}
+        
+        df_idx = row_number - 2
+        if 0 <= df_idx < len(self.lt_df):
+            for i, val in enumerate(values_b_to_al):
+                col_target = i + 1
+                if col_target < self.lt_df.shape[1]:
+                    self.lt_df.iloc[df_idx, col_target] = str(val)
+            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl")
+            return {"ok": True}
+        return {"ok": False, "error": "Invalid row index"}
+
+    def delete_lich_truc_row(self, row_number: int):
+        if not hasattr(self, 'lt_df') or self.lt_df.empty:
+            return {"ok": False, "error": "No Lịch Trực data loaded"}
+        
+        df_idx = row_number - 2
+        if 0 <= df_idx < len(self.lt_df):
+            self.lt_df = self.lt_df.drop(self.lt_df.index[df_idx]).reset_index(drop=True)
+            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl")
+            return {"ok": True}
+        return {"ok": False, "error": "Invalid row index"}
+
+    def import_lich_truc_rows(self, rows_data: list):
+        new_rows = []
+        for r in rows_data:
+            if isinstance(r, list) and len(r) >= 38:
+                new_rows.append([str(v) for v in r[:38]])
+            elif isinstance(r, dict):
+                m = str(r.get('mail', '')).strip()
+                v = r.get('valuesBtoAL', [])
+                if m and len(v) >= 37:
+                    new_rows.append([m] + [str(x) for x in v[:37]])
+        
+        if new_rows:
+            new_df = pd.DataFrame(new_rows)
+            if not hasattr(self, 'lt_df') or self.lt_df.empty:
+                header = ['Mail', 'CodeStaff', 'Name', 'Partner', 'Block'] + [f'Day{i}' for i in range(1, 32)] + ['Months', 'Years']
+                self.lt_df = pd.DataFrame([header] + new_rows)
+            else:
+                self.lt_df = pd.concat([self.lt_df, new_df], ignore_index=True)
+            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl")
+            return {"ok": True, "count": len(new_rows)}
+        return {"ok": False, "error": "No valid rows to import"}
+
