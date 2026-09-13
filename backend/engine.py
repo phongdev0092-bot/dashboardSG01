@@ -164,13 +164,13 @@ class KPIEngine:
             url_ton_tk = f'https://docs.google.com/spreadsheets/d/{ton_sid}/export?format=csv&gid=334356138'
             res_ton_tk = requests.get(url_ton_tk, timeout=40)
             df_ton_tk = pd.read_csv(io.BytesIO(res_ton_tk.content), encoding='utf-8', dtype=str, low_memory=False)
-            df_ton_tk.to_pickle(CACHE_DIR / "ton_tk.pkl")
+            df_ton_tk.to_pickle(CACHE_DIR / "ton_tk.pkl.gz")
 
             print("Fetching live Tồn Bảo Trì (GID 1224453787) data...", flush=True)
             url_ton_bt = f'https://docs.google.com/spreadsheets/d/{ton_sid}/export?format=csv&gid=1224453787'
             res_ton_bt = requests.get(url_ton_bt, timeout=40)
             df_ton_bt = pd.read_csv(io.BytesIO(res_ton_bt.content), encoding='utf-8', dtype=str, low_memory=False)
-            df_ton_bt.to_pickle(CACHE_DIR / "ton_bt.pkl")
+            df_ton_bt.to_pickle(CACHE_DIR / "ton_bt.pkl.gz")
 
             print("Fetching live Lich Truc (LT) data...", flush=True)
             df_lt = pd.DataFrame()
@@ -1077,7 +1077,7 @@ class KPIEngine:
             new_df = pd.DataFrame([new_row])
             self.lt_df = pd.concat([self.lt_df, new_df], ignore_index=True)
         
-        self.lt_df.to_pickle(CACHE_DIR / "lt.pkl")
+        self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
         return {"ok": True}
 
     def update_lich_truc_row(self, row_number: int, values_b_to_al: list):
@@ -1090,7 +1090,7 @@ class KPIEngine:
                 col_target = i + 1
                 if col_target < self.lt_df.shape[1]:
                     self.lt_df.iloc[df_idx, col_target] = str(val)
-            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl")
+            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
             return {"ok": True}
         return {"ok": False, "error": "Invalid row index"}
 
@@ -1101,7 +1101,7 @@ class KPIEngine:
         df_idx = row_number - 2
         if 0 <= df_idx < len(self.lt_df):
             self.lt_df = self.lt_df.drop(self.lt_df.index[df_idx]).reset_index(drop=True)
-            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl")
+            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
             return {"ok": True}
         return {"ok": False, "error": "Invalid row index"}
 
@@ -1123,7 +1123,7 @@ class KPIEngine:
                 self.lt_df = pd.DataFrame([header] + new_rows)
             else:
                 self.lt_df = pd.concat([self.lt_df, new_df], ignore_index=True)
-            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl")
+            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
             return {"ok": True, "count": len(new_rows)}
         return {"ok": False, "error": "No valid rows to import"}
 
