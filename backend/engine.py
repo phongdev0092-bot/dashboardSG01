@@ -86,12 +86,14 @@ class KPIEngine:
                         res_cll = requests.get(url_cll, timeout=60)
                         if res_cll.status_code == 200:
                             df_cll = pd.read_csv(io.BytesIO(res_cll.content), encoding='utf-8', low_memory=False, dtype=str)
+                            col_hd = df_cll.columns[0] if len(df_cll.columns) > 0 else 'Số HĐ'
                             col_nv = df_cll.columns[3] if len(df_cll.columns) > 3 else 'Nhân viên'
                             col_tg = df_cll.columns[6] if len(df_cll.columns) > 6 else 'Tg hoàn tất'
+                            df_cll['Số HĐ'] = df_cll[col_hd].astype(str).str.strip().str.upper()
                             df_cll['Nhân viên'] = df_cll[col_nv].astype(str).str.strip().str.upper()
                             df_cll['dt_complete'] = pd.to_datetime(df_cll[col_tg], dayfirst=True, errors='coerce')
                             df_cll['date_complete'] = df_cll['dt_complete'].dt.date
-                            df_cll = df_cll[['Nhân viên', 'date_complete', 'dt_complete']]
+                            df_cll = df_cll[['Số HĐ', 'Nhân viên', 'date_complete', 'dt_complete']]
                             df_cll.to_pickle(CACHE_DIR / "cll30n.pkl.gz")
                             self.cll30n_df = df_cll
                             print(f"Fetched & cached CLL30N data! {len(df_cll)} rows", flush=True)
@@ -106,12 +108,14 @@ class KPIEngine:
                         res_cls = requests.get(url_cls, timeout=60)
                         if res_cls.status_code == 200:
                             df_cls = pd.read_csv(io.BytesIO(res_cls.content), encoding='utf-8', low_memory=False, dtype=str, on_bad_lines='skip')
+                            col_hd = df_cls.columns[0] if len(df_cls.columns) > 0 else 'Số HĐ'
                             col_nv = df_cls.columns[3] if len(df_cls.columns) > 3 else 'Nhân viên'
                             col_tg = df_cls.columns[6] if len(df_cls.columns) > 6 else 'Tg hoàn tất'
+                            df_cls['Số HĐ'] = df_cls[col_hd].astype(str).str.strip().str.upper()
                             df_cls['Nhân viên'] = df_cls[col_nv].astype(str).str.strip().str.upper()
                             df_cls['dt_complete'] = pd.to_datetime(df_cls[col_tg], dayfirst=True, errors='coerce')
                             df_cls['date_complete'] = df_cls['dt_complete'].dt.date
-                            df_cls = df_cls[['Nhân viên', 'date_complete', 'dt_complete']]
+                            df_cls = df_cls[['Số HĐ', 'Nhân viên', 'date_complete', 'dt_complete']]
                             df_cls.to_pickle(CACHE_DIR / "kh_cls.pkl.gz")
                             self.kh_cls_df = df_cls
                     except Exception as e_cls:
@@ -240,22 +244,26 @@ class KPIEngine:
 
             # Process CLL30N
             if not df_cll30n.empty:
+                col_hd = df_cll30n.columns[0] if len(df_cll30n.columns) > 0 else 'Số HĐ'
                 col_nv = df_cll30n.columns[3] if len(df_cll30n.columns) > 3 else 'Nhân viên'
                 col_tg = df_cll30n.columns[6] if len(df_cll30n.columns) > 6 else 'Tg hoàn tất'
+                df_cll30n['Số HĐ'] = df_cll30n[col_hd].astype(str).str.strip().str.upper()
                 df_cll30n['Nhân viên'] = df_cll30n[col_nv].astype(str).str.strip().str.upper()
                 df_cll30n['dt_complete'] = pd.to_datetime(df_cll30n[col_tg], dayfirst=True, errors='coerce')
                 df_cll30n['date_complete'] = df_cll30n['dt_complete'].dt.date
-                df_cll30n = df_cll30n[['Nhân viên', 'date_complete', 'dt_complete']]
+                df_cll30n = df_cll30n[['Số HĐ', 'Nhân viên', 'date_complete', 'dt_complete']]
                 df_cll30n.to_pickle(CACHE_DIR / "cll30n.pkl.gz")
 
             # Process KH Co Cls
             if not df_kh_cls.empty:
+                col_hd = df_kh_cls.columns[0] if len(df_kh_cls.columns) > 0 else 'Số HĐ'
                 col_nv = df_kh_cls.columns[3] if len(df_kh_cls.columns) > 3 else 'Nhân viên'
                 col_tg = df_kh_cls.columns[6] if len(df_kh_cls.columns) > 6 else 'Tg hoàn tất'
+                df_kh_cls['Số HĐ'] = df_kh_cls[col_hd].astype(str).str.strip().str.upper()
                 df_kh_cls['Nhân viên'] = df_kh_cls[col_nv].astype(str).str.strip().str.upper()
                 df_kh_cls['dt_complete'] = pd.to_datetime(df_kh_cls[col_tg], dayfirst=True, errors='coerce')
                 df_kh_cls['date_complete'] = df_kh_cls['dt_complete'].dt.date
-                df_kh_cls = df_kh_cls[['Nhân viên', 'date_complete', 'dt_complete']]
+                df_kh_cls = df_kh_cls[['Số HĐ', 'Nhân viên', 'date_complete', 'dt_complete']]
                 df_kh_cls.to_pickle(CACHE_DIR / "kh_cls.pkl.gz")
 
             # Save to Cache
@@ -329,17 +337,8 @@ class KPIEngine:
             tk = tk[tk['date_complete'] <= e_d]
             bt = bt[bt['date_complete'] <= e_d]
 
-        # Filter CLL30N & KH Co Cls
-        cll = self.cll30n_df.copy() if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
+        # Filter KH Co Cls by date range
         cls = self.kh_cls_df.copy() if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else pd.DataFrame()
-
-        if not cll.empty and 'date_complete' in cll.columns:
-            if start_date:
-                s_d = pd.to_datetime(start_date).date()
-                cll = cll[cll['date_complete'] >= s_d]
-            if end_date:
-                e_d = pd.to_datetime(end_date).date()
-                cll = cll[cll['date_complete'] <= e_d]
 
         if not cls.empty and 'date_complete' in cls.columns:
             if start_date:
@@ -367,14 +366,21 @@ class KPIEngine:
                 if s in k or s in v['name'].upper() or s in str(v['code']).upper()
             }
 
-        # Filter TK & BT & CLL by allowed accounts if any filter is set
+        # Filter TK & BT & CLS by allowed accounts if any filter is set
         if team_lead or region or partner or block or search:
             tk = tk[tk['Nhân viên'].isin(allowed_accounts)]
             bt = bt[bt['Nhân viên'].isin(allowed_accounts)]
-            if not cll.empty and 'Nhân viên' in cll.columns:
-                cll = cll[cll['Nhân viên'].isin(allowed_accounts)]
             if not cls.empty and 'Nhân viên' in cls.columns:
                 cls = cls[cls['Nhân viên'].isin(allowed_accounts)]
+
+        # Match contracts in filtered KH Co Cls against full Sheet CLL30N (pairs of NV and Số HĐ)
+        cll_df_all = self.cll30n_df if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
+        cll_pair_set = set(zip(cll_df_all['Nhân viên'], cll_df_all['Số HĐ'])) if not cll_df_all.empty else set()
+
+        if not cls.empty:
+            cls['is_cll'] = [(nv, hd) in cll_pair_set for nv, hd in zip(cls['Nhân viên'], cls['Số HĐ'])]
+        else:
+            cls['is_cll'] = []
 
         # 2. Overall Aggregations
         # TK Valid (Excluding Gsafe and Swap for KPIs)
@@ -401,8 +407,8 @@ class KPIEngine:
         total_dh_pct = round((tot_1 / tot_all * 100), 2) if tot_all > 0 else 0.0
 
         # CLL30N % Aggregation (Tử số: cll_tot, Mẫu số: cls_tot)
-        cll_tot = len(cll)
         cls_tot = len(cls)
+        cll_tot = int(cls['is_cll'].sum()) if not cls.empty else 0
         cll30n_pct = round((cll_tot / cls_tot * 100), 2) if cls_tot > 0 else 0.0
 
         # Status rules:
@@ -420,8 +426,6 @@ class KPIEngine:
 
         # 3. Employee-level Aggregations
         active_accs = set(tk['Nhân viên'].dropna().unique()) | set(bt['Nhân viên'].dropna().unique())
-        if not cll.empty and 'Nhân viên' in cll.columns:
-            active_accs |= set(cll['Nhân viên'].dropna().unique())
         if not cls.empty and 'Nhân viên' in cls.columns:
             active_accs |= set(cls['Nhân viên'].dropna().unique())
 
@@ -435,7 +439,6 @@ class KPIEngine:
         tk_swap_grp = tk_swap.groupby('Nhân viên')
         tk_gsafe_grp = tk_gsafe.groupby('Nhân viên')
         bt_grp = bt.groupby('Nhân viên')
-        cll_grp = cll.groupby('Nhân viên') if not cll.empty and 'Nhân viên' in cll.columns else {}
         cls_grp = cls.groupby('Nhân viên') if not cls.empty and 'Nhân viên' in cls.columns else {}
 
         # Cache pre-aggregated dicts
@@ -466,7 +469,7 @@ class KPIEngine:
             } for acc, group in bt_grp
         }
 
-        cll_dict = {acc: len(group) for acc, group in cll_grp} if not isinstance(cll_grp, dict) else {}
+        cll_dict = {acc: int(group['is_cll'].sum()) for acc, group in cls_grp} if not isinstance(cls_grp, dict) else {}
         cls_dict = {acc: len(group) for acc, group in cls_grp} if not isinstance(cls_grp, dict) else {}
 
         for acc in sorted(active_accs):
