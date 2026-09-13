@@ -83,14 +83,15 @@ class KPIEngine:
                     try:
                         print("Fetching live CLL30N data for cache...", flush=True)
                         url_cll = f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=168764867'
-                        res_cll = requests.get(url_cll, timeout=30)
+                        res_cll = requests.get(url_cll, timeout=60)
                         if res_cll.status_code == 200:
                             df_cll = pd.read_csv(io.BytesIO(res_cll.content), encoding='utf-8', low_memory=False, dtype=str)
                             col_nv = df_cll.columns[3] if len(df_cll.columns) > 3 else 'Nhân viên'
                             col_tg = df_cll.columns[6] if len(df_cll.columns) > 6 else 'Tg hoàn tất'
                             df_cll['Nhân viên'] = df_cll[col_nv].astype(str).str.strip().str.upper()
-                            df_cll['dt_complete'] = pd.to_datetime(df_cll[col_tg], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                            df_cll['dt_complete'] = pd.to_datetime(df_cll[col_tg], dayfirst=True, errors='coerce')
                             df_cll['date_complete'] = df_cll['dt_complete'].dt.date
+                            df_cll = df_cll[['Nhân viên', 'date_complete', 'dt_complete']]
                             df_cll.to_pickle(CACHE_DIR / "cll30n.pkl.gz")
                             self.cll30n_df = df_cll
                             print(f"Fetched & cached CLL30N data! {len(df_cll)} rows", flush=True)
@@ -102,18 +103,19 @@ class KPIEngine:
                 else:
                     try:
                         url_cls = 'https://docs.google.com/spreadsheets/d/1JtMBIXmgQ37ne9a_QYb6ZuN6mWwgJHIC-kSjKEb-56w/export?format=csv&gid=0'
-                        res_cls = requests.get(url_cls, timeout=15)
+                        res_cls = requests.get(url_cls, timeout=60)
                         if res_cls.status_code == 200:
                             df_cls = pd.read_csv(io.BytesIO(res_cls.content), encoding='utf-8', low_memory=False, dtype=str, on_bad_lines='skip')
                             col_nv = df_cls.columns[3] if len(df_cls.columns) > 3 else 'Nhân viên'
-                            col_tg = df_cls.columns[6] if len(df_cls.columns) > 6 else 'TG Hoàn Tất'
+                            col_tg = df_cls.columns[6] if len(df_cls.columns) > 6 else 'Tg hoàn tất'
                             df_cls['Nhân viên'] = df_cls[col_nv].astype(str).str.strip().str.upper()
-                            df_cls['dt_complete'] = pd.to_datetime(df_cls[col_tg], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                            df_cls['dt_complete'] = pd.to_datetime(df_cls[col_tg], dayfirst=True, errors='coerce')
                             df_cls['date_complete'] = df_cls['dt_complete'].dt.date
+                            df_cls = df_cls[['Nhân viên', 'date_complete', 'dt_complete']]
                             df_cls.to_pickle(CACHE_DIR / "kh_cls.pkl.gz")
                             self.kh_cls_df = df_cls
-                    except Exception:
-                        pass
+                    except Exception as e_cls:
+                        print(f"Warning: Failed to fetch KH Co Cls: {e_cls}", flush=True)
 
                 self.last_sync_time = datetime.datetime.fromtimestamp(hr_cache.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
                 self._process_metadata()
@@ -241,17 +243,19 @@ class KPIEngine:
                 col_nv = df_cll30n.columns[3] if len(df_cll30n.columns) > 3 else 'Nhân viên'
                 col_tg = df_cll30n.columns[6] if len(df_cll30n.columns) > 6 else 'Tg hoàn tất'
                 df_cll30n['Nhân viên'] = df_cll30n[col_nv].astype(str).str.strip().str.upper()
-                df_cll30n['dt_complete'] = pd.to_datetime(df_cll30n[col_tg], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                df_cll30n['dt_complete'] = pd.to_datetime(df_cll30n[col_tg], dayfirst=True, errors='coerce')
                 df_cll30n['date_complete'] = df_cll30n['dt_complete'].dt.date
+                df_cll30n = df_cll30n[['Nhân viên', 'date_complete', 'dt_complete']]
                 df_cll30n.to_pickle(CACHE_DIR / "cll30n.pkl.gz")
 
             # Process KH Co Cls
             if not df_kh_cls.empty:
                 col_nv = df_kh_cls.columns[3] if len(df_kh_cls.columns) > 3 else 'Nhân viên'
-                col_tg = df_kh_cls.columns[6] if len(df_kh_cls.columns) > 6 else 'TG Hoàn Tất'
+                col_tg = df_kh_cls.columns[6] if len(df_kh_cls.columns) > 6 else 'Tg hoàn tất'
                 df_kh_cls['Nhân viên'] = df_kh_cls[col_nv].astype(str).str.strip().str.upper()
-                df_kh_cls['dt_complete'] = pd.to_datetime(df_kh_cls[col_tg], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                df_kh_cls['dt_complete'] = pd.to_datetime(df_kh_cls[col_tg], dayfirst=True, errors='coerce')
                 df_kh_cls['date_complete'] = df_kh_cls['dt_complete'].dt.date
+                df_kh_cls = df_kh_cls[['Nhân viên', 'date_complete', 'dt_complete']]
                 df_kh_cls.to_pickle(CACHE_DIR / "kh_cls.pkl.gz")
 
             # Save to Cache
@@ -505,8 +509,8 @@ class KPIEngine:
 
             # Employee evaluation rule statuses
             e_dh_status = 'PASS' if e_tot_dh >= 97.2 else 'FAIL'
-            e_rt_tk_status = 'PASS' if (pd.isna(rt_tk_val) or rt_tk_val <= 18.0) else 'FAIL'
-            e_rt_bt_status = 'PASS' if (pd.isna(rt_bt_val) or rt_bt_val <= 8.0) else 'FAIL'
+            e_rt_tk_status = 'PASS' if (rt_tk_val is not None and not pd.isna(rt_tk_val) and rt_tk_val <= 18.0) else ('FAIL' if (rt_tk_val is not None and not pd.isna(rt_tk_val)) else 'NONE')
+            e_rt_bt_status = 'PASS' if (rt_bt_val is not None and not pd.isna(rt_bt_val) and rt_bt_val <= 8.0) else ('FAIL' if (rt_bt_val is not None and not pd.isna(rt_bt_val)) else 'NONE')
             e_cll30n_status = 'PASS' if e_cll30n_pct <= 7.0 else 'FAIL'
 
             emp_rows.append({

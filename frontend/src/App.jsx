@@ -1360,10 +1360,10 @@ export default function App() {
                               {/* Progress RT Columns */}
                               <TableCell align="center">
                                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.3 }}>
-                                  <Typography variant="body2" sx={{ fontWeight: 700, color: emp.rt_tk_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 700, color: emp.rt_tk_status === 'PASS' ? '#2e7d32' : (emp.rt_tk_status === 'FAIL' ? '#d32f2f' : '#5f6368') }}>
                                     {emp.rt_tk_fmt || '-'}
                                   </Typography>
-                                  {emp.rt_tk_hours && (
+                                  {emp.rt_tk_status && emp.rt_tk_status !== 'NONE' && (
                                     <Chip
                                       label={emp.rt_tk_status === 'PASS' ? 'Đạt' : 'Không đạt'}
                                       size="small"
@@ -1376,10 +1376,10 @@ export default function App() {
 
                               <TableCell align="center" sx={{ borderRight: '1px solid #ffe0b2' }}>
                                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.3 }}>
-                                  <Typography variant="body2" sx={{ fontWeight: 700, color: emp.rt_bt_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 700, color: emp.rt_bt_status === 'PASS' ? '#2e7d32' : (emp.rt_bt_status === 'FAIL' ? '#d32f2f' : '#5f6368') }}>
                                     {emp.rt_bt_fmt || '-'}
                                   </Typography>
-                                  {emp.rt_bt_hours && (
+                                  {emp.rt_bt_status && emp.rt_bt_status !== 'NONE' && (
                                     <Chip
                                       label={emp.rt_bt_status === 'PASS' ? 'Đạt' : 'Không đạt'}
                                       size="small"
@@ -1402,10 +1402,10 @@ export default function App() {
                                 </Box>
                               </TableCell>
 
-                              {/* Commit Percentages */}
+                              {/* Total Đúng Hẹn Percentage Column */}
                               <TableCell align="center" sx={{ backgroundColor: '#f6fbf7' }}>
                                 <Chip
-                                  label={`${emp.total_dung_hen_pct || 0}%`}
+                                  label={emp.total_dung_hen_pct >= 97.2 ? `${emp.total_dung_hen_pct || 0}% Đạt` : `${emp.total_dung_hen_pct || 0}% Không Đạt`}
                                   size="small"
                                   color={emp.total_dung_hen_pct >= 97.2 ? 'success' : 'error'}
                                   sx={{ fontWeight: 800, borderRadius: '12px' }}
