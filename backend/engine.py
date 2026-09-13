@@ -389,9 +389,12 @@ class KPIEngine:
 
         # Match contracts in filtered KH Co Cls against full Sheet CLL30N (pairs of NV and Số HĐ)
         cll_df_all = self.cll30n_df if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
-        cll_pair_set = set(zip(cll_df_all['Nhân viên'], cll_df_all['Số HĐ'])) if not cll_df_all.empty else set()
+        if not cll_df_all.empty and 'Nhân viên' in cll_df_all.columns and 'Số HĐ' in cll_df_all.columns:
+            cll_pair_set = set(zip(cll_df_all['Nhân viên'], cll_df_all['Số HĐ']))
+        else:
+            cll_pair_set = set()
 
-        if not cls.empty:
+        if not cls.empty and 'Nhân viên' in cls.columns and 'Số HĐ' in cls.columns:
             cls['is_cll'] = [(nv, hd) in cll_pair_set for nv, hd in zip(cls['Nhân viên'], cls['Số HĐ'])]
         else:
             cls['is_cll'] = []
@@ -665,6 +668,18 @@ class KPIEngine:
                 'rt_fmt': self.format_rt(row.get('rt_hours')),
                 'is_gsafe': bool(row.get('is_gsafe', False)),
                 'is_swap': bool(row.get('is_swap', False))
+            })
+
+        # BT tickets list
+        bt_list = []
+        for _, row in bt.iterrows():
+            bt_list.append({
+                'contract_no': str(row.get('Số HĐ', '')),
+                'customer_name': str(row.get('Khách hàng', '') or row.get('Tên khách hàng', '')),
+                'dt_created': str(row.get('TG Tạo', '')),
+                'dt_complete': str(row.get('TG Hoàn Tất', '')),
+                'dung_hen': int(row.get('dung_hen', 0)),
+                'rt_fmt': self.format_rt(row.get('rt_hours'))
             })
 
         # CLL tickets list
