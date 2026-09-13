@@ -48,12 +48,18 @@ class KPIEngine:
         return 'https://docs.google.com/spreadsheets/d/1qd8O1bqbtHmbPUO_HhZv07YS9c27bo1QMWh4yvmQr2U/export?format=csv&gid=0'
 
     def load_cache_or_fetch(self):
-        hr_cache = CACHE_DIR / "hr.pkl"
-        tk_cache = CACHE_DIR / "tk.pkl"
-        bt_cache = CACHE_DIR / "bt.pkl"
-        lt_cache = CACHE_DIR / "lt.pkl"
-        ton_tk_cache = CACHE_DIR / "ton_tk.pkl"
-        ton_bt_cache = CACHE_DIR / "ton_bt.pkl"
+        def _get_path(name):
+            gz = CACHE_DIR / f"{name}.pkl.gz"
+            if gz.exists():
+                return gz
+            return CACHE_DIR / f"{name}.pkl"
+
+        hr_cache = _get_path("hr")
+        tk_cache = _get_path("tk")
+        bt_cache = _get_path("bt")
+        lt_cache = _get_path("lt")
+        ton_tk_cache = _get_path("ton_tk")
+        ton_bt_cache = _get_path("ton_bt")
 
         if hr_cache.exists() and tk_cache.exists() and bt_cache.exists():
             try:
