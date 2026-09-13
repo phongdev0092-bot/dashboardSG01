@@ -622,6 +622,7 @@ class KPIEngine:
                 'rt_bt_hours': round(float(rt_bt_avg), 2) if rt_bt_avg and pd.notna(rt_bt_avg) else None,
                 'rt_bt_fmt': self.format_rt(rt_bt_avg),
                 'rt_bt_status': rt_bt_status,
+                'all_bt_type_counts': bt[bt.columns[44]].value_counts().to_dict() if (not bt.empty and len(bt.columns) > 44) else {},
 
                 # CLL30N
                 'cll30n_count': cll_tot,
@@ -671,6 +672,7 @@ class KPIEngine:
             })
 
         # BT tickets list
+        col_as_bt = bt.columns[44] if len(bt.columns) > 44 else 'Tình trang lên phiếu'
         bt_list = []
         for _, row in bt.iterrows():
             bt_list.append({
@@ -679,7 +681,8 @@ class KPIEngine:
                 'dt_created': str(row.get('TG Tạo', '')),
                 'dt_complete': str(row.get('TG Hoàn Tất', '')),
                 'dung_hen': int(row.get('dung_hen', 0)),
-                'rt_fmt': self.format_rt(row.get('rt_hours'))
+                'rt_fmt': self.format_rt(row.get('rt_hours')),
+                'tx_type': str(row.get(col_as_bt, row.get('Tình trang lên phiếu', '-')))
             })
 
         # CLL tickets list

@@ -151,6 +151,7 @@ export default function App() {
 
   // Transaction Details Modal State
   const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [btDetailModalOpen, setBtDetailModalOpen] = useState(false);
 
   // ================= LỊCH TRỰC SYSTEM STATES =================
   const [ltTab, setLtTab] = useState('dashboard'); // 'dashboard' | 'chitiet'
@@ -954,6 +955,23 @@ export default function App() {
                       <Typography variant="caption" sx={{ color: '#00897b', fontWeight: 700, display: 'block', mt: 1 }}>
                         Đúng hẹn BT: {summary.bt_dung_hen_pct || 0}%
                       </Typography>
+
+                      <Button
+                        size="small"
+                        startIcon={<InfoIcon sx={{ fontSize: '15px !important' }} />}
+                        onClick={() => setBtDetailModalOpen(true)}
+                        sx={{
+                          mt: 1,
+                          p: 0,
+                          textTransform: 'none',
+                          fontWeight: 700,
+                          color: '#00897b',
+                          fontSize: '12px',
+                          '&:hover': { backgroundColor: 'transparent', textDecoration: 'underline' }
+                        }}
+                      >
+                        Chi tiết loại phiếu bảo trì
+                      </Button>
                     </CardContent>
                   </Card>
 
@@ -2274,6 +2292,72 @@ export default function App() {
           </DialogActions>
         </Dialog>
 
+        {/* BT TRANSACTION TYPES MODAL */}
+        <Dialog open={btDetailModalOpen} onClose={() => setBtDetailModalOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
+            <Typography variant="h6" sx={{ fontWeight: 800, color: '#202124' }}>
+              CHI TIẾT KHỐI LƯỢNG TỪNG LOẠI PHIẾU BẢO TRÌ (SG01) - CỘT AS
+            </Typography>
+            <IconButton onClick={() => setBtDetailModalOpen(false)}><CloseIcon /></IconButton>
+          </DialogTitle>
+          
+          <DialogContent dividers sx={{ p: 3 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#202124', mb: 1.5 }}>
+              Danh Sách Phân Loại Tình Trạng Lên Phiếu Bảo Trì (Cột AS):
+            </Typography>
+
+            <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2 }}>
+              <Table size="small">
+                <TableHead sx={{ backgroundColor: '#f8f9fa' }}>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 700, width: 60 }}>STT</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Tình Trạng Lên Phiếu Bảo Trì (Cột AS)</TableCell>
+                    <TableCell align="center" sx={{ fontWeight: 700 }}>Số Lượng</TableCell>
+                    <TableCell align="center" sx={{ fontWeight: 700 }}>Tỷ Lệ / Đánh Giá</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {summary.all_bt_type_counts && Object.keys(summary.all_bt_type_counts).length > 0 ? (
+                    Object.entries(summary.all_bt_type_counts)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([type, count], idx) => {
+                        const totalAll = Object.values(summary.all_bt_type_counts).reduce((a, b) => a + b, 0);
+                        const pct = totalAll > 0 ? ((count / totalAll) * 100).toFixed(1) : 0;
+
+                        return (
+                          <TableRow key={type} hover>
+                            <TableCell sx={{ color: '#5f6368' }}>{idx + 1}</TableCell>
+                            <TableCell sx={{ fontWeight: 600, color: '#202124' }}>
+                              {type || '(Trống / Không xác định)'}
+                            </TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 700, color: '#00897b' }}>
+                              {count}
+                            </TableCell>
+                            <TableCell align="center">
+                              <Chip label={`${pct}%`} size="small" sx={{ backgroundColor: '#e0f2f1', color: '#00897b', fontWeight: 700 }} />
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={4} align="center" sx={{ py: 3, color: '#5f6368' }}>
+                        Không tìm thấy dữ liệu phiếu bảo trì trong khoảng thời gian đang lọc.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </DialogContent>
+
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setBtDetailModalOpen(false)} variant="contained" sx={{ backgroundColor: '#00897b', '&:hover': { backgroundColor: '#00695c' }, borderRadius: '18px', textTransform: 'none', px: 3 }}>
+              Đóng
+            </Button>
+          </DialogActions>
+        </Dialog>
+
         {/* EMPLOYEE TICKET DETAILS DRAWER */}
         <Drawer
           anchor="right"
@@ -2369,7 +2453,10 @@ export default function App() {
                       {empDetails?.bt_tickets?.map((t, idx) => (
                         <TableRow key={idx}>
                           <TableCell sx={{ fontWeight: 600 }}>{t.contract_no}</TableCell>
-                          <TableCell>{t.customer_name}</TableCell>
+                          <TableCell>
+                            <Typography variant="body2">{t.customer_name}</Typography>
+                            {t.tx_type && <Typography variant="caption" sx={{ color: '#00897b', display: 'block' }}>{t.tx_type}</Typography>}
+                          </TableCell>
                           <TableCell>
                             <Typography variant="caption" sx={{ display: 'block' }}>Tạo: {t.dt_created}</Typography>
                             <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>Xong: {t.dt_complete}</Typography>
