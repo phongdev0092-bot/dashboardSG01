@@ -580,6 +580,14 @@ class KPIEngine:
 
         execution_time_ms = round((time.time() - t0) * 1000, 2)
 
+        col_as_bt = next((c for c in bt.columns if 'phi' in str(c).lower() and 'trang' in str(c).lower()), None)
+        if not col_as_bt and len(bt.columns) > 44:
+            col_as_bt = bt.columns[44]
+
+        all_bt_type_counts = {}
+        if not bt.empty and col_as_bt and col_as_bt in bt.columns:
+            all_bt_type_counts = bt[col_as_bt].fillna('(Trống / Không xác định)').astype(str).str.strip().value_counts().to_dict()
+
         return {
             'metadata': {
                 'last_sync_time': self.last_sync_time,
@@ -622,7 +630,7 @@ class KPIEngine:
                 'rt_bt_hours': round(float(rt_bt_avg), 2) if rt_bt_avg and pd.notna(rt_bt_avg) else None,
                 'rt_bt_fmt': self.format_rt(rt_bt_avg),
                 'rt_bt_status': rt_bt_status,
-                'all_bt_type_counts': bt[bt.columns[44]].value_counts().to_dict() if (not bt.empty and len(bt.columns) > 44) else {},
+                'all_bt_type_counts': all_bt_type_counts,
 
                 # CLL30N
                 'cll30n_count': cll_tot,
@@ -672,7 +680,9 @@ class KPIEngine:
             })
 
         # BT tickets list
-        col_as_bt = bt.columns[44] if len(bt.columns) > 44 else 'Tình trang lên phiếu'
+        col_as_bt = next((c for c in bt.columns if 'phi' in str(c).lower() and 'trang' in str(c).lower()), None)
+        if not col_as_bt and len(bt.columns) > 44:
+            col_as_bt = bt.columns[44]
         bt_list = []
         for _, row in bt.iterrows():
             bt_list.append({
@@ -682,7 +692,7 @@ class KPIEngine:
                 'dt_complete': str(row.get('TG Hoàn Tất', '')),
                 'dung_hen': int(row.get('dung_hen', 0)),
                 'rt_fmt': self.format_rt(row.get('rt_hours')),
-                'tx_type': str(row.get(col_as_bt, row.get('Tình trang lên phiếu', '-')))
+                'tx_type': str(row.get(col_as_bt, '-')) if col_as_bt else '-'
             })
 
         # CLL tickets list

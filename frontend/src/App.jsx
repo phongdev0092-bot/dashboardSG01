@@ -2296,14 +2296,14 @@ export default function App() {
         <Dialog open={btDetailModalOpen} onClose={() => setBtDetailModalOpen(false)} maxWidth="md" fullWidth>
           <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
             <Typography variant="h6" sx={{ fontWeight: 800, color: '#202124' }}>
-              CHI TIẾT KHỐI LƯỢNG TỪNG LOẠI PHIẾU BẢO TRÌ (SG01) - CỘT AS
+              CHI TIẾT KHỐI LƯỢNG TỪNG LOẠI PHIẾU BẢO TRÌ (SG01)
             </Typography>
             <IconButton onClick={() => setBtDetailModalOpen(false)}><CloseIcon /></IconButton>
           </DialogTitle>
           
           <DialogContent dividers sx={{ p: 3 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#202124', mb: 1.5 }}>
-              Danh Sách Phân Loại Tình Trạng Lên Phiếu Bảo Trì (Cột AS):
+              Danh Sách Phân Loại Tình Trạng Lên Phiếu Bảo Trì:
             </Typography>
 
             <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2 }}>
@@ -2311,7 +2311,7 @@ export default function App() {
                 <TableHead sx={{ backgroundColor: '#f8f9fa' }}>
                   <TableRow>
                     <TableCell sx={{ fontWeight: 700, width: 60 }}>STT</TableCell>
-                    <TableCell sx={{ fontWeight: 700 }}>Tình Trạng Lên Phiếu Bảo Trì (Cột AS)</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Tình Trạng Lên Phiếu Bảo Trì</TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700 }}>Số Lượng</TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700 }}>Tỷ Lệ / Đánh Giá</TableCell>
                   </TableRow>
@@ -2485,8 +2485,8 @@ export default function App() {
                         <TableCell sx={{ fontWeight: 700 }}>Số HĐ</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Khách Hàng</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>TG Hoàn Tất</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Tình Trạng Đầu Vào (Col AF)</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Hướng Xử Lý (Col AI)</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Tình Trạng Đầu Vào</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Hướng Xử Lý</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
