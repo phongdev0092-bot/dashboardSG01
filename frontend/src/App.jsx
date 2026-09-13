@@ -1392,31 +1392,32 @@ export default function App() {
 
                               {/* CLL30N Column */}
                               <TableCell align="center" sx={{ backgroundColor: '#fcf8fe', borderRight: '1px solid #e1bee7' }}>
-                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.3 }}>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.2 }}>
                                   <Typography variant="body2" sx={{ fontWeight: 800, color: emp.cll30n_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
                                     {emp.cll30n_pct || 0}%
                                   </Typography>
-                                  <Chip
-                                    label={emp.cll30n_status === 'PASS' ? 'Đạt' : 'Không đạt'}
-                                    size="small"
-                                    color={emp.cll30n_status === 'PASS' ? 'success' : 'error'}
-                                    sx={{ height: 18, fontSize: '10px', fontWeight: 800 }}
-                                  />
+                                  <Typography variant="caption" sx={{ color: '#5f6368', fontSize: '10px' }}>
+                                    ({emp.cll30n_count || 0} HĐ)
+                                  </Typography>
                                 </Box>
                               </TableCell>
 
                               {/* Commit Percentages */}
                               <TableCell align="center" sx={{ backgroundColor: '#f6fbf7' }}>
                                 <Chip
-                                  label={`${emp.total_dung_hen_pct || 0}% (${emp.dung_hen_status === 'PASS' ? 'Đạt' : 'Không đạt'})`}
+                                  label={`${emp.total_dung_hen_pct || 0}%`}
                                   size="small"
-                                  color={emp.dung_hen_status === 'PASS' ? 'success' : 'error'}
+                                  color={emp.total_dung_hen_pct >= 97.2 ? 'success' : 'error'}
                                   sx={{ fontWeight: 800, borderRadius: '12px' }}
                                 />
                               </TableCell>
 
-                              <TableCell align="center" sx={{ color: '#1e8e3e', fontWeight: 700 }}>{emp.tk_dung_hen_pct || 0}%</TableCell>
-                              <TableCell align="center" sx={{ color: '#1e8e3e', fontWeight: 700, borderRight: '1px solid #ceead6' }}>{emp.bt_dung_hen_pct || 0}%</TableCell>
+                              <TableCell align="center" sx={{ color: emp.tk_dung_hen_pct >= 97.2 ? '#2e7d32' : '#d32f2f', fontWeight: 800 }}>
+                                {emp.tk_dung_hen_pct || 0}%
+                              </TableCell>
+                              <TableCell align="center" sx={{ color: emp.bt_dung_hen_pct >= 97.2 ? '#2e7d32' : '#d32f2f', fontWeight: 800, borderRight: '1px solid #ceead6' }}>
+                                {emp.bt_dung_hen_pct || 0}%
+                              </TableCell>
 
                               <TableCell align="center">
                                 <Button

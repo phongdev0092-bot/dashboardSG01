@@ -396,10 +396,11 @@ class KPIEngine:
         tot_all = tk_tot + bt_tot
         total_dh_pct = round((tot_1 / tot_all * 100), 2) if tot_all > 0 else 0.0
 
-        # CLL30N % Aggregation
+        # CLL30N % Aggregation (Tử số: cll_tot, Mẫu số: cls_tot if available, else bt_tot fallback)
         cll_tot = len(cll)
         cls_tot = len(cls)
-        cll30n_pct = round((cll_tot / cls_tot * 100), 2) if cls_tot > 0 else 0.0
+        effective_cls_tot = cls_tot if cls_tot > 0 else (bt_tot if bt_tot > 0 else 0)
+        cll30n_pct = round((cll_tot / effective_cls_tot * 100), 2) if effective_cls_tot > 0 else 0.0
 
         # Status rules:
         # 1. Đúng Hẹn >= 97.2% -> PASS
@@ -501,7 +502,8 @@ class KPIEngine:
             # Employee CLL30N calculation
             e_cll_count = cll_dict.get(acc, 0)
             e_cls_count = cls_dict.get(acc, 0)
-            e_cll30n_pct = round((e_cll_count / e_cls_count * 100), 2) if e_cls_count > 0 else 0.0
+            e_effective_cls = e_cls_count if e_cls_count > 0 else (e_bt_tot if e_bt_tot > 0 else 0)
+            e_cll30n_pct = round((e_cll_count / e_effective_cls * 100), 2) if e_effective_cls > 0 else 0.0
 
             # Employee evaluation rule statuses
             e_dh_status = 'PASS' if e_tot_dh >= 97.2 else 'FAIL'
