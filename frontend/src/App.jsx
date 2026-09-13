@@ -1004,19 +1004,19 @@ export default function App() {
                   </Card>
 
                   {/* Card 5: CLL30N */}
-                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #e1bee7', borderLeft: `6px solid ${summary.cll30n_status === 'PASS' ? '#2e7d32' : '#d32f2f'}`, backgroundColor: '#ffffff', height: '100%' }}>
+                  <Card elevation={0} sx={{ borderRadius: 3, border: `1px solid ${summary.cll30n_status === 'PASS' ? '#e1bee7' : '#ffcdd2'}`, borderLeft: `6px solid ${summary.cll30n_status === 'PASS' ? '#7b1fa2' : '#d32f2f'}`, backgroundColor: '#ffffff', height: '100%' }}>
                     <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                         <Typography variant="overline" sx={{ color: '#7b1fa2', fontWeight: 800 }}>
                           {"CLL30N (<= 7%)"}
                         </Typography>
-                        <TrendingUpIcon sx={{ color: summary.cll30n_status === 'PASS' ? '#2e7d32' : '#d32f2f', fontSize: 22 }} />
+                        <TrendingUpIcon sx={{ color: summary.cll30n_status === 'PASS' ? '#7b1fa2' : '#d32f2f', fontSize: 22 }} />
                       </Box>
-                      <Typography variant="h4" sx={{ fontWeight: 800, color: summary.cll30n_status === 'PASS' ? '#2e7d32' : '#d32f2f', letterSpacing: '-1px' }}>
-                        {summary.cll30n_pct || 0}%
+                      <Typography variant="h4" sx={{ fontWeight: 800, color: summary.cll30n_status === 'PASS' ? '#7b1fa2' : '#d32f2f', letterSpacing: '-1px' }}>
+                        {summary.kh_cls_count > 0 ? `${summary.cll30n_pct || 0}%` : `${summary.cll30n_count || 0} HĐ`}
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.2 }}>
-                        HĐ: {summary.cll30n_count || 0} / {summary.kh_cls_count || 0}
+                        {summary.kh_cls_count > 0 ? `HĐ: ${summary.cll30n_count || 0} / ${summary.kh_cls_count}` : `Sheet CLL: ${summary.cll30n_count || 0} HĐ`}
                       </Typography>
                       <Box sx={{ mt: 0.8 }}>
                         <Chip
@@ -1030,22 +1030,26 @@ export default function App() {
                   </Card>
 
                   {/* Card 6: TỔNG ĐÚNG HẸN */}
-                  <Card elevation={0} sx={{ borderRadius: 3, background: summary.dung_hen_status === 'PASS' ? 'linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%)' : 'linear-gradient(135deg, #c62828 0%, #b71c1c 100%)', color: '#ffffff', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', height: '100%' }}>
+                  <Card elevation={0} sx={{ borderRadius: 3, border: `1px solid ${summary.dung_hen_status === 'PASS' ? '#c8e6c9' : '#ffcdd2'}`, borderLeft: `6px solid ${summary.dung_hen_status === 'PASS' ? '#2e7d32' : '#d32f2f'}`, backgroundColor: '#ffffff', height: '100%' }}>
                     <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                        <Typography variant="overline" sx={{ opacity: 0.9, fontWeight: 800 }}>
+                        <Typography variant="overline" sx={{ color: summary.dung_hen_status === 'PASS' ? '#1b5e20' : '#b71c1c', fontWeight: 800 }}>
                           TỔNG ĐÚNG HẸN
                         </Typography>
-                        <CheckCircleIcon sx={{ color: '#ffffff', fontSize: 22 }} />
+                        <CheckCircleIcon sx={{ color: summary.dung_hen_status === 'PASS' ? '#2e7d32' : '#d32f2f', fontSize: 22 }} />
                       </Box>
-                      <Typography variant="h4" sx={{ fontWeight: 800, letterSpacing: '-1px' }}>
+                      <Typography variant="h4" sx={{ fontWeight: 800, color: summary.dung_hen_status === 'PASS' ? '#1b5e20' : '#b71c1c', letterSpacing: '-1px' }}>
                         {summary.total_dung_hen_pct || 0}%
                       </Typography>
-                      <Box sx={{ mt: 1 }}>
+                      <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.2 }}>
+                        Tổng Khối Lượng: {summary.total_work_volume || 0} Phiếu
+                      </Typography>
+                      <Box sx={{ mt: 0.8 }}>
                         <Chip
                           label={summary.dung_hen_status === 'PASS' ? "ĐẠT (>= 97.2%)" : "KHÔNG ĐẠT (< 97.2%)"}
                           size="small"
-                          sx={{ fontWeight: 800, fontSize: '11px', height: 22, backgroundColor: 'rgba(255,255,255,0.25)', color: '#ffffff' }}
+                          color={summary.dung_hen_status === 'PASS' ? 'success' : 'error'}
+                          sx={{ fontWeight: 800, fontSize: '11px', height: 22 }}
                         />
                       </Box>
                     </CardContent>

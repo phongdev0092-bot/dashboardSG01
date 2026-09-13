@@ -79,8 +79,42 @@ class KPIEngine:
                     self.ton_bt_df = pd.read_pickle(ton_bt_cache)
                 if cll30n_cache.exists():
                     self.cll30n_df = pd.read_pickle(cll30n_cache)
+                else:
+                    try:
+                        print("Fetching live CLL30N data for cache...", flush=True)
+                        url_cll = f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=168764867'
+                        res_cll = requests.get(url_cll, timeout=30)
+                        if res_cll.status_code == 200:
+                            df_cll = pd.read_csv(io.BytesIO(res_cll.content), encoding='utf-8', low_memory=False, dtype=str)
+                            col_nv = df_cll.columns[3] if len(df_cll.columns) > 3 else 'Nhân viên'
+                            col_tg = df_cll.columns[6] if len(df_cll.columns) > 6 else 'Tg hoàn tất'
+                            df_cll['Nhân viên'] = df_cll[col_nv].astype(str).str.strip().str.upper()
+                            df_cll['dt_complete'] = pd.to_datetime(df_cll[col_tg], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                            df_cll['date_complete'] = df_cll['dt_complete'].dt.date
+                            df_cll.to_pickle(CACHE_DIR / "cll30n.pkl.gz")
+                            self.cll30n_df = df_cll
+                            print(f"Fetched & cached CLL30N data! {len(df_cll)} rows", flush=True)
+                    except Exception as e_cll:
+                        print(f"Warning: Failed to fetch CLL30N: {e_cll}", flush=True)
+
                 if kh_cls_cache.exists():
                     self.kh_cls_df = pd.read_pickle(kh_cls_cache)
+                else:
+                    try:
+                        url_cls = 'https://docs.google.com/spreadsheets/d/1JtMBIXmgQ37ne9a_QYb6ZuN6mWwgJHIC/export?format=csv&gid=0'
+                        res_cls = requests.get(url_cls, timeout=15)
+                        if res_cls.status_code == 200:
+                            df_cls = pd.read_csv(io.BytesIO(res_cls.content), encoding='utf-8', low_memory=False, dtype=str, on_bad_lines='skip')
+                            col_nv = df_cls.columns[3] if len(df_cls.columns) > 3 else 'Nhân viên'
+                            col_tg = df_cls.columns[6] if len(df_cls.columns) > 6 else 'TG Hoàn Tất'
+                            df_cls['Nhân viên'] = df_cls[col_nv].astype(str).str.strip().str.upper()
+                            df_cls['dt_complete'] = pd.to_datetime(df_cls[col_tg], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                            df_cls['date_complete'] = df_cls['dt_complete'].dt.date
+                            df_cls.to_pickle(CACHE_DIR / "kh_cls.pkl.gz")
+                            self.kh_cls_df = df_cls
+                    except Exception:
+                        pass
+
                 self.last_sync_time = datetime.datetime.fromtimestamp(hr_cache.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
                 self._process_metadata()
                 print(f"Cache loaded successfully! Sync time: {self.last_sync_time}", flush=True)
