@@ -188,6 +188,23 @@ export default function App() {
   const [timelineModalOpen, setTimelineModalOpen] = useState(false);
   const [selectedStaffTimeline, setSelectedStaffTimeline] = useState(null);
 
+  // Tồn TK-BT System States
+  const [tonTkBtData, setTonTkBtData] = useState(null);
+  const [tonTkBtLoading, setTonTkBtLoading] = useState(false);
+  const [tonTkBtSubTab, setTonTkBtSubTab] = useState('summary'); // 'summary' | 'details'
+  const [tonTkBtDoiTruong, setTonTkBtDoiTruong] = useState('__ALL__');
+  const [tonTkBtBlockFilter, setTonTkBtBlockFilter] = useState('__ALL__');
+  const [tonTkBtTypeFilter, setTonTkBtTypeFilter] = useState('ALL'); // 'ALL' | 'TK' | 'BT'
+  const [tonTkBtCondFilter, setTonTkBtCondFilter] = useState('ALL'); // 'ALL' | 'TK_72H' | 'BT_24H'
+  const [tonTkBtNoteFilter, setTonTkBtNoteFilter] = useState('ALL'); // 'ALL' | 'HAS_NOTE' | 'NO_NOTE'
+  const [tonTkBtSearch, setTonTkBtSearch] = useState('');
+  
+  // Modals for Tồn TK-BT
+  const [over72hModalOpen, setOver72hModalOpen] = useState(false);
+  const [over24hModalOpen, setOver24hModalOpen] = useState(false);
+  const [noteDetailModalOpen, setNoteDetailModalOpen] = useState(false);
+  const [selectedNoteItem, setSelectedNoteItem] = useState(null);
+
   // CRUD & Import States
   const [addRowOpen, setAddRowOpen] = useState(false);
   const [addRowData, setAddRowData] = useState({
@@ -282,6 +299,7 @@ export default function App() {
 
   useEffect(() => {
     fetchOptions();
+    fetchTonTkBtDashboard();
   }, []);
 
   useEffect(() => {
@@ -293,9 +311,13 @@ export default function App() {
       fetchLichTrucThresholds();
       if (ltTab === 'dashboard') {
         fetchLichTrucDashboard();
-      } else {
+      } else if (ltTab === 'chitiet') {
         fetchLichTrucChiTiet();
+      } else if (ltTab === 'history') {
+        fetchLichTrucHistory();
       }
+    } else if (currentNav === 'ton_tk_bt') {
+      fetchTonTkBtDashboard();
     }
   }, [currentNav, ltTab]);
 
@@ -506,6 +528,97 @@ export default function App() {
     const link = document.createElement('a');
     link.href = url;
     link.setAttribute('download', `Lich_Su_Thay_Doi_Lich_Truc_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Fetch Tồn TK-BT Dashboard Data
+  const fetchTonTkBtDashboard = async () => {
+    setTonTkBtLoading(true);
+    try {
+      const res = await axios.get('/api/kpi/ton-tk-bt/dashboard');
+      setTonTkBtData(res.data);
+    } catch (err) {
+      console.error("Failed to fetch Tồn TK-BT dashboard:", err);
+    } finally {
+      setTonTkBtLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentNav === 'ton_tk_bt' && !tonTkBtData) {
+      fetchTonTkBtDashboard();
+    }
+  }, [currentNav]);
+
+  // Combined Backlog Tickets & Filtering
+  const filteredBacklogDetails = useMemo(() => {
+    if (!tonTkBtData) return [];
+    const tkList = tonTkBtData.tkList || [];
+    const btList = tonTkBtData.btList || [];
+    let combined = [];
+
+    if (tonTkBtTypeFilter === 'ALL') {
+      combined = [...tkList, ...btList];
+    } else if (tonTkBtTypeFilter === 'TK') {
+      combined = [...tkList];
+    } else if (tonTkBtTypeFilter === 'BT') {
+      combined = [...btList];
+    }
+
+    const searchKw = tonTkBtSearch.trim().toUpperCase();
+
+    return combined.filter(item => {
+      if (tonTkBtDoiTruong !== '__ALL__' && item.doiTruong !== tonTkBtDoiTruong) return false;
+      if (tonTkBtBlockFilter !== '__ALL__' && item.block !== tonTkBtBlockFilter) return false;
+
+      if (tonTkBtCondFilter === 'TK_72H') {
+        if (item.type !== 'TK' || !item.isOver72h) return false;
+      } else if (tonTkBtCondFilter === 'BT_24H') {
+        if (item.type !== 'BT' || !item.isOver24h) return false;
+      }
+
+      if (tonTkBtNoteFilter === 'HAS_NOTE' && !item.hasNote) return false;
+      if (tonTkBtNoteFilter === 'NO_NOTE' && item.hasNote) return false;
+
+      if (searchKw) {
+        const text = `${item.soHd} ${item.tenKh} ${item.block} ${item.nhanSu} ${item.loaiGd}`.toUpperCase();
+        if (!text.includes(searchKw)) return false;
+      }
+
+      return true;
+    });
+  }, [tonTkBtData, tonTkBtDoiTruong, tonTkBtBlockFilter, tonTkBtTypeFilter, tonTkBtCondFilter, tonTkBtNoteFilter, tonTkBtSearch]);
+
+  const handleExportBacklogCSV = () => {
+    if (!filteredBacklogDetails || filteredBacklogDetails.length === 0) {
+      alert("Không có dữ liệu phiếu tồn để xuất!");
+      return;
+    }
+    const headers = ["STT", "Phân Loại", "Số HĐ", "Tên Khách Hàng", "Block", "Đội Trưởng", "Nhân Sự", "Loại Giao Dịch / Tình Trạng", "Thời Gian Tạo", "Tồn (Giờ)", "Điều Kiện", "Trạng Thái Ghi Chú", "Nội Dung Ghi Chú"];
+    const rows = filteredBacklogDetails.map((r, i) => [
+      i + 1,
+      r.typeLabel,
+      r.soHd,
+      r.tenKh,
+      r.block,
+      r.doiTruong,
+      r.nhanSu,
+      r.loaiGd,
+      r.createdAt,
+      r.tonHrs,
+      r.type === 'TK' ? (r.isOver72h ? '>72H' : '<=72H') : (r.isOver24h ? '>24H' : '<=24H'),
+      r.noteStatus,
+      r.noteContent
+    ]);
+
+    const csvContent = "\uFEFF" + [headers.join(','), ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Bao_Cao_Ton_TK_BT_${new Date().toISOString().slice(0,10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -2422,123 +2535,541 @@ export default function App() {
             )}
 
             {/* ========================================================================= */}
-            {/* VIEW 3: QUẢN LÝ TỒN TK-BT                                                */}
+            {/* VIEW 3: QUẢN LÝ TỒN TK-BT (REAL-TIME DASHBOARD)                            */}
             {/* ========================================================================= */}
             {currentNav === 'ton_tk_bt' && (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 
                 {/* TỒN TK-BT METRICS SUMMARY - FULL WIDTH GRID */}
                 <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', lg: 'repeat(4, 1fr)' }, gap: 2, width: '100%' }}>
+                  
+                  {/* CARD 1: TỔNG TỒN SG01 */}
                   <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #d2e3fc', borderLeft: '6px solid #1a73e8', backgroundColor: '#ffffff', height: '100%' }}>
                     <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                       <Typography variant="overline" sx={{ color: '#1a73e8', fontWeight: 800 }}>
                         TỔNG TỒN CHI NHÁNH SG01
                       </Typography>
-                      <Typography variant="h4" sx={{ fontWeight: 800, color: '#1a73e8', mt: 0.5 }}>
-                        {totalBacklogSummary.total} Phiếu
+                      <Typography variant="h3" sx={{ fontWeight: 800, color: '#1a73e8', mt: 0.5 }}>
+                        {tonTkBtData?.totalAll || 0} Phiếu
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                        Đang trong tiến trình xử lý
+                        Gồm {tonTkBtData?.totalTK || 0} Triển Khai & {tonTkBtData?.totalBT || 0} Bảo Trì
                       </Typography>
                     </CardContent>
                   </Card>
 
-                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #b2dfdb', borderLeft: '6px solid #00897b', backgroundColor: '#ffffff', height: '100%' }}>
+                  {/* CARD 2: TỒN TRIỂN KHAI >72H */}
+                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #b2dfdb', borderLeft: '6px solid #00897b', backgroundColor: '#ffffff', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                     <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                      <Typography variant="overline" sx={{ color: '#00897b', fontWeight: 800 }}>
-                        TỒN TRIỂN KHAI (TK)
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <Typography variant="overline" sx={{ color: '#00897b', fontWeight: 800 }}>
+                          TỒN TRIỂN KHAI (&gt;72H)
+                        </Typography>
+                        <Chip label="Cột L >72h" size="small" color="error" sx={{ fontWeight: 700, height: 20, fontSize: '10px' }} />
+                      </Box>
+                      <Typography variant="h3" sx={{ fontWeight: 800, color: tonTkBtData?.countTK72h > 0 ? '#d93025' : '#00897b', mt: 0.5 }}>
+                        {tonTkBtData?.countTK72h || 0} Phiếu
                       </Typography>
-                      <Typography variant="h4" sx={{ fontWeight: 800, color: '#00897b', mt: 0.5 }}>
-                        {totalBacklogSummary.total_tk} Phiếu
+                      <Button
+                        size="small"
+                        variant="contained"
+                        color="error"
+                        onClick={() => setOver72hModalOpen(true)}
+                        sx={{ mt: 1.5, borderRadius: '8px', fontWeight: 700, fontSize: '11px', textTransform: 'none' }}
+                      >
+                        Show chi tiết &gt;72H
+                      </Button>
+                    </CardContent>
+                  </Card>
+
+                  {/* CARD 3: TỒN BẢO TRÌ >24H */}
+                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #ffe0b2', borderLeft: '6px solid #f57c00', backgroundColor: '#ffffff', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <Typography variant="overline" sx={{ color: '#e65100', fontWeight: 800 }}>
+                          TỒN BẢO TRÌ (&gt;24H)
+                        </Typography>
+                        <Chip label="Cột H >24h" size="small" color="error" sx={{ fontWeight: 700, height: 20, fontSize: '10px' }} />
+                      </Box>
+                      <Typography variant="h3" sx={{ fontWeight: 800, color: tonTkBtData?.countBT24h > 0 ? '#d93025' : '#e65100', mt: 0.5 }}>
+                        {tonTkBtData?.countBT24h || 0} Phiếu
+                      </Typography>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        color="warning"
+                        onClick={() => setOver24hModalOpen(true)}
+                        sx={{ mt: 1.5, borderRadius: '8px', fontWeight: 700, fontSize: '11px', textTransform: 'none', backgroundColor: '#e65100' }}
+                      >
+                        Show chi tiết &gt;24H
+                      </Button>
+                    </CardContent>
+                  </Card>
+
+                  {/* CARD 4: TỶ LỆ CÓ GHI CHÚ / THÔNG TIN */}
+                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #e1bee7', borderLeft: '6px solid #7b1fa2', backgroundColor: '#ffffff', height: '100%' }}>
+                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                      <Typography variant="overline" sx={{ color: '#7b1fa2', fontWeight: 800 }}>
+                        TỶ LỆ CÓ GHI CHÚ / THÔNG TIN
+                      </Typography>
+                      <Typography variant="h3" sx={{ fontWeight: 800, color: '#7b1fa2', mt: 0.5 }}>
+                        {tonTkBtData?.notePct || 0}%
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                        Chờ thi công lắp đặt
+                        Đã có Note TIN/PNC hoặc Note KTV: {tonTkBtData?.hasNoteCount || 0} / {tonTkBtData?.totalAll || 0} ca
                       </Typography>
                     </CardContent>
                   </Card>
 
-                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #ffe0b2', borderLeft: '6px solid #f57c00', backgroundColor: '#ffffff', height: '100%' }}>
-                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                      <Typography variant="overline" sx={{ color: '#e65100', fontWeight: 800 }}>
-                        TỒN BẢO TRÌ (BT)
-                      </Typography>
-                      <Typography variant="h4" sx={{ fontWeight: 800, color: '#e65100', mt: 0.5 }}>
-                        {totalBacklogSummary.total_bt} Phiếu
-                      </Typography>
-                      <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                        Chờ xử lý sự cố hạ tầng / KHA
-                      </Typography>
-                    </CardContent>
-                  </Card>
-
-                  <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #fce8e6', borderLeft: '6px solid #d93025', backgroundColor: '#ffffff', height: '100%' }}>
-                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                      <Typography variant="overline" sx={{ color: '#d93025', fontWeight: 800 }}>
-                        CẢNH BÁO QUÁ HẠN &gt;48H
-                      </Typography>
-                      <Typography variant="h4" sx={{ fontWeight: 800, color: '#d93025', mt: 0.5 }}>
-                        {totalBacklogSummary.total_qua_48h} Phiếu
-                      </Typography>
-                      <Typography variant="caption" sx={{ color: '#d93025', fontWeight: 700, display: 'block', mt: 0.5 }}>
-                        ⚠️ Cần Đội trưởng hỗ trợ ngay
-                      </Typography>
-                    </CardContent>
-                  </Card>
                 </Box>
 
-                {/* BACKLOG TABLE BY TEAM LEAD & REGION */}
-                <Paper elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', backgroundColor: '#ffffff', border: '1px solid #e0e0e0' }}>
-                  <Box sx={{ p: 2.5, backgroundColor: '#fafafa', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Typography variant="h6" sx={{ fontWeight: 800, color: '#202124' }}>
-                      BẢNG TỔNG HỢP TỒN THEO ĐỘI TRƯỜNG & VÙNG
-                    </Typography>
-                    <Chip label={`Cảnh báo: ${totalBacklogSummary.total_qua_48h} ca nguy cơ`} color="error" size="small" sx={{ fontWeight: 700 }} />
-                  </Box>
-
-                  <TableContainer>
-                    <Table>
-                      <TableHead sx={{ backgroundColor: '#f1f3f4' }}>
-                        <TableRow>
-                          <TableCell sx={{ fontWeight: 700 }}>STT</TableCell>
-                          <TableCell sx={{ fontWeight: 700 }}>Đội Trưởng Quản Lý</TableCell>
-                          <TableCell sx={{ fontWeight: 700 }}>Vùng Phụ Trách</TableCell>
-                          <TableCell align="center" sx={{ fontWeight: 700 }}>Tồn Triển Khai (TK)</TableCell>
-                          <TableCell align="center" sx={{ fontWeight: 700 }}>Tồn Bảo Trì (BT)</TableCell>
-                          <TableCell align="center" sx={{ fontWeight: 700 }}>Tổng Tồn</TableCell>
-                          <TableCell align="center" sx={{ fontWeight: 700 }}>Tồn &gt;24h</TableCell>
-                          <TableCell align="center" sx={{ fontWeight: 700 }}>Tồn &gt;48h (Cảnh Báo)</TableCell>
-                          <TableCell align="center" sx={{ fontWeight: 700 }}>Mức Độ Rủi Ro</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {backlogData.map((row, idx) => (
-                          <TableRow key={row.id} hover>
-                            <TableCell sx={{ color: '#5f6368' }}>{idx + 1}</TableCell>
-                            <TableCell sx={{ fontWeight: 700, color: '#202124' }}>{row.team_lead}</TableCell>
-                            <TableCell>
-                              <Chip label={row.region} size="small" sx={{ backgroundColor: '#e8f0fe', color: '#1a73e8', fontWeight: 600 }} />
-                            </TableCell>
-                            <TableCell align="center" sx={{ fontWeight: 700, color: '#00897b' }}>{row.ton_tk}</TableCell>
-                            <TableCell align="center" sx={{ fontWeight: 700, color: '#e65100' }}>{row.ton_bt}</TableCell>
-                            <TableCell align="center" sx={{ fontWeight: 800, color: '#1a73e8' }}>{row.ton_tong}</TableCell>
-                            <TableCell align="center" sx={{ fontWeight: 700, color: '#b06000' }}>{row.ton_qua_24h}</TableCell>
-                            <TableCell align="center" sx={{ fontWeight: 800, color: row.ton_qua_48h > 0 ? '#d93025' : '#5f6368' }}>
-                              {row.ton_qua_48h}
-                            </TableCell>
-                            <TableCell align="center">
-                              <Chip
-                                label={row.risk_level}
-                                size="small"
-                                color={row.risk_level === 'Cao' ? 'error' : row.risk_level === 'Trung bình' ? 'warning' : 'success'}
-                                sx={{ fontWeight: 800, height: 22, fontSize: '11px' }}
-                              />
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
+                {/* SUB TABS NAVIGATION */}
+                <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid #e0e0e0', p: 0.8, backgroundColor: '#ffffff', display: 'flex', gap: 1 }}>
+                  <Button
+                    variant={tonTkBtSubTab === 'summary' ? 'contained' : 'text'}
+                    color="primary"
+                    onClick={() => setTonTkBtSubTab('summary')}
+                    sx={{ borderRadius: '12px', fontWeight: 700, px: 3, py: 1 }}
+                  >
+                    📊 Bảng Tổng Hợp Theo Block & Đội Trưởng
+                  </Button>
+                  <Button
+                    variant={tonTkBtSubTab === 'details' ? 'contained' : 'text'}
+                    color="primary"
+                    onClick={() => setTonTkBtSubTab('details')}
+                    sx={{ borderRadius: '12px', fontWeight: 700, px: 3, py: 1 }}
+                  >
+                    📋 Danh Sách Phiếu Tồn Chi Tiết (TK & BT)
+                  </Button>
                 </Paper>
+
+                {/* SUB-TAB 1: BẢNG TỔNG HỢP THEO BLOCK */}
+                {tonTkBtSubTab === 'summary' && (
+                  <Paper elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', backgroundColor: '#ffffff', border: '1px solid #e0e0e0' }}>
+                    <Box sx={{ p: 2.5, backgroundColor: '#fafafa', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Typography variant="h6" sx={{ fontWeight: 800, color: '#202124' }}>
+                        BẢNG TỔNG HỢP TỒN THEO BLOCK & ĐỘI TRƯỜNG
+                      </Typography>
+                      <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                        <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043' }}>Đội Trưởng:</FormLabel>
+                        <TextField
+                          select
+                          size="small"
+                          value={tonTkBtDoiTruong}
+                          onChange={(e) => setTonTkBtDoiTruong(e.target.value)}
+                          sx={{ width: 220 }}
+                        >
+                          <MenuItem value="__ALL__">-- Tất cả Đội Trưởng --</MenuItem>
+                          {options.team_leads.map((tl) => (
+                            <MenuItem key={tl} value={tl}>{tl}</MenuItem>
+                          ))}
+                        </TextField>
+                      </Box>
+                    </Box>
+
+                    {tonTkBtLoading ? (
+                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}><CircularProgress /></Box>
+                    ) : (
+                      <TableContainer sx={{ maxHeight: 680 }}>
+                        <Table stickyHeader size="small">
+                          <TableHead sx={{ backgroundColor: '#f1f3f4' }}>
+                            <TableRow>
+                              <TableCell align="center" sx={{ fontWeight: 800, width: 60 }}>STT</TableCell>
+                              <TableCell sx={{ fontWeight: 800, minWidth: 160 }}>Block</TableCell>
+                              <TableCell sx={{ fontWeight: 800, minWidth: 160 }}>Đội Trưởng Quản Lý</TableCell>
+                              <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#fde8e8', color: '#d93025' }}>Tồn TK &gt;72H (Cột L)</TableCell>
+                              <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#fff3e0', color: '#e65100' }}>Tồn BT &gt;24H (Cột H)</TableCell>
+                              <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#e8f0fe', color: '#1a73e8' }}>Tổng Tồn TK</TableCell>
+                              <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#e8f0fe', color: '#1a73e8' }}>Tổng Tồn BT</TableCell>
+                              <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#ffe0b2', color: '#d84315' }}>Tổng Tồn (TK + BT)</TableCell>
+                              <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2' }}>Tỷ Lệ Đã Ghi Chú (%)</TableCell>
+                              <TableCell align="center" sx={{ fontWeight: 800, minWidth: 120 }}>Thao Tác</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {tonTkBtData?.summaryTable
+                              ?.filter(r => tonTkBtDoiTruong === '__ALL__' || r.doiTruong === tonTkBtDoiTruong)
+                              .map((row, idx) => (
+                                <TableRow key={row.block} hover sx={{ '&:nth-of-type(even)': { backgroundColor: '#fafafa' } }}>
+                                  <TableCell align="center" sx={{ color: '#5f6368' }}>{idx + 1}</TableCell>
+                                  <TableCell sx={{ fontWeight: 700, color: '#202124' }}>{row.block}</TableCell>
+                                  <TableCell sx={{ fontSize: '13px' }}>{row.doiTruong}</TableCell>
+                                  
+                                  {/* TK >72H */}
+                                  <TableCell align="center" sx={{ backgroundColor: row.tk72h > 0 ? '#fef2f2 !important' : 'inherit' }}>
+                                    <Chip
+                                      label={row.tk72h}
+                                      size="small"
+                                      color={row.tk72h > 0 ? 'error' : 'default'}
+                                      sx={{ fontWeight: 800, height: 22 }}
+                                    />
+                                  </TableCell>
+
+                                  {/* BT >24H */}
+                                  <TableCell align="center" sx={{ backgroundColor: row.bt24h > 0 ? '#fff7ed !important' : 'inherit' }}>
+                                    <Chip
+                                      label={row.bt24h}
+                                      size="small"
+                                      color={row.bt24h > 0 ? 'warning' : 'default'}
+                                      sx={{ fontWeight: 800, height: 22, backgroundColor: row.bt24h > 0 ? '#e65100' : undefined, color: row.bt24h > 0 ? '#fff' : undefined }}
+                                    />
+                                  </TableCell>
+
+                                  <TableCell align="center" sx={{ fontWeight: 700, color: '#00897b' }}>{row.totTK}</TableCell>
+                                  <TableCell align="center" sx={{ fontWeight: 700, color: '#e65100' }}>{row.totBT}</TableCell>
+                                  <TableCell align="center" sx={{ fontWeight: 800, color: '#d84315', backgroundColor: 'rgba(255,224,178,0.3)' }}>{row.totAll}</TableCell>
+                                  <TableCell align="center" sx={{ fontWeight: 700, color: '#7b1fa2' }}>{row.bNotePct}%</TableCell>
+                                  <TableCell align="center">
+                                    <Button
+                                      size="small"
+                                      variant="outlined"
+                                      color="primary"
+                                      onClick={() => {
+                                        setTonTkBtBlockFilter(row.block);
+                                        setTonTkBtSubTab('details');
+                                      }}
+                                      sx={{ fontSize: '11px', fontWeight: 700, borderRadius: '8px' }}
+                                    >
+                                      👁️ Chi Tiết HĐ
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
+                  </Paper>
+                )}
+
+                {/* SUB-TAB 2: DANH SÁCH PHIẾU TỒN CHI TIẾT */}
+                {tonTkBtSubTab === 'details' && (
+                  <Paper elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', backgroundColor: '#ffffff', border: '1px solid #e0e0e0' }}>
+                    
+                    {/* TOOLBAR FILTERS */}
+                    <Box sx={{ p: 2.5, backgroundColor: '#fafafa', borderBottom: '1px solid #e0e0e0' }}>
+                      <Grid container spacing={2} alignItems="center">
+                        <Grid item xs={12} sm={3} md={2}>
+                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Đội Trưởng</FormLabel>
+                          <TextField select fullWidth size="small" value={tonTkBtDoiTruong} onChange={(e) => setTonTkBtDoiTruong(e.target.value)}>
+                            <MenuItem value="__ALL__">-- Tất cả --</MenuItem>
+                            {options.team_leads.map((tl) => (
+                              <MenuItem key={tl} value={tl}>{tl}</MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+
+                        <Grid item xs={12} sm={3} md={2}>
+                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Phân Loại Tồn</FormLabel>
+                          <TextField select fullWidth size="small" value={tonTkBtTypeFilter} onChange={(e) => setTonTkBtTypeFilter(e.target.value)}>
+                            <MenuItem value="ALL">Tất cả (TK + BT)</MenuItem>
+                            <MenuItem value="TK">Triển Khai (TK)</MenuItem>
+                            <MenuItem value="BT">Bảo Trì (BT)</MenuItem>
+                          </TextField>
+                        </Grid>
+
+                        <Grid item xs={12} sm={3} md={2}>
+                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Điều Kiện Tồn</FormLabel>
+                          <TextField select fullWidth size="small" value={tonTkBtCondFilter} onChange={(e) => setTonTkBtCondFilter(e.target.value)}>
+                            <MenuItem value="ALL">Tất cả thời gian</MenuItem>
+                            <MenuItem value="TK_72H">Tồn Triển Khai &gt;72H</MenuItem>
+                            <MenuItem value="BT_24H">Tồn Bảo Trì &gt;24H</MenuItem>
+                          </TextField>
+                        </Grid>
+
+                        <Grid item xs={12} sm={3} md={2}>
+                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Trạng Thái Ghi Chú</FormLabel>
+                          <TextField select fullWidth size="small" value={tonTkBtNoteFilter} onChange={(e) => setTonTkBtNoteFilter(e.target.value)}>
+                            <MenuItem value="ALL">Tất cả</MenuItem>
+                            <MenuItem value="HAS_NOTE">Có Ghi Chú / Thông Tin</MenuItem>
+                            <MenuItem value="NO_NOTE">Chưa Ghi Chú / Rỗng</MenuItem>
+                          </TextField>
+                        </Grid>
+
+                        <Grid item xs={12} sm={6} md={2.5}>
+                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Tìm Kiếm</FormLabel>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            placeholder="Nhập SHD, Tên KH, Block, KTV..."
+                            value={tonTkBtSearch}
+                            onChange={(e) => setTonTkBtSearch(e.target.value)}
+                          />
+                        </Grid>
+
+                        <Grid item xs={12} sm={3} md={1.5}>
+                          <Button
+                            variant="contained"
+                            color="success"
+                            fullWidth
+                            startIcon={<DownloadIcon />}
+                            onClick={handleExportBacklogCSV}
+                            sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5, backgroundColor: '#1e8e3e' }}
+                          >
+                            Xuất CSV
+                          </Button>
+                        </Grid>
+                      </Grid>
+                    </Box>
+
+                    {/* DETAILS TABLE */}
+                    <TableContainer sx={{ maxHeight: 680 }}>
+                      <Table stickyHeader size="small">
+                        <TableHead sx={{ backgroundColor: '#f1f5f9' }}>
+                          <TableRow>
+                            <TableCell align="center" sx={{ fontWeight: 800, width: 50 }}>STT</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 800, width: 110 }}>Loại</TableCell>
+                            <TableCell sx={{ fontWeight: 800, minWidth: 130 }}>Số HĐ (SHD)</TableCell>
+                            <TableCell sx={{ fontWeight: 800, minWidth: 160 }}>Tên Khách Hàng</TableCell>
+                            <TableCell sx={{ fontWeight: 800, minWidth: 160 }}>Block / Đội Trưởng</TableCell>
+                            <TableCell sx={{ fontWeight: 800, minWidth: 180 }}>Loại Giao Dịch / Tình Trạng</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 800, minWidth: 140 }}>Thời Gian Tồn</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 800, minWidth: 150 }}>Trạng Thái Ghi Chú</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 800, minWidth: 120 }}>Thao Tác</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {filteredBacklogDetails.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={9} align="center" sx={{ py: 6, color: '#5f6368' }}>
+                                Không tìm thấy phiếu tồn nào phù hợp với bộ lọc.
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            filteredBacklogDetails.map((row, idx) => {
+                              const isDanger = (row.type === 'TK' && row.isOver72h) || (row.type === 'BT' && row.isOver24h);
+
+                              return (
+                                <TableRow key={row.id || idx} hover sx={{ '&:nth-of-type(even)': { backgroundColor: '#fafafa' } }}>
+                                  <TableCell align="center" sx={{ color: '#5f6368' }}>{idx + 1}</TableCell>
+                                  <TableCell align="center">
+                                    <Chip
+                                      label={row.typeLabel}
+                                      size="small"
+                                      sx={{
+                                        fontWeight: 800,
+                                        backgroundColor: row.type === 'TK' ? '#e8f0fe' : '#fff3e0',
+                                        color: row.type === 'TK' ? '#1a73e8' : '#e65100'
+                                      }}
+                                    />
+                                  </TableCell>
+                                  <TableCell sx={{ fontWeight: 800, color: '#1a73e8' }}>{row.soHd}</TableCell>
+                                  <TableCell sx={{ fontWeight: 700, color: '#202124' }}>{row.tenKh}</TableCell>
+                                  <TableCell>
+                                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#3c4043' }}>{row.block}</Typography>
+                                    <Typography variant="caption" sx={{ color: '#5f6368', display: 'block' }}>
+                                      {row.doiTruong} {row.nhanSu ? `(${row.nhanSu})` : ''}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell sx={{ fontSize: '12px' }}>{row.loaiGd}</TableCell>
+                                  
+                                  {/* TỒN GIỜ */}
+                                  <TableCell align="center">
+                                    <Chip
+                                      label={`${row.tonHrs} Giờ`}
+                                      size="small"
+                                      sx={{
+                                        fontWeight: 800,
+                                        backgroundColor: isDanger ? '#fef2f2' : '#f1f5f9',
+                                        color: isDanger ? '#d93025' : '#334155',
+                                        border: isDanger ? '1px solid #fecaca' : undefined
+                                      }}
+                                    />
+                                  </TableCell>
+
+                                  {/* TRẠNG THÁI GHI CHÚ */}
+                                  <TableCell align="center">
+                                    <Chip
+                                      label={row.noteStatus}
+                                      size="small"
+                                      sx={{
+                                        fontWeight: 700,
+                                        fontSize: '11px',
+                                        backgroundColor: row.hasNote ? '#e8f5e9' : '#fff7ed',
+                                        color: row.hasNote ? '#2e7d32' : '#c2410c',
+                                        border: row.hasNote ? '1px solid #c8e6c9' : '1px solid #fed7aa'
+                                      }}
+                                    />
+                                  </TableCell>
+
+                                  <TableCell align="center">
+                                    <Button
+                                      size="small"
+                                      variant={row.hasNote ? 'contained' : 'outlined'}
+                                      color={row.hasNote ? 'primary' : 'inherit'}
+                                      onClick={() => {
+                                        setSelectedNoteItem(row);
+                                        setNoteDetailModalOpen(true);
+                                      }}
+                                      sx={{ fontSize: '11px', fontWeight: 700, borderRadius: '8px' }}
+                                    >
+                                      {row.hasNote ? '📝 Xem Note' : '👁️ Chi Tiết'}
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })
+                          )}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </Paper>
+                )}
+
+                {/* MODAL 1: SHOW CHI TIẾT TỒN TRIỂN KHAI >72H */}
+                <Dialog open={over72hModalOpen} onClose={() => setOver72hModalOpen(false)} maxWidth="md" fullWidth>
+                  <DialogTitle sx={{ fontWeight: 800, color: '#d93025', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>🚨 CHI TIẾT PHIẾU TỒN TRIỂN KHAI &gt;72H (CỘT L)</span>
+                    <Chip label={`${tonTkBtData?.countTK72h || 0} Ca vi phạm`} color="error" size="small" sx={{ fontWeight: 700 }} />
+                  </DialogTitle>
+                  <DialogContent dividers>
+                    <TableContainer sx={{ maxHeight: 500 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead sx={{ backgroundColor: '#f1f5f9' }}>
+                          <TableRow>
+                            <TableCell align="center" sx={{ fontWeight: 800, width: 50 }}>STT</TableCell>
+                            <TableCell sx={{ fontWeight: 800 }}>Số HĐ (SHD)</TableCell>
+                            <TableCell sx={{ fontWeight: 800 }}>Tên Khách Hàng</TableCell>
+                            <TableCell sx={{ fontWeight: 800 }}>Loại Giao Dịch</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 800 }}>Thời Gian Tồn</TableCell>
+                            <TableCell sx={{ fontWeight: 800 }}>Đội Trưởng</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 800 }}>Ghi Chú TIN/PNC</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {tonTkBtData?.tkList
+                            ?.filter(r => r.isOver72h)
+                            .map((row, idx) => (
+                              <TableRow key={row.id || idx} hover>
+                                <TableCell align="center">{idx + 1}</TableCell>
+                                <TableCell sx={{ fontWeight: 800, color: '#1a73e8' }}>{row.soHd}</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>{row.tenKh}</TableCell>
+                                <TableCell sx={{ fontSize: '12px' }}>{row.loaiGd}</TableCell>
+                                <TableCell align="center">
+                                  <Chip label={`${row.tonHrs}h`} size="small" color="error" sx={{ fontWeight: 800 }} />
+                                </TableCell>
+                                <TableCell sx={{ fontSize: '12px' }}>{row.doiTruong}</TableCell>
+                                <TableCell align="center">
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    color={row.hasNote ? 'success' : 'warning'}
+                                    onClick={() => {
+                                      setSelectedNoteItem(row);
+                                      setNoteDetailModalOpen(true);
+                                    }}
+                                    sx={{ fontSize: '11px', fontWeight: 700, borderRadius: '6px' }}
+                                  >
+                                    {row.hasNote ? '📝 Xem Note' : 'Chưa ghi chú'}
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </DialogContent>
+                  <DialogActions sx={{ p: 2 }}>
+                    <Button onClick={() => setOver72hModalOpen(false)} variant="contained" color="primary">Đóng</Button>
+                  </DialogActions>
+                </Dialog>
+
+                {/* MODAL 2: SHOW CHI TIẾT TỒN BẢO TRÌ >24H */}
+                <Dialog open={over24hModalOpen} onClose={() => setOver24hModalOpen(false)} maxWidth="md" fullWidth>
+                  <DialogTitle sx={{ fontWeight: 800, color: '#e65100', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>⚠️ CHI TIẾT PHIẾU TỒN BẢO TRÌ &gt;24H (CỘT H)</span>
+                    <Chip label={`${tonTkBtData?.countBT24h || 0} Ca quá hạn`} color="warning" size="small" sx={{ fontWeight: 700, backgroundColor: '#e65100', color: '#fff' }} />
+                  </DialogTitle>
+                  <DialogContent dividers>
+                    <TableContainer sx={{ maxHeight: 500 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead sx={{ backgroundColor: '#f1f5f9' }}>
+                          <TableRow>
+                            <TableCell align="center" sx={{ fontWeight: 800, width: 50 }}>STT</TableCell>
+                            <TableCell sx={{ fontWeight: 800 }}>Số HĐ (SHD)</TableCell>
+                            <TableCell sx={{ fontWeight: 800 }}>Tên Khách Hàng</TableCell>
+                            <TableCell sx={{ fontWeight: 800 }}>Tình Trạng (Cột AC)</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 800 }}>Thời Gian Tồn</TableCell>
+                            <TableCell sx={{ fontWeight: 800 }}>Đội Trưởng</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 800 }}>Thông Tin Note (Cột X)</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {tonTkBtData?.btList
+                            ?.filter(r => r.isOver24h)
+                            .map((row, idx) => (
+                              <TableRow key={row.id || idx} hover>
+                                <TableCell align="center">{idx + 1}</TableCell>
+                                <TableCell sx={{ fontWeight: 800, color: '#1a73e8' }}>{row.soHd}</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>{row.tenKh}</TableCell>
+                                <TableCell sx={{ fontSize: '12px' }}>{row.loaiGd}</TableCell>
+                                <TableCell align="center">
+                                  <Chip label={`${row.tonHrs}h`} size="small" sx={{ fontWeight: 800, backgroundColor: '#fff3e0', color: '#e65100' }} />
+                                </TableCell>
+                                <TableCell sx={{ fontSize: '12px' }}>{row.doiTruong}</TableCell>
+                                <TableCell align="center">
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    color={row.hasNote ? 'success' : 'warning'}
+                                    onClick={() => {
+                                      setSelectedNoteItem(row);
+                                      setNoteDetailModalOpen(true);
+                                    }}
+                                    sx={{ fontSize: '11px', fontWeight: 700, borderRadius: '6px' }}
+                                  >
+                                    {row.hasNote ? '📝 Xem Note' : 'Chưa có TT'}
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </DialogContent>
+                  <DialogActions sx={{ p: 2 }}>
+                    <Button onClick={() => setOver24hModalOpen(false)} variant="contained" color="primary">Đóng</Button>
+                  </DialogActions>
+                </Dialog>
+
+                {/* MODAL 3: XEM CHI TIẾT NỘI DUNG GHI CHÚ HỢP ĐỒNG */}
+                <Dialog open={noteDetailModalOpen} onClose={() => setNoteDetailModalOpen(false)} maxWidth="sm" fullWidth>
+                  <DialogTitle sx={{ fontWeight: 800, color: '#1a73e8', borderBottom: '1px solid #e0e0e0' }}>
+                    📝 CHI TIẾT GHI CHÚ HỢP ĐỒNG — {selectedNoteItem?.soHd}
+                  </DialogTitle>
+                  <DialogContent dividers>
+                    {selectedNoteItem && (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+                        <Box sx={{ p: 2, borderRadius: 2, backgroundColor: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                          <Typography variant="body2"><b>Số HĐ:</b> {selectedNoteItem.soHd}</Typography>
+                          <Typography variant="body2"><b>Khách Hàng:</b> {selectedNoteItem.tenKh}</Typography>
+                          <Typography variant="body2"><b>Phân Loại:</b> {selectedNoteItem.typeLabel} ({selectedNoteItem.loaiGd})</Typography>
+                          <Typography variant="body2"><b>Block:</b> {selectedNoteItem.block} (Đội trưởng: {selectedNoteItem.doiTruong})</Typography>
+                          <Typography variant="body2"><b>TG Tạo / Tồn:</b> {selectedNoteItem.createdAt} ({selectedNoteItem.tonHrs} Giờ)</Typography>
+                        </Box>
+
+                        <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#334155', mt: 1 }}>
+                          Nội Dung Ghi Chú Chi Tiết:
+                        </Typography>
+
+                        <Paper elevation={0} sx={{ p: 2, borderRadius: 2, backgroundColor: '#fffbe6', border: '1px solid #ffe58f', minHeight: 100 }}>
+                          {selectedNoteItem.hasNote ? (
+                            <Typography variant="body2" sx={{ whitespace: 'pre-wrap', color: '#78350f', fontFamily: 'monospace' }}>
+                              {selectedNoteItem.noteContent}
+                            </Typography>
+                          ) : (
+                            <Typography variant="body2" sx={{ color: '#d97706', fontStyle: 'italic' }}>
+                              ⚠️ Chưa có nội dung ghi chú được nhập cho phiếu tồn này.
+                            </Typography>
+                          )}
+                        </Paper>
+                      </Box>
+                    )}
+                  </DialogContent>
+                  <DialogActions sx={{ p: 2 }}>
+                    <Button onClick={() => setNoteDetailModalOpen(false)} variant="contained">Đóng</Button>
+                  </DialogActions>
+                </Dialog>
 
               </Box>
             )}

@@ -60,6 +60,10 @@ def get_employee_details(
 ):
     return engine.get_employee_details(account, start_date=start_date, end_date=end_date)
 
+@app.get("/api/kpi/ton-tk-bt/dashboard")
+def get_ton_tk_bt_dashboard():
+    return engine.get_ton_tk_bt_dashboard()
+
 @app.post("/api/kpi/sync")
 def trigger_sync(background_tasks: BackgroundTasks):
     if engine.is_syncing:

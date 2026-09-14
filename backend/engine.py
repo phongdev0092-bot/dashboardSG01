@@ -291,6 +291,8 @@ class KPIEngine:
             self.hr_df = df_hr
             self.tk_df = df_tk
             self.bt_df = df_bt
+            self.ton_tk_df = df_ton_tk
+            self.ton_bt_df = df_ton_bt
             self.lt_df = df_lt
             self.cll30n_df = df_cll30n
             self.kh_cls_df = df_kh_cls
@@ -1339,5 +1341,212 @@ class KPIEngine:
         self.lt_history = []
         self._save_lt_history_and_snapshot()
         return {"ok": True}
+
+    def get_ton_tk_bt_dashboard(self):
+        ns_by_block, hr_map = self._get_nhan_su_by_block()
+        df_tk = getattr(self, 'ton_tk_df', pd.DataFrame())
+        if df_tk.empty:
+            df_tk = self.tk_df
+        df_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
+
+        now = datetime.datetime.now()
+
+        # Parse TK list
+        tk_list = []
+        if not df_tk.empty:
+            cols = list(df_tk.columns)
+            col_f_block = cols[5] if len(cols) > 5 else 'Block'
+            ns_col = cols[17] if len(cols) > 17 else 'Nhân sự'
+            hd_col = cols[3] if len(cols) > 3 else 'Số HĐ'
+            kh_col = cols[6] if len(cols) > 6 else 'Tên KH'
+            time_created_col = cols[11] if len(cols) > 11 else 'TG tạo PTC'
+            loai_col = cols[12] if len(cols) > 12 else (cols[9] if len(cols) > 9 else 'Loại triển khai')
+            note_col = cols[21] if len(cols) > 21 else 'Ghi chú triển khai TIN/PNC'
+
+            for _, r in df_tk.iterrows():
+                ns = str(r.get(ns_col, '')).strip().upper()
+                if ns in ('NAN', 'NONE', '-', 'NULL'):
+                    ns = ''
+                
+                block_f = str(r.get(col_f_block, '')).strip()
+                if block_f and block_f.upper() not in ('NAN', 'NONE', '-', 'NULL'):
+                    block = block_f
+                elif ns and hr_map.get(ns, {}).get('block'):
+                    block = hr_map.get(ns, {}).get('block')
+                else:
+                    block = '(Không xác định)'
+
+                info = hr_map.get(ns, {})
+                doi_truong = info.get('truong') or ns_by_block.get(block, {}).get('truong') or '(chưa rõ)'
+
+                raw_created = str(r.get(time_created_col, '')).strip()
+                dt_created = pd.to_datetime(raw_created, dayfirst=True, errors='coerce')
+                
+                ton_hrs = 0.0
+                if pd.notnull(dt_created):
+                    ton_hrs = round((now - dt_created).total_seconds() / 3600.0, 1)
+
+                note_raw = str(r.get(note_col, '')).strip()
+                has_note = bool(note_raw and note_raw.upper() not in ('NAN', 'NONE', '-', 'NULL', ''))
+
+                tk_list.append({
+                    'id': len(tk_list) + 1,
+                    'type': 'TK',
+                    'typeLabel': 'Triển Khai',
+                    'soHd': str(r.get(hd_col, '')).strip(),
+                    'tenKh': str(r.get(kh_col, '')).strip(),
+                    'block': block,
+                    'doiTruong': doi_truong,
+                    'nhanSu': ns,
+                    'loaiGd': str(r.get(loai_col, '')).strip(),
+                    'createdAt': raw_created,
+                    'tonHrs': ton_hrs,
+                    'isOver72h': ton_hrs > 72,
+                    'isOver24h': ton_hrs > 24,
+                    'hasNote': has_note,
+                    'noteStatus': 'Có ghi chú' if has_note else 'Chưa ghi chú',
+                    'noteContent': note_raw if has_note else ''
+                })
+
+        # Parse BT list
+        bt_list = []
+        if not df_bt.empty:
+            cols = list(df_bt.columns)
+            col_e_block = cols[4] if len(cols) > 4 else 'Block'
+            ns_col = cols[18] if len(cols) > 18 else 'Nhân sự'
+            hd_col = cols[5] if len(cols) > 5 else 'Số HĐ'
+            kh_col = cols[6] if len(cols) > 6 else 'Tên đầy đủ'
+            time_created_col = cols[7] if len(cols) > 7 else 'Thời gian tạo'
+            ton_hrs_col = cols[8] if len(cols) > 8 else 'Tồn giờ'
+            tinh_trang_col = cols[28] if len(cols) > 28 else (cols[19] if len(cols) > 19 else 'TTSCBĐ 1')
+            note_cc_col = cols[22] if len(cols) > 22 else 'Ghi Chú CC'
+            note_ktv_col = cols[23] if len(cols) > 23 else 'Ghi Chú KTV Gần Nhất'
+
+            for _, r in df_bt.iterrows():
+                ns = str(r.get(ns_col, '')).strip().upper()
+                if ns in ('NAN', 'NONE', '-', 'NULL'):
+                    ns = ''
+                
+                block_e = str(r.get(col_e_block, '')).strip()
+                if block_e and block_e.upper() not in ('NAN', 'NONE', '-', 'NULL'):
+                    block = block_e
+                elif ns and hr_map.get(ns, {}).get('block'):
+                    block = hr_map.get(ns, {}).get('block')
+                else:
+                    block = '(Không xác định)'
+
+                info = hr_map.get(ns, {})
+                doi_truong = info.get('truong') or ns_by_block.get(block, {}).get('truong') or '(chưa rõ)'
+
+                raw_hrs = str(r.get(ton_hrs_col, '')).strip()
+                ton_hrs = 0.0
+                try:
+                    ton_hrs = float(raw_hrs)
+                except Exception:
+                    raw_created = str(r.get(time_created_col, '')).strip()
+                    dt_created = pd.to_datetime(raw_created, dayfirst=True, errors='coerce')
+                    if pd.notnull(dt_created):
+                        ton_hrs = round((now - dt_created).total_seconds() / 3600.0, 1)
+
+                raw_created = str(r.get(time_created_col, '')).strip()
+
+                note_cc = str(r.get(note_cc_col, '')).strip()
+                note_ktv = str(r.get(note_ktv_col, '')).strip()
+                parts = []
+                if note_cc and note_cc.upper() not in ('NAN', 'NONE', '-', 'NULL'):
+                    parts.append(f"Ghi chú CC: {note_cc}")
+                if note_ktv and note_ktv.upper() not in ('NAN', 'NONE', '-', 'NULL'):
+                    parts.append(f"Ghi chú KTV: {note_ktv}")
+
+                note_raw = "\n".join(parts)
+                has_note = len(parts) > 0
+
+                bt_list.append({
+                    'id': len(bt_list) + 1,
+                    'type': 'BT',
+                    'typeLabel': 'Bảo Trì',
+                    'soHd': str(r.get(hd_col, '')).strip(),
+                    'tenKh': str(r.get(kh_col, '')).strip(),
+                    'block': block,
+                    'doiTruong': doi_truong,
+                    'nhanSu': ns,
+                    'loaiGd': str(r.get(tinh_trang_col, '')).strip() or 'Sự cố bảo trì',
+                    'createdAt': raw_created,
+                    'tonHrs': ton_hrs,
+                    'isOver72h': ton_hrs > 72,
+                    'isOver24h': ton_hrs > 24,
+                    'hasNote': has_note,
+                    'noteStatus': 'Có Thông Tin' if has_note else 'Chưa có Thông Tin',
+                    'noteContent': note_raw if has_note else ''
+                })
+
+        # Calculate Overall Metrics
+        count_tk_total = len(tk_list)
+        count_bt_total = len(bt_list)
+        count_all = count_tk_total + count_bt_total
+
+        count_tk_72h = sum(1 for r in tk_list if r['isOver72h'])
+        count_bt_24h = sum(1 for r in bt_list if r['isOver24h'])
+
+        has_note_count = sum(1 for r in tk_list if r['hasNote']) + sum(1 for r in bt_list if r['hasNote'])
+        note_pct = round((has_note_count / count_all) * 100.0, 1) if count_all > 0 else 0.0
+
+        # Summary grouped by Block
+        all_blocks = sorted(list(set(
+            list(ns_by_block.keys()) +
+            [r['block'] for r in tk_list] +
+            [r['block'] for r in bt_list]
+        )))
+
+        summary_table = []
+        for b in all_blocks:
+            if not b or b == 'nan':
+                continue
+
+            info = ns_by_block.get(b, {})
+            lead = info.get('truong') or '(chưa rõ)'
+            
+            b_tk = [r for r in tk_list if r['block'] == b]
+            b_bt = [r for r in bt_list if r['block'] == b]
+
+            if not b_tk and not b_bt:
+                continue
+
+            tk_count = len(b_tk)
+            bt_count = len(b_bt)
+            all_count = tk_count + bt_count
+
+            tk_72h = sum(1 for r in b_tk if r['isOver72h'])
+            bt_24h = sum(1 for r in b_bt if r['isOver24h'])
+            
+            b_notes = sum(1 for r in b_tk if r['hasNote']) + sum(1 for r in b_bt if r['hasNote'])
+            b_note_pct = round((b_notes / all_count) * 100.0, 1) if all_count > 0 else 0.0
+
+            summary_table.append({
+                'block': b,
+                'doiTruong': lead,
+                'slActive': info.get('activeCount', 0),
+                'totTK': tk_count,
+                'totBT': bt_count,
+                'totAll': all_count,
+                'tk72h': tk_72h,
+                'bt24h': bt_24h,
+                'bNotes': b_notes,
+                'bNotePct': b_note_pct
+            })
+
+        return {
+            'generatedAt': datetime.datetime.now().strftime('%d/%m/%Y %H:%M'),
+            'totalAll': count_all,
+            'totalTK': count_tk_total,
+            'totalBT': count_bt_total,
+            'countTK72h': count_tk_72h,
+            'countBT24h': count_bt_24h,
+            'hasNoteCount': has_note_count,
+            'notePct': note_pct,
+            'summaryTable': summary_table,
+            'tkList': tk_list,
+            'btList': bt_list
+        }
 
 
