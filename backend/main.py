@@ -224,6 +224,19 @@ def delete_admin_user(payload: dict):
     user_id = payload.get('user_id', 0)
     return engine.delete_admin_user(user_id)
 
+@app.get("/api/admin/users/config-webapp")
+def get_webapp_config():
+    return engine.get_permissions_webapp_url()
+
+@app.post("/api/admin/users/config-webapp")
+def set_webapp_config(payload: dict):
+    url = payload.get('url', '')
+    return engine.set_permissions_webapp_url(url)
+
+@app.post("/api/admin/users/sync-sheet")
+def sync_users_sheet():
+    return engine.sync_admin_users_to_sheet()
+
 @app.get("/api/admin/hr-list")
 def get_admin_hr_list(
     search: Optional[str] = Query(""),

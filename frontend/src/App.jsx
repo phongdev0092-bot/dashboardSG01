@@ -44,6 +44,7 @@ import {
   Checkbox,
   FormControlLabel,
   FormGroup,
+  Menu,
   useMediaQuery,
   useTheme
 } from '@mui/material';
@@ -97,6 +98,8 @@ import {
   VpnKey as VpnKeyIcon,
   MonetizationOn as SalaryIcon,
   Visibility as ViewIcon,
+  VisibilityOff as VisibilityOffIcon,
+  Save as SaveIcon,
   CheckCircleOutlined as CheckCircleOutlineIcon
 } from '@mui/icons-material';
 
@@ -106,6 +109,716 @@ import theme from './theme';
 
 const API_BASE = '/api/kpi';
 const LOGO_URL = 'https://management.mypt.vn/images/FPT_Telecom_logo.svg';
+
+// Custom Dropdown Component with Quick Search & Add Option
+const SearchableAddableSelect = ({ label, value, options = [], onChange, onAddOption, placeholder = "Chọn hoặc thêm..." }) => {
+  const [anchorEl, setAnchorEl] = useState(null);
+  const [searchKw, setSearchKw] = useState('');
+  const [isAdding, setIsAdding] = useState(false);
+  const [newVal, setNewVal] = useState('');
+  const [extraOptions, setExtraOptions] = useState([]);
+
+  const open = Boolean(anchorEl);
+
+  const combinedOptions = useMemo(() => {
+    const set = new Set([...(options || []), ...extraOptions]);
+    if (value && !set.has(value)) set.add(value);
+    return Array.from(set).filter(Boolean);
+  }, [options, extraOptions, value]);
+
+  const filtered = useMemo(() => {
+    if (!searchKw.trim()) return combinedOptions;
+    return combinedOptions.filter(opt => String(opt).toLowerCase().includes(searchKw.toLowerCase()));
+  }, [combinedOptions, searchKw]);
+
+  const handleAddSubmit = () => {
+    const trimmed = newVal.trim();
+    if (trimmed) {
+      if (!extraOptions.includes(trimmed)) {
+        setExtraOptions(prev => [...prev, trimmed]);
+      }
+      if (onAddOption) onAddOption(trimmed);
+      onChange(trimmed);
+      setNewVal('');
+      setIsAdding(false);
+      setAnchorEl(null);
+    }
+  };
+
+  return (
+    <Box sx={{ width: '100%' }}>
+      <TextField
+        fullWidth
+        size="small"
+        label={label}
+        value={value || ''}
+        placeholder={placeholder}
+        onClick={(e) => setAnchorEl(e.currentTarget)}
+        InputProps={{
+          readOnly: false,
+          endAdornment: (
+            <IconButton size="small" onClick={(e) => { e.stopPropagation(); setAnchorEl(e.currentTarget); }}>
+              <ChevronRightIcon sx={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: '0.2s' }} />
+            </IconButton>
+          )
+        }}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <Menu
+        anchorEl={anchorEl}
+        open={open}
+        onClose={() => { setAnchorEl(null); setIsAdding(false); setSearchKw(''); }}
+        PaperProps={{ sx: { width: anchorEl?.clientWidth || 280, maxHeight: 340, p: 1, boxShadow: '0 8px 32px rgba(0,0,0,0.15)', borderRadius: 2 } }}
+      >
+        <Box sx={{ p: 1, pb: 1, borderBottom: '1px solid #e2e8f0', mb: 1 }}>
+          <TextField
+            autoFocus
+            size="small"
+            fullWidth
+            placeholder="🔍 Tìm kiếm nhanh..."
+            value={searchKw}
+            onChange={(e) => setSearchKw(e.target.value)}
+            sx={{ '& .MuiInputBase-root': { fontSize: '13px', borderRadius: 1.5 } }}
+          />
+        </Box>
+
+        {!isAdding ? (
+          <MenuItem
+            onClick={() => setIsAdding(true)}
+            sx={{ fontWeight: 800, color: '#2563eb', backgroundColor: '#eff6ff', borderRadius: 1.5, mb: 1, fontSize: '13px' }}
+          >
+            ➕ Thêm giá trị mới vào danh sách...
+          </MenuItem>
+        ) : (
+          <Box sx={{ p: 1, backgroundColor: '#f8fafc', borderRadius: 1.5, mb: 1, display: 'flex', gap: 1 }}>
+            <TextField
+              size="small"
+              fullWidth
+              placeholder="Nhập giá trị mới..."
+              value={newVal}
+              onChange={(e) => setNewVal(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddSubmit(); }}
+            />
+            <Button size="small" variant="contained" onClick={handleAddSubmit} sx={{ minWidth: 50, fontWeight: 800 }}>Lưu</Button>
+          </Box>
+        )}
+
+        {filtered.length === 0 ? (
+          <MenuItem disabled sx={{ fontSize: '13px', color: '#94a3b8' }}>
+            Không có kết quả khớp
+          </MenuItem>
+        ) : (
+          filtered.map((opt) => (
+            <MenuItem
+              key={opt}
+              selected={opt === value}
+              onClick={() => {
+                onChange(opt);
+                setAnchorEl(null);
+                setSearchKw('');
+              }}
+              sx={{ fontSize: '13px', fontWeight: opt === value ? 800 : 500, borderRadius: 1 }}
+            >
+              {opt}
+            </MenuItem>
+          ))
+        )}
+      </Menu>
+    </Box>
+  );
+};
+
+
+// Debounced Search Input for instantaneous typing without App re-render lag
+const DebouncedSearchInput = React.memo(({ value, onChange, delay = 200, ...props }) => {
+  const [localVal, setLocalVal] = useState(value || '');
+
+  useEffect(() => {
+    setLocalVal(value || '');
+  }, [value]);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (localVal !== value) {
+        onChange(localVal);
+      }
+    }, delay);
+    return () => clearTimeout(handler);
+  }, [localVal, delay, onChange, value]);
+
+  return (
+    <TextField
+      {...props}
+      value={localVal}
+      onChange={(e) => setLocalVal(e.target.value)}
+    />
+  );
+});
+
+// Isolated Unified HR Profile Modal (Local State Buffering)
+const UnifiedHrProfileModal = React.memo(({
+  open,
+  onClose,
+  initialData,
+  isNew,
+  loading,
+  options,
+  hrList,
+  onSave
+}) => {
+  const [formData, setFormData] = useState({});
+  const [searchKw, setSearchKw] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setFormData(initialData || {});
+      setSearchKw('');
+    }
+  }, [open, initialData]);
+
+  const handleChange = (field, val) => {
+    setFormData(prev => ({ ...prev, [field]: val }));
+  };
+
+  const handleSave = () => {
+    onSave(formData);
+  };
+
+  if (!open) return null;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle sx={{ p: 0, overflow: 'hidden' }}>
+        <Box sx={{ p: 3, background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: '#ffffff', position: 'relative' }}>
+          <IconButton onClick={onClose} sx={{ position: 'absolute', top: 12, right: 12, color: '#94a3b8' }}>
+            <CloseIcon />
+          </IconButton>
+
+          <Button
+            size="small"
+            variant="contained"
+            startIcon={<SaveIcon />}
+            onClick={handleSave}
+            sx={{
+              position: 'absolute',
+              top: 14,
+              right: 54,
+              backgroundColor: '#16a34a',
+              color: '#ffffff',
+              fontWeight: 800,
+              borderRadius: 2,
+              px: 2.5,
+              '&:hover': { backgroundColor: '#15803d' }
+            }}
+          >
+            💾 Lưu Hồ Sơ HR
+          </Button>
+
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2.5 }}>
+            <Box sx={{ width: 64, height: 64, borderRadius: '20px', background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(37,99,235,0.4)' }}>
+              <PeopleIcon sx={{ fontSize: 36 }} />
+            </Box>
+            <Box>
+              <Typography variant="h5" sx={{ fontWeight: 900, color: '#ffffff', lineHeight: 1.2 }}>
+                {isNew ? '➕ Thêm Mới Hồ Sơ Nhân Sự HR' : (formData?.['Họ Tên NV'] || formData?.['Mã NV'] || 'Hồ Sơ Nhân Sự')}
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                <Chip label={`Mã NV: ${formData?.['Mã NV'] || '-'}`} size="small" sx={{ backgroundColor: '#334155', color: '#f8fafc', fontWeight: 800 }} />
+                <Chip label={`Inside: ${formData?.['Inside Account'] || '-'}`} size="small" sx={{ backgroundColor: '#312e81', color: '#c7d2fe', fontWeight: 800 }} />
+                <Chip label={`Mobisale: ${formData?.['Mobisale'] || '-'}`} size="small" sx={{ backgroundColor: '#1e3a8a', color: '#bfdbfe', fontWeight: 800 }} />
+              </Box>
+            </Box>
+          </Box>
+        </Box>
+      </DialogTitle>
+
+      <DialogContent dividers sx={{ p: 3, backgroundColor: '#f8fafc' }}>
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}><CircularProgress /></Box>
+        ) : (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="🔍 Lọc các trường trong hồ sơ để tìm & chỉnh sửa nhanh..."
+              value={searchKw}
+              onChange={(e) => setSearchKw(e.target.value)}
+              InputProps={{ startAdornment: <SearchIcon sx={{ color: '#94a3b8', mr: 1 }} /> }}
+              sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#ffffff' } }}
+            />
+
+            {/* SECTION 1: PERSONAL & CONTACT */}
+            <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#2563eb', mb: 2 }}>
+                👤 1. Thông Tin Cá Nhân & Tài Khoản Liên Hệ
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Mã Nhân Viên (Code) *"
+                    value={formData['Mã NV'] || ''}
+                    disabled={!isNew}
+                    onChange={(e) => handleChange('Mã NV', e.target.value)}
+                    required
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Họ và Tên NV *"
+                    value={formData['Họ Tên NV'] || ''}
+                    onChange={(e) => handleChange('Họ Tên NV', e.target.value)}
+                    required
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Inside Account"
+                    value={formData['Inside Account'] || ''}
+                    onChange={(e) => handleChange('Inside Account', e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Mobisale Account"
+                    value={formData['Mobisale'] || ''}
+                    onChange={(e) => handleChange('Mobisale', e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Email Công Việc"
+                    value={formData['Email'] || ''}
+                    onChange={(e) => handleChange('Email', e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Số Điện Thoại"
+                    value={formData['Số điện thoại'] || ''}
+                    onChange={(e) => handleChange('Số điện thoại', e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <SearchableAddableSelect
+                    label="Tình Trạng Tài Khoản"
+                    value={formData['Tình trạng Tài khoản'] || 'Active'}
+                    options={['Active', 'Inactive', 'Bình thường', 'Khóa']}
+                    onChange={(val) => handleChange('Tình trạng Tài khoản', val)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Số CMND/CCCD"
+                    value={formData['Số CMND'] || ''}
+                    onChange={(e) => handleChange('Số CMND', e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Ngày Cấp CMND"
+                    value={formData['Ngày cấp'] || ''}
+                    onChange={(e) => handleChange('Ngày cấp', e.target.value)}
+                  />
+                </Grid>
+              </Grid>
+            </Paper>
+
+            {/* SECTION 2: WORKPLACE & BLOCK */}
+            <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#7c3aed', mb: 2 }}>
+                🏢 2. Đơn Vị & Block Công Tác
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6} md={4}>
+                  <SearchableAddableSelect
+                    label="Block Kỹ Thuật"
+                    value={formData['Block'] || ''}
+                    options={options?.blocks || []}
+                    onChange={(val) => handleChange('Block', val)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <SearchableAddableSelect
+                    label="Họ tên Đội Trưởng"
+                    value={formData['Họ tên Đội trưởng'] || ''}
+                    options={options?.team_leads || []}
+                    onChange={(val) => handleChange('Họ tên Đội trưởng', val)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <SearchableAddableSelect
+                    label="Chức Danh / Vị Trí"
+                    value={formData['Chức danh'] || ''}
+                    options={Array.from(new Set((hrList || []).map(r => r.title).filter(Boolean)))}
+                    onChange={(val) => handleChange('Chức danh', val)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <SearchableAddableSelect
+                    label="Tên Đối Tác"
+                    value={formData['Tên Đối Tác'] || ''}
+                    options={options?.partners || []}
+                    onChange={(val) => handleChange('Tên Đối Tác', val)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <SearchableAddableSelect
+                    label="Vùng Phụ Trách"
+                    value={formData['Vùng'] || ''}
+                    options={options?.regions || []}
+                    onChange={(val) => handleChange('Vùng', val)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Chi Nhánh"
+                    value={formData['Chi nhánh'] || ''}
+                    onChange={(e) => handleChange('Chi nhánh', e.target.value)}
+                  />
+                </Grid>
+              </Grid>
+            </Paper>
+
+            {/* SECTION 3: CONTRACT & SALARY ASSIGNMENT */}
+            <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#059669', mb: 2 }}>
+                📜 3. Hợp Đồng & Phân Công Tính Lương
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6} md={4}>
+                  <SearchableAddableSelect
+                    label="Tình Trạng Hợp Đồng (Cột M)"
+                    value={formData['Tình trạng Hợp đồng'] || 'NS Đang làm việc'}
+                    options={['NS Đang làm việc', 'NS đã thôi việc', 'Thử việc', 'Chính thức', 'Active', 'Inactive']}
+                    onChange={(val) => handleChange('Tình trạng Hợp đồng', val)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <SearchableAddableSelect
+                    label="Loại HĐLĐ"
+                    value={formData['Loại HĐLĐ'] || ''}
+                    options={['HĐLĐ Xác định thời hạn', 'HĐLĐ Không xác định thời hạn', 'Hợp đồng khoán', 'Thử việc']}
+                    onChange={(val) => handleChange('Loại HĐLĐ', val)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Ngày Vào Công Ty"
+                    value={formData['Ngày vào công ty'] || ''}
+                    onChange={(e) => handleChange('Ngày vào công ty', e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Phân Công Tính Lương"
+                    value={formData['Phân công'] || ''}
+                    onChange={(e) => handleChange('Phân công', e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={4}>
+                  <TextField
+                    fullWidth size="small" label="Hình Thức Tính Lương"
+                    value={formData['Tính lương'] || ''}
+                    onChange={(e) => handleChange('Tính lương', e.target.value)}
+                  />
+                </Grid>
+              </Grid>
+            </Paper>
+
+            {/* SECTION 4: REMAINING DYNAMIC COLUMNS (NO HIDDEN DATA) */}
+            {(() => {
+              const usedKeys = [
+                'Mã NV', 'Họ Tên NV', 'Inside Account', 'Mobisale', 'Email', 'Số điện thoại', 'Tình trạng Tài khoản', 'Số CMND', 'Ngày cấp', 'Block', 'Họ tên Đội trưởng', 'Chức danh', 'Tên Đối Tác', 'Vùng', 'Chi nhánh', 'Tình trạng Hợp đồng', 'Loại HĐLĐ', 'Ngày vào công ty', 'Phân công', 'Tính lương'
+              ];
+              const remainingEntries = Object.entries(formData).filter(([k, v]) => {
+                const isUsed = usedKeys.some(uk => k.toLowerCase() === uk.toLowerCase());
+                if (isUsed) return false;
+                if (!searchKw) return true;
+                const kw = searchKw.toLowerCase();
+                return k.toLowerCase().includes(kw) || String(v).toLowerCase().includes(kw);
+              });
+
+              if (remainingEntries.length === 0) return null;
+
+              return (
+                <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#475569', mb: 2 }}>
+                    📌 4. Tất Cả Cột Thông Tin Bổ Sung Khác
+                  </Typography>
+                  <Grid container spacing={2}>
+                    {remainingEntries.map(([key, val]) => (
+                      <Grid item xs={12} sm={6} md={4} key={key}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label={key}
+                          value={val || ''}
+                          onChange={(e) => handleChange(key, e.target.value)}
+                        />
+                      </Grid>
+                    ))}
+                  </Grid>
+                </Paper>
+              );
+            })()}
+
+          </Box>
+        )}
+      </DialogContent>
+
+      <DialogActions sx={{ p: 2, backgroundColor: '#ffffff', borderTop: '1px solid #e2e8f0' }}>
+        <Button onClick={onClose} variant="outlined" sx={{ borderRadius: 2, fontWeight: 700 }}>
+          Hủy Bỏ
+        </Button>
+        <Button onClick={handleSave} variant="contained" color="success" startIcon={<SaveIcon />} sx={{ borderRadius: 2, px: 3, fontWeight: 800 }}>
+          💾 Lưu Thay Đổi Hồ Sơ HR
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+});
+
+// Isolated Admin User Edit / Add Modal (Local State Buffering)
+const UserEditModal = React.memo(({
+  open,
+  onClose,
+  initialData,
+  isEditMode,
+  onSave
+}) => {
+  const [formData, setFormData] = useState({
+    msnv: '', name: '', mail: '', user: '', password: '', role: 'user', status: 'Active', allowed_apps: []
+  });
+
+  useEffect(() => {
+    if (open) {
+      setFormData(initialData || {
+        msnv: '', name: '', mail: '', user: '', password: '', role: 'user', status: 'Active', allowed_apps: []
+      });
+    }
+  }, [open, initialData]);
+
+  const handleChange = (field, val) => {
+    setFormData(prev => ({ ...prev, [field]: val }));
+  };
+
+  const handleSave = () => {
+    onSave(formData);
+  };
+
+  if (!open) return null;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ fontWeight: 800, color: '#1a73e8' }}>
+        {isEditMode ? '✏️ SỬA TÀI KHOẢN NGƯỜI DÙNG & PHÂN QUYỀN' : '➕ THÊM USER MỚI (SHEET ADMIN)'}
+      </DialogTitle>
+      <DialogContent dividers sx={{ p: 3 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={6}>
+              <TextField fullWidth size="small" label="MSNV" value={formData.msnv || ''} onChange={(e) => handleChange('msnv', e.target.value)} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField fullWidth size="small" label="Họ và Tên" value={formData.name || ''} onChange={(e) => handleChange('name', e.target.value)} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField fullWidth size="small" label="Email" value={formData.mail || ''} onChange={(e) => handleChange('mail', e.target.value)} required />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField fullWidth size="small" label="User (Mật danh)" value={formData.user || ''} onChange={(e) => handleChange('user', e.target.value)} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField fullWidth size="small" type="password" label={isEditMode ? "Mật khẩu mới (Tùy chọn)" : "Mật khẩu"} value={formData.password || ''} onChange={(e) => handleChange('password', e.target.value)} />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField select fullWidth size="small" label="Quyền Mặc Định" value={formData.role || 'user'} onChange={(e) => handleChange('role', e.target.value)}>
+                <MenuItem value="user">User (Người dùng thường)</MenuItem>
+                <MenuItem value="admin">Admin (Quản trị viên)</MenuItem>
+              </TextField>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField select fullWidth size="small" label="Trạng Thái Tài Khoản" value={formData.status || 'Active'} onChange={(e) => handleChange('status', e.target.value)}>
+                <MenuItem value="Active">Active (Hoạt động)</MenuItem>
+                <MenuItem value="Inactive">Inactive (Khóa / Không hoạt động)</MenuItem>
+              </TextField>
+            </Grid>
+          </Grid>
+
+          <Divider sx={{ my: 1 }} />
+
+          <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#1e293b' }}>
+            🔒 Phân Quyền Ứng Dụng Được Xem (RBAC Column Sheet Quyền):
+          </Typography>
+
+          <Grid container spacing={1}>
+            {[
+              { key: 'Salary', label: '💵 Salary (Quản Lý Lương)' },
+              { key: 'HR', label: '👥 HR (HR Nhân Sự)' },
+              { key: 'KPIs', label: '📊 KPIs (Dashboard KPIs)' },
+              { key: 'LichTruc', label: '📋 LichTruc (Lịch Trực)' },
+              { key: 'TonTKBT', label: '📦 TonTKBT (Tồn TK-BT)' },
+              { key: 'UserMgmt', label: '🔑 UserMgmt (Quản Trị User)' },
+              { key: 'ImportDB', label: '📦 ImportDB (Import Data)' },
+              { key: 'Admin', label: '⚙️ Admin (Trang Admin)' }
+            ].map((item) => {
+              const appsList = Array.isArray(formData.allowed_apps)
+                ? formData.allowed_apps.map(x => String(x).trim().toLowerCase())
+                : (typeof formData.allowed_apps === 'string' ? formData.allowed_apps.toLowerCase().split(/[;,]/) : []);
+              const isChecked = appsList.includes(item.key.toLowerCase());
+
+              return (
+                <Grid item xs={12} sm={6} key={item.key}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={isChecked}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          let newApps = Array.isArray(formData.allowed_apps) ? [...formData.allowed_apps] : [];
+                          if (checked) {
+                            if (!newApps.some(a => a.toLowerCase() === item.key.toLowerCase())) {
+                              newApps.push(item.key);
+                            }
+                          } else {
+                            newApps = newApps.filter(a => a.toLowerCase() !== item.key.toLowerCase());
+                          }
+                          setFormData(prev => ({ ...prev, allowed_apps: newApps }));
+                        }}
+                      />
+                    }
+                    label={<Typography variant="body2" sx={{ fontWeight: 600 }}>{item.label}</Typography>}
+                  />
+                </Grid>
+              );
+            })}
+          </Grid>
+        </Box>
+      </DialogContent>
+      <DialogActions sx={{ p: 2 }}>
+        <Button onClick={onClose} variant="outlined">Hủy</Button>
+        <Button onClick={handleSave} variant="contained" color="primary">Lưu Phân Quyền</Button>
+      </DialogActions>
+    </Dialog>
+  );
+});
+
+// Isolated Add Schedule Row Modal (Local State Buffering)
+const AddLichTrucRowModal = React.memo(({ open, onClose, onSubmit }) => {
+  const [formData, setFormData] = useState({
+    mail: '', code: '', name: '', partner: '', block: '', month: new Date().getMonth() + 1, year: new Date().getFullYear()
+  });
+
+  useEffect(() => {
+    if (open) {
+      setFormData({
+        mail: '', code: '', name: '', partner: '', block: '', month: new Date().getMonth() + 1, year: new Date().getFullYear()
+      });
+    }
+  }, [open]);
+
+  const handleChange = (field, val) => {
+    setFormData(prev => ({ ...prev, [field]: val }));
+  };
+
+  const handleSubmit = () => {
+    onSubmit(formData);
+  };
+
+  if (!open) return null;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle sx={{ fontWeight: 800 }}>➕ Thêm Dòng Lịch Trực Mới</DialogTitle>
+      <DialogContent dividers>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 1 }}>
+          <Box>
+            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Mail *</FormLabel>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="vd: PNC01.NHANHT6@fpt.com"
+              value={formData.mail}
+              onChange={(e) => handleChange('mail', e.target.value)}
+            />
+          </Box>
+
+          <Box>
+            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Mã Nhân Viên (CodeStaff)</FormLabel>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="vd: 280558"
+              value={formData.code}
+              onChange={(e) => handleChange('code', e.target.value)}
+            />
+          </Box>
+
+          <Box>
+            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Họ và Tên (Name)</FormLabel>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="vd: Cao Tiến Triều"
+              value={formData.name}
+              onChange={(e) => handleChange('name', e.target.value)}
+            />
+          </Box>
+
+          <Box>
+            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Đối Tác (Partner)</FormLabel>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="vd: Phương Nam-01"
+              value={formData.partner}
+              onChange={(e) => handleChange('partner', e.target.value)}
+            />
+          </Box>
+
+          <Box>
+            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Block</FormLabel>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="vd: Phuong Long Truong-002"
+              value={formData.block}
+              onChange={(e) => handleChange('block', e.target.value)}
+            />
+          </Box>
+
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <Box sx={{ flex: 1 }}>
+              <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Tháng</FormLabel>
+              <TextField
+                type="number"
+                fullWidth
+                size="small"
+                value={formData.month}
+                onChange={(e) => handleChange('month', Number(e.target.value))}
+              />
+            </Box>
+            <Box sx={{ flex: 1 }}>
+              <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Năm</FormLabel>
+              <TextField
+                type="number"
+                fullWidth
+                size="small"
+                value={formData.year}
+                onChange={(e) => handleChange('year', Number(e.target.value))}
+              />
+            </Box>
+          </Box>
+        </Box>
+      </DialogContent>
+      <DialogActions sx={{ p: 2 }}>
+        <Button onClick={onClose} variant="outlined">Hủy</Button>
+        <Button onClick={handleSubmit} variant="contained" color="primary">Thêm Dòng</Button>
+      </DialogActions>
+    </Dialog>
+  );
+});
 
 // Helper for default date calculation: First day of current month -> Yesterday (Today - 1)
 const getInitialDates = () => {
@@ -265,6 +978,7 @@ export default function App() {
 
   // Topic 1: HR List & CRUD States
   const [hrList, setHrList] = useState([]);
+  const [positionModalOpen, setPositionModalOpen] = useState(false);
   const [hrLoading, setHrLoading] = useState(false);
   const [hrSearch, setHrSearch] = useState('');
   const [hrBlockFilter, setHrBlockFilter] = useState('__ALL__');
@@ -276,12 +990,10 @@ export default function App() {
   const [hrDetailLoading, setHrDetailLoading] = useState(false);
   const [hrDetailSearch, setHrDetailSearch] = useState('');
 
-  // HR Add/Edit Modal States
-  const [hrEditModalOpen, setHrEditModalOpen] = useState(false);
-  const [editingHr, setEditingHr] = useState(null);
-  const [hrForm, setHrForm] = useState({
-    code: '', name: '', account: '', mobisale: '', mail: '', phone: '', block: '', team_lead: '', title: '', status: 'Chính thức (Active)'
-  });
+  // Unified HR Profile Modal States (View & Edit Combined in 1)
+  const [unifiedHrModalOpen, setUnifiedHrModalOpen] = useState(false);
+  const [unifiedHrProfile, setUnifiedHrProfile] = useState({});
+  const [isNewHrProfile, setIsNewHrProfile] = useState(false);
 
   // HR Delete Confirmation States
   const [hrDeleteModalOpen, setHrDeleteModalOpen] = useState(false);
@@ -296,11 +1008,15 @@ export default function App() {
 
   // Topic 2: Admin Users Table States
   const [adminUsers, setAdminUsers] = useState([]);
+  const [webAppUrl, setWebAppUrl] = useState('');
+  const [appsScriptGuideOpen, setAppsScriptGuideOpen] = useState(false);
   const [adminUsersLoading, setAdminUsersLoading] = useState(false);
   const [userModalOpen, setUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null); // null for Add, user object for Edit
+  const [showPasswords, setShowPasswords] = useState({});
+  const toggleShowPassword = (id) => setShowPasswords(prev => ({ ...prev, [id]: !prev[id] }));
   const [userForm, setUserForm] = useState({
-    msnv: '', name: '', mail: '', user: '', password: '', role: 'user', allowed_apps: ['luong']
+    msnv: '', name: '', mail: '', user: '', password: '', role: 'user', status: 'Active', allowed_apps: ['Salary']
   });
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState(null);
@@ -374,6 +1090,17 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    if (!regMail || !regMail.includes('@') || regMail.trim().length < 4) {
+      setHrCheckResult(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      handleCheckHrEmail(regMail.trim());
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [regMail]);
+
   const handleRegister = async (e) => {
     if (e) e.preventDefault();
     if (!regMail || !regPassword) {
@@ -421,10 +1148,40 @@ export default function App() {
     try {
       const res = await axios.get('/api/admin/users');
       if (res.data) setAdminUsers(res.data);
+      const cfgRes = await axios.get('/api/admin/users/config-webapp');
+      if (cfgRes.data && cfgRes.data.url) {
+        setWebAppUrl(cfgRes.data.url);
+      }
     } catch (err) {
       console.error("Fetch admin users error:", err);
     } finally {
       setAdminUsersLoading(false);
+    }
+  };
+
+  const handleSaveWebAppUrl = async () => {
+    try {
+      const res = await axios.post('/api/admin/users/config-webapp', { url: webAppUrl });
+      if (res.data && res.data.ok) {
+        alert("✅ Đã lưu Google Apps Script Web App URL thành công!");
+      } else {
+        alert("❌ Không thể lưu Web App URL!");
+      }
+    } catch (err) {
+      alert("❌ Lỗi kết nối server khi lưu Web App URL!");
+    }
+  };
+
+  const handleSyncSheetNow = async () => {
+    try {
+      const res = await axios.post('/api/admin/users/sync-sheet');
+      if (res.data && res.data.ok) {
+        alert(res.data.msg || "✅ Đồng bộ dữ liệu DataBase thành công!");
+      } else {
+        alert("❌ Lỗi đồng bộ: " + (res.data?.msg || "Vui lòng thử lại!"));
+      }
+    } catch (err) {
+      alert("❌ Lỗi kết nối server khi đồng bộ DataBase!");
     }
   };
 
@@ -442,63 +1199,70 @@ export default function App() {
     }
   };
 
-  const fetchAdminHrDetail = async (code) => {
+  const openUnifiedHrModal = async (code = null) => {
     setHrDetailLoading(true);
     setHrDetailSearch('');
-    setSelectedHrDetail(null);
-    setHrDetailModalOpen(true);
-    try {
-      const res = await axios.get(`/api/admin/hr-detail/${encodeURIComponent(code)}`);
-      if (res.data && res.data.ok) {
-        setSelectedHrDetail(res.data.detail);
-      } else {
-        alert(res.data?.error || "Không thể tải thông tin chi tiết nhân sự!");
+    if (code) {
+      setIsNewHrProfile(false);
+      try {
+        const res = await axios.get(`/api/admin/hr-detail/${encodeURIComponent(code)}`);
+        if (res.data && res.data.ok) {
+          setUnifiedHrProfile(res.data.detail || {});
+          setUnifiedHrModalOpen(true);
+        } else {
+          alert(res.data?.error || "Không thể tải thông tin nhân sự!");
+        }
+      } catch (err) {
+        alert("Lỗi khi tải thông tin nhân sự!");
+      } finally {
+        setHrDetailLoading(false);
       }
-    } catch (err) {
-      alert("Lỗi khi tải thông tin chi tiết nhân sự!");
-    } finally {
+    } else {
+      setIsNewHrProfile(true);
+      setUnifiedHrProfile({
+        'Mã NV': '',
+        'Họ Tên NV': '',
+        'Inside Account': '',
+        'Mobisale': '',
+        'Email': '',
+        'Số điện thoại': '',
+        'Block': '',
+        'Họ tên Đội trưởng': '',
+        'Chức danh': 'Nhân Viên',
+        'Tình trạng Hợp đồng': 'NS Đang làm việc',
+        'Loại HĐLĐ': 'Chính thức',
+        'Tình trạng Tài khoản': 'Active'
+      });
+      setUnifiedHrModalOpen(true);
       setHrDetailLoading(false);
     }
   };
 
-  const handleSaveHr = async () => {
-    if (!hrForm.name || !hrForm.code) {
-      alert("Vui lòng nhập đầy đủ Mã NV và Họ Tên Nhân Sự!");
+  const handleSaveUnifiedHr = async (formDataParam) => {
+    const profile = formDataParam || unifiedHrProfile;
+    const code = profile['Mã NV'] || profile['Inside Account'] || '';
+    const name = profile['Họ Tên NV'] || '';
+
+    if (!code || !name) {
+      alert("Vui lòng nhập đầy đủ Mã NV và Họ Tên NV!");
       return;
     }
-    if (hrForm.block && !options.blocks.includes(hrForm.block)) {
-      setOptions(prev => ({ ...prev, blocks: [...prev.blocks, hrForm.block].sort() }));
-    }
-    if (hrForm.team_lead && !options.team_leads.includes(hrForm.team_lead)) {
-      setOptions(prev => ({ ...prev, team_leads: [...prev.team_leads, hrForm.team_lead].sort() }));
-    }
+
     try {
-      const payload = {
-        'Mã NV': hrForm.code,
-        'Họ Tên NV': hrForm.name,
-        'Inside Account': hrForm.account,
-        'Mobisale': hrForm.mobisale,
-        'Email': hrForm.mail,
-        'Số điện thoại': hrForm.phone,
-        'Block': hrForm.block,
-        'Họ tên Đội trưởng': hrForm.team_lead,
-        'Chức danh': hrForm.title,
-        'Tình trạng Hợp đồng': hrForm.status
-      };
-      if (editingHr) {
-        const res = await axios.post('/api/admin/hr/update', { code: editingHr.code, ...payload });
+      if (isNewHrProfile) {
+        const res = await axios.post('/api/admin/hr/add', profile);
         if (res.data && res.data.ok) {
-          alert(res.data.message || 'Đã cập nhật hồ sơ!');
-          setHrEditModalOpen(false);
+          alert(res.data.message || "Đã thêm mới nhân sự thành công!");
+          setUnifiedHrModalOpen(false);
           fetchAdminHrList();
-        } else alert(res.data?.error || 'Lỗi cập nhật!');
+        } else alert(res.data?.error || "Lỗi thêm mới nhân sự!");
       } else {
-        const res = await axios.post('/api/admin/hr/add', payload);
+        const res = await axios.post('/api/admin/hr/update', { code, ...profile });
         if (res.data && res.data.ok) {
-          alert(res.data.message || 'Đã thêm mới nhân sự!');
-          setHrEditModalOpen(false);
+          alert(res.data.message || "Đã cập nhật hồ sơ nhân sự thành công!");
+          setUnifiedHrModalOpen(false);
           fetchAdminHrList();
-        } else alert(res.data?.error || 'Lỗi thêm mới!');
+        } else alert(res.data?.error || "Lỗi cập nhật nhân sự!");
       }
     } catch (err) {
       alert("Lỗi khi lưu thông tin nhân sự!");
@@ -534,8 +1298,9 @@ export default function App() {
     }
   };
 
-  const handleSaveUser = async () => {
-    if (!userForm.mail || (!editingUser && !userForm.password)) {
+  const handleSaveUser = async (formDataParam) => {
+    const form = formDataParam || userForm;
+    if (!form.mail || (!editingUser && !form.password)) {
       alert("Vui lòng điền đầy đủ Email và Mật khẩu!");
       return;
     }
@@ -543,13 +1308,14 @@ export default function App() {
       if (editingUser) {
         const res = await axios.post('/api/admin/users/update', {
           user_id: editingUser.id,
-          msnv: userForm.msnv,
-          name: userForm.name,
-          mail: userForm.mail,
-          user: userForm.user,
-          password: userForm.password,
-          role: userForm.role,
-          allowed_apps: userForm.allowed_apps
+          msnv: form.msnv,
+          name: form.name,
+          mail: form.mail,
+          user: form.user,
+          password: form.password,
+          role: form.role,
+          status: form.status || 'Active',
+          allowed_apps: Array.isArray(form.allowed_apps) ? form.allowed_apps.join(', ') : form.allowed_apps
         });
         if (res.data && res.data.ok) {
           alert(res.data.message);
@@ -557,7 +1323,10 @@ export default function App() {
           fetchAdminUsers();
         } else alert(res.data?.error || "Lỗi cập nhật!");
       } else {
-        const res = await axios.post('/api/admin/users/add', userForm);
+        const res = await axios.post('/api/admin/users/add', {
+          ...form,
+          allowed_apps: Array.isArray(form.allowed_apps) ? form.allowed_apps.join(', ') : form.allowed_apps
+        });
         if (res.data && res.data.ok) {
           alert(res.data.message);
           setUserModalOpen(false);
@@ -1101,8 +1870,9 @@ export default function App() {
   };
 
   // CRUD Handlers for Lịch Trực Chi Tiết
-  const handleAddRowSubmit = async () => {
-    if (!addRowData.mail) {
+  const handleAddRowSubmit = async (formDataParam) => {
+    const form = formDataParam || addRowData;
+    if (!form.mail) {
       alert("Vui lòng nhập Email!");
       return;
     }
@@ -1137,16 +1907,21 @@ export default function App() {
 
   const handleSaveEditRow = async () => {
     try {
-      await axios.post('/api/lich-truc/update-row', {
+      const res = await axios.post('/api/lich-truc/update-row', {
         rowNumber: editingRowNumber,
         valuesBtoAL: editingRowValues
       });
-      setEditingRowNumber(null);
-      setEditingRowValues([]);
-      fetchLichTrucChiTiet();
+      if (res.data && res.data.ok) {
+        setEditingRowNumber(null);
+        setEditingRowValues([]);
+        fetchLichTrucChiTiet();
+        alert(res.data.message || "Đã lưu thay đổi lịch trực thành công!");
+      } else {
+        alert("Lỗi khi lưu lịch trực: " + (res.data?.error || "Không thể lưu dữ liệu!"));
+      }
     } catch (err) {
       console.error("Failed to update row:", err);
-      alert("Có lỗi khi lưu dòng!");
+      alert("Có lỗi khi kết nối máy chủ để lưu lịch trực!");
     }
   };
 
@@ -1517,97 +2292,7 @@ export default function App() {
         </TableContainer>
       </Paper>
 
-      {/* ADD ROW DIALOG MODAL */}
-      {isEditable && (
-        <Dialog open={addRowOpen} onClose={() => setAddRowOpen(false)} maxWidth="xs" fullWidth>
-          <DialogTitle sx={{ fontWeight: 800 }}>➕ Thêm Dòng Lịch Trực Mới</DialogTitle>
-          <DialogContent dividers>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 1 }}>
-              <Box>
-                <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Mail *</FormLabel>
-                <TextField
-                  fullWidth
-                  size="small"
-                  placeholder="vd: PNC01.NHANHT6@fpt.com"
-                  value={addRowData.mail}
-                  onChange={(e) => setAddRowData({ ...addRowData, mail: e.target.value })}
-                />
-              </Box>
-
-              <Box>
-                <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Mã Nhân Viên (CodeStaff)</FormLabel>
-                <TextField
-                  fullWidth
-                  size="small"
-                  placeholder="vd: 280558"
-                  value={addRowData.code}
-                  onChange={(e) => setAddRowData({ ...addRowData, code: e.target.value })}
-                />
-              </Box>
-
-              <Box>
-                <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Họ và Tên (Name)</FormLabel>
-                <TextField
-                  fullWidth
-                  size="small"
-                  placeholder="vd: Cao Tiến Triều"
-                  value={addRowData.name}
-                  onChange={(e) => setAddRowData({ ...addRowData, name: e.target.value })}
-                />
-              </Box>
-
-              <Box>
-                <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Đối Tác (Partner)</FormLabel>
-                <TextField
-                  fullWidth
-                  size="small"
-                  placeholder="vd: Phương Nam-01"
-                  value={addRowData.partner}
-                  onChange={(e) => setAddRowData({ ...addRowData, partner: e.target.value })}
-                />
-              </Box>
-
-              <Box>
-                <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Block</FormLabel>
-                <TextField
-                  fullWidth
-                  size="small"
-                  placeholder="vd: Phuong Long Truong-002"
-                  value={addRowData.block}
-                  onChange={(e) => setAddRowData({ ...addRowData, block: e.target.value })}
-                />
-              </Box>
-
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <Box sx={{ flex: 1 }}>
-                  <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Tháng</FormLabel>
-                  <TextField
-                    type="number"
-                    fullWidth
-                    size="small"
-                    value={addRowData.month}
-                    onChange={(e) => setAddRowData({ ...addRowData, month: Number(e.target.value) })}
-                  />
-                </Box>
-                <Box sx={{ flex: 1 }}>
-                  <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Năm</FormLabel>
-                  <TextField
-                    type="number"
-                    fullWidth
-                    size="small"
-                    value={addRowData.year}
-                    onChange={(e) => setAddRowData({ ...addRowData, year: Number(e.target.value) })}
-                  />
-                </Box>
-              </Box>
-            </Box>
-          </DialogContent>
-          <DialogActions sx={{ p: 2 }}>
-            <Button onClick={() => setAddRowOpen(false)} variant="outlined">Hủy</Button>
-            <Button onClick={handleAddRowSubmit} variant="contained" color="primary">Thêm Dòng</Button>
-          </DialogActions>
-        </Dialog>
-      )}
+      {isEditable && (<AddLichTrucRowModal open={addRowOpen} onClose={() => setAddRowOpen(false)} onSubmit={handleAddRowSubmit} />)}
 
     </Box>
   );
@@ -2192,12 +2877,12 @@ export default function App() {
                       <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
                         Tìm Inside Acc / NV
                       </FormLabel>
-                      <TextField
+                      <DebouncedSearchInput
                         fullWidth
                         size="small"
                         placeholder="Nhập tên, mã hoặc account..."
                         value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onChange={(val) => setSearchQuery(val)}
                         sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#fafafa' } }}
                         InputProps={{
                           endAdornment: searchQuery ? (
@@ -3751,7 +4436,7 @@ export default function App() {
                     },
                     {
                       id: 1,
-                      title: '2. Sheet Admin Users',
+                      title: '2. Phân Quyền DataBase',
                       subtitle: 'Phân quyền & Tài khoản hệ thống',
                       icon: <VpnKeyIcon sx={{ fontSize: 28 }} />,
                       gradient: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
@@ -3868,40 +4553,82 @@ export default function App() {
                 {/* CONTENT AREA FOR SELECTED TOPIC */}
                 <Paper elevation={0} sx={{ p: 3, borderRadius: 3.5, border: '1px solid #e0e0e0', backgroundColor: '#ffffff', boxShadow: '0 2px 10px rgba(0,0,0,0.03)' }}>
                   
-                  {/* TOPIC 0: HR NHÂN SỰ (FULL CRUD & MOBISALE NEXT TO INSIDE ACC) */}
+                  {/* TOPIC 0: HR NHÂN SỰ (UNIFIED PROFILE & POSITION BREAKDOWN) */}
                   {adminSubTab === 0 && (
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                       
-                      {/* STAT METRICS BAR */}
+                      {/* STAT METRICS BAR WITH POSITION BREAKDOWN */}
                       <Grid container spacing={2}>
-                        <Grid item xs={12} sm={3}>
+                        <Grid item xs={12} sm={6} md={3}>
                           <Paper elevation={0} sx={{ p: 2, borderRadius: 2.5, backgroundColor: '#eff6ff', border: '1px solid #bfdbfe' }}>
                             <Typography variant="caption" sx={{ color: '#1e40af', fontWeight: 800, textTransform: 'uppercase' }}>Tổng Nhân Sự</Typography>
-                            <Typography variant="h5" sx={{ fontWeight: 900, color: '#1d4ed8', mt: 0.5 }}>{hrList.length}</Typography>
+                            <Typography variant="h4" sx={{ fontWeight: 900, color: '#1d4ed8', mt: 0.5 }}>{hrList.length}</Typography>
+                            <Button
+                              size="small"
+                              onClick={() => setPositionModalOpen(true)}
+                              sx={{
+                                mt: 1,
+                                p: 0,
+                                fontSize: '12px',
+                                fontWeight: 800,
+                                color: '#2563eb',
+                                textTransform: 'none',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 0.5,
+                                '&:hover': { backgroundColor: 'transparent', textDecoration: 'underline' }
+                              }}
+                            >
+                              📊 Chi tiết Chức danh (Cột O) &raquo;
+                            </Button>
                           </Paper>
                         </Grid>
-                        <Grid item xs={12} sm={3}>
+
+                        <Grid item xs={12} sm={6} md={3}>
                           <Paper elevation={0} sx={{ p: 2, borderRadius: 2.5, backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0' }}>
-                            <Typography variant="caption" sx={{ color: '#166534', fontWeight: 800, textTransform: 'uppercase' }}>Hoạt Động (Active)</Typography>
-                            <Typography variant="h5" sx={{ fontWeight: 900, color: '#15803d', mt: 0.5 }}>
-                              {hrList.filter(r => (r.status || '').toUpperCase().includes('ACTIVE') || (r.status || '').toUpperCase().includes('BÌNH THƯỜNG') || (r.status || '').toUpperCase().includes('CHÍNH THỨC')).length}
+                            <Typography variant="caption" sx={{ color: '#166534', fontWeight: 800, textTransform: 'uppercase' }}>Hoạt Động (Cột M - NS Đang làm việc)</Typography>
+                            <Typography variant="h4" sx={{ fontWeight: 900, color: '#15803d', mt: 0.5 }}>
+                              {hrList.filter(r => {
+                                const st = String(r.status || '').toUpperCase();
+                                return st.includes('ĐANG LÀM VIỆC') || st.includes('ACTIVE') || st.includes('BÌNH THƯỜNG') || st.includes('CHÍNH THỨC');
+                              }).length}
                             </Typography>
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                              <Chip
+                                label={`Active: ${hrList.filter(r => {
+                                  const st = String(r.status || '').toUpperCase();
+                                  return st.includes('ĐANG LÀM VIỆC') || st.includes('ACTIVE') || st.includes('BÌNH THƯỜNG') || st.includes('CHÍNH THỨC');
+                                }).length}`}
+                                color="success" size="small" sx={{ height: 20, fontSize: '10px', fontWeight: 800 }}
+                              />
+                              <Chip
+                                label={`Inactive: ${hrList.length - hrList.filter(r => {
+                                  const st = String(r.status || '').toUpperCase();
+                                  return st.includes('ĐANG LÀM VIỆC') || st.includes('ACTIVE') || st.includes('BÌNH THƯỜNG') || st.includes('CHÍNH THỨC');
+                                }).length}`}
+                                color="default" size="small" sx={{ height: 20, fontSize: '10px', fontWeight: 800 }}
+                              />
+                            </Box>
                           </Paper>
                         </Grid>
-                        <Grid item xs={12} sm={3}>
+
+                        <Grid item xs={12} sm={6} md={3}>
                           <Paper elevation={0} sx={{ p: 2, borderRadius: 2.5, backgroundColor: '#faf5ff', border: '1px solid #e9d5ff' }}>
                             <Typography variant="caption" sx={{ color: '#6b21a8', fontWeight: 800, textTransform: 'uppercase' }}>Số Đội Trưởng</Typography>
-                            <Typography variant="h5" sx={{ fontWeight: 900, color: '#7e22ce', mt: 0.5 }}>
+                            <Typography variant="h4" sx={{ fontWeight: 900, color: '#7e22ce', mt: 0.5 }}>
                               {new Set(hrList.map(r => r.team_lead).filter(Boolean)).size}
                             </Typography>
+                            <Typography variant="caption" sx={{ color: '#7e22ce', fontWeight: 600, mt: 1, display: 'block' }}>Đội trưởng điều hành</Typography>
                           </Paper>
                         </Grid>
-                        <Grid item xs={12} sm={3}>
+
+                        <Grid item xs={12} sm={6} md={3}>
                           <Paper elevation={0} sx={{ p: 2, borderRadius: 2.5, backgroundColor: '#fff7ed', border: '1px solid #fed7aa' }}>
                             <Typography variant="caption" sx={{ color: '#9a3412', fontWeight: 800, textTransform: 'uppercase' }}>Số Block Kỹ Thuật</Typography>
-                            <Typography variant="h5" sx={{ fontWeight: 900, color: '#c2410c', mt: 0.5 }}>
+                            <Typography variant="h4" sx={{ fontWeight: 900, color: '#c2410c', mt: 0.5 }}>
                               {new Set(hrList.map(r => r.block).filter(Boolean)).size}
                             </Typography>
+                            <Typography variant="caption" sx={{ color: '#c2410c', fontWeight: 600, mt: 1, display: 'block' }}>Địa bàn phụ trách</Typography>
                           </Paper>
                         </Grid>
                       </Grid>
@@ -3909,11 +4636,11 @@ export default function App() {
                       {/* TOOLBAR ACTIONS & FILTERS */}
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
                         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', flexGrow: 1, maxWidth: 850 }}>
-                          <TextField
+                          <DebouncedSearchInput
                             size="small"
                             placeholder="Tìm Mã NV, Họ Tên, Inside Acc, Mobisale, Mail, Phone..."
                             value={hrSearch}
-                            onChange={(e) => setHrSearch(e.target.value)}
+                            onChange={(val) => setHrSearch(val)}
                             sx={{ minWidth: 280, flexGrow: 1, '& .MuiInputBase-root': { borderRadius: 2 } }}
                             InputProps={{ startAdornment: <SearchIcon sx={{ color: '#94a3b8', mr: 1 }} /> }}
                           />
@@ -3934,11 +4661,7 @@ export default function App() {
                           variant="contained"
                           color="primary"
                           startIcon={<AddIcon />}
-                          onClick={() => {
-                            setEditingHr(null);
-                            setHrForm({ code: '', name: '', account: '', mobisale: '', mail: '', phone: '', block: '', team_lead: '', title: '', status: 'Chính thức (Active)' });
-                            setHrEditModalOpen(true);
-                          }}
+                          onClick={() => openUnifiedHrModal(null)}
                           sx={{ borderRadius: 2, fontWeight: 800, px: 2.5 }}
                         >
                           ➕ Thêm Nhân Sự Mới
@@ -3975,81 +4698,60 @@ export default function App() {
                                   </TableCell>
                                 </TableRow>
                               ) : (
-                                hrList.map((row) => (
-                                  <TableRow key={row.code || row.stt} hover sx={{ '&:nth-of-type(even)': { backgroundColor: '#f8fafc' } }}>
-                                    <TableCell align="center" sx={{ color: '#64748b' }}>{row.stt}</TableCell>
-                                    <TableCell sx={{ fontWeight: 800, color: '#2563eb' }}>{row.code}</TableCell>
-                                    <TableCell sx={{ fontWeight: 800, color: '#0f172a' }}>{row.name}</TableCell>
-                                    <TableCell sx={{ fontWeight: 700, color: '#3730a3', backgroundColor: 'rgba(238, 242, 255, 0.4)' }}>
-                                      {row.account || '-'}
-                                    </TableCell>
-                                    <TableCell sx={{ fontWeight: 700, color: '#1d4ed8', backgroundColor: 'rgba(239, 246, 255, 0.4)' }}>
-                                      {row.mobisale || '-'}
-                                    </TableCell>
-                                    <TableCell sx={{ fontSize: '12px' }}>{row.mail}</TableCell>
-                                    <TableCell sx={{ fontSize: '12px' }}>{row.phone}</TableCell>
-                                    <TableCell sx={{ fontWeight: 700, color: '#334155' }}>{row.block}</TableCell>
-                                    <TableCell sx={{ fontSize: '12px' }}>{row.team_lead}</TableCell>
-                                    <TableCell sx={{ fontSize: '12px' }}>{row.title}</TableCell>
-                                    <TableCell>
-                                      <Chip
-                                        label={row.status || 'Chính thức'}
-                                        size="small"
-                                        color={row.status?.includes('Chính thức') || row.status?.includes('ACTIVE') ? 'success' : 'default'}
-                                        sx={{ height: 20, fontSize: '10px', fontWeight: 800 }}
-                                      />
-                                    </TableCell>
-                                    <TableCell align="center">
-                                      <Box sx={{ display: 'flex', justifyContent: 'center', gap: 0.5 }}>
-                                        <Tooltip title="Xem Chi Tiết Hồ Sơ HR">
-                                          <IconButton
-                                            size="small"
-                                            color="info"
-                                            onClick={() => fetchAdminHrDetail(row.code || row.account)}
-                                          >
-                                            <ViewIcon fontSize="small" />
-                                          </IconButton>
-                                        </Tooltip>
-                                        <Tooltip title="Sửa Hồ Sơ">
-                                          <IconButton
-                                            size="small"
-                                            color="primary"
-                                            onClick={() => {
-                                              setEditingHr(row);
-                                              setHrForm({
-                                                code: row.code,
-                                                name: row.name,
-                                                account: row.account,
-                                                mobisale: row.mobisale,
-                                                mail: row.mail,
-                                                phone: row.phone,
-                                                block: row.block,
-                                                team_lead: row.team_lead,
-                                                title: row.title,
-                                                status: row.status || 'Chính thức'
-                                              });
-                                              setHrEditModalOpen(true);
-                                            }}
-                                          >
-                                            <EditIcon fontSize="small" />
-                                          </IconButton>
-                                        </Tooltip>
-                                        <Tooltip title="Xóa Nhân Sự">
-                                          <IconButton
-                                            size="small"
-                                            color="error"
-                                            onClick={() => {
-                                              setHrToDelete(row);
-                                              setHrDeleteModalOpen(true);
-                                            }}
-                                          >
-                                            <DeleteIcon fontSize="small" />
-                                          </IconButton>
-                                        </Tooltip>
-                                      </Box>
-                                    </TableCell>
-                                  </TableRow>
-                                ))
+                                hrList.map((row) => {
+                                  const isActive = String(row.status || '').toUpperCase().includes('ĐANG LÀM VIỆC') || String(row.status || '').toUpperCase().includes('ACTIVE') || String(row.status || '').toUpperCase().includes('BÌNH THƯỜNG') || String(row.status || '').toUpperCase().includes('CHÍNH THỨC');
+                                  return (
+                                    <TableRow key={row.code || row.stt} hover sx={{ '&:nth-of-type(even)': { backgroundColor: '#f8fafc' } }}>
+                                      <TableCell align="center" sx={{ color: '#64748b' }}>{row.stt}</TableCell>
+                                      <TableCell sx={{ fontWeight: 800, color: '#2563eb' }}>{row.code}</TableCell>
+                                      <TableCell sx={{ fontWeight: 800, color: '#0f172a' }}>{row.name}</TableCell>
+                                      <TableCell sx={{ fontWeight: 700, color: '#3730a3', backgroundColor: 'rgba(238, 242, 255, 0.4)' }}>
+                                        {row.account || '-'}
+                                      </TableCell>
+                                      <TableCell sx={{ fontWeight: 700, color: '#1d4ed8', backgroundColor: 'rgba(239, 246, 255, 0.4)' }}>
+                                        {row.mobisale || '-'}
+                                      </TableCell>
+                                      <TableCell sx={{ fontSize: '12px' }}>{row.mail}</TableCell>
+                                      <TableCell sx={{ fontSize: '12px' }}>{row.phone}</TableCell>
+                                      <TableCell sx={{ fontWeight: 700, color: '#334155' }}>{row.block}</TableCell>
+                                      <TableCell sx={{ fontSize: '12px' }}>{row.team_lead}</TableCell>
+                                      <TableCell sx={{ fontSize: '12px' }}>{row.title}</TableCell>
+                                      <TableCell>
+                                        <Chip
+                                          label={row.status || 'NS Đang làm việc'}
+                                          size="small"
+                                          color={isActive ? 'success' : 'default'}
+                                          sx={{ height: 20, fontSize: '10px', fontWeight: 800 }}
+                                        />
+                                      </TableCell>
+                                      <TableCell align="center">
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', gap: 0.5 }}>
+                                          <Tooltip title="Xem & Chỉnh Sửa Hồ Sơ HR (Gộp làm 1)">
+                                            <IconButton
+                                              size="small"
+                                              color="primary"
+                                              onClick={() => openUnifiedHrModal(row.code || row.account)}
+                                            >
+                                              <EditIcon fontSize="small" />
+                                            </IconButton>
+                                          </Tooltip>
+                                          <Tooltip title="Xóa Nhân Sự">
+                                            <IconButton
+                                              size="small"
+                                              color="error"
+                                              onClick={() => {
+                                                setHrToDelete(row);
+                                                setHrDeleteModalOpen(true);
+                                              }}
+                                            >
+                                              <DeleteIcon fontSize="small" />
+                                            </IconButton>
+                                          </Tooltip>
+                                        </Box>
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })
                               )}
                             </TableBody>
                           </Table>
@@ -4058,32 +4760,44 @@ export default function App() {
                     </Box>
                   )}
 
-                  {/* TOPIC 1: TRANG QUẢN TRỊ USER (SHEET ADMIN) */}
+                  {/* TOPIC 1: TRANG QUẢN TRỊ USER (SHEET ADMIN FULL 9 COLUMNS) */}
                   {adminSubTab === 1 && (
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
                         <Box>
                           <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#1e293b' }}>
-                            🔑 Bảng Quản Lý Tài Khoản User & Phân Quyền (Sheet Admin)
+                            🔑 Bảng Quản Lý Tài Khoản User & Phân Quyền (DataBase Admin)
                           </Typography>
                           <Typography variant="caption" sx={{ color: '#64748b' }}>
-                            Sheet ID: <code>10Y5WBM9PDng_AsiyNxgFbEUac8XFBviRc21G0ar6erY</code> | GID: 0
+                            Hệ Thống Quản Trị Dữ Liệu Phân Quyền (DataBase)
                           </Typography>
                         </Box>
 
-                        <Button
-                          variant="contained"
-                          color="secondary"
-                          startIcon={<AddIcon />}
-                          onClick={() => {
-                            setEditingUser(null);
-                            setUserForm({ msnv: '', name: '', mail: '', user: '', password: '', role: 'user', allowed_apps: ['luong'] });
-                            setUserModalOpen(true);
-                          }}
-                          sx={{ borderRadius: 2, fontWeight: 800 }}
-                        >
-                          ➕ Thêm User Mới
-                        </Button>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+                          <Button
+                            variant="contained"
+                            color="success"
+                            startIcon={<SaveIcon />}
+                            onClick={handleSyncSheetNow}
+                            sx={{ borderRadius: 2, fontWeight: 800, px: 2.5, backgroundColor: '#16a34a', '&:hover': { backgroundColor: '#15803d' } }}
+                          >
+                            ☁️ Sao Lưu & Đồng Bộ DataBase
+                          </Button>
+
+                          <Button
+                            variant="contained"
+                            color="primary"
+                            startIcon={<AddIcon />}
+                            onClick={() => {
+                              setEditingUser(null);
+                              setUserForm({ msnv: '', name: '', mail: '', user: '', password: '', role: 'user', status: 'Active', allowed_apps: ['Salary'] });
+                              setUserModalOpen(true);
+                            }}
+                            sx={{ borderRadius: 2, fontWeight: 800 }}
+                          >
+                            ➕ Thêm User Mới
+                          </Button>
+                        </Box>
                       </Box>
 
                       {adminUsersLoading ? (
@@ -4093,34 +4807,45 @@ export default function App() {
                           <Table stickyHeader size="small">
                             <TableHead sx={{ backgroundColor: '#f8fafc' }}>
                               <TableRow>
-                                <TableCell align="center" sx={{ fontWeight: 800, width: 60 }}>ID</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800, width: 50 }}>ID</TableCell>
                                 <TableCell sx={{ fontWeight: 800 }}>MSNV</TableCell>
                                 <TableCell sx={{ fontWeight: 800 }}>Họ và Tên</TableCell>
                                 <TableCell sx={{ fontWeight: 800 }}>Mail Login</TableCell>
                                 <TableCell sx={{ fontWeight: 800 }}>User (Mật danh)</TableCell>
-                                <TableCell align="center" sx={{ fontWeight: 800 }}>Quyền Mặc Định</TableCell>
+                                <TableCell sx={{ fontWeight: 800, width: 120 }}>Mật Khẩu</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800 }}>Quyền</TableCell>
                                 <TableCell sx={{ fontWeight: 800 }}>Ứng Dụng Được Xem (RBAC)</TableCell>
-                                <TableCell align="center" sx={{ fontWeight: 800, width: 120 }}>Thao Tác</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800 }}>Trạng Thái</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800, width: 100 }}>Thao Tác</TableCell>
                               </TableRow>
                             </TableHead>
                             <TableBody>
                               {adminUsers.length === 0 ? (
                                 <TableRow>
-                                  <TableCell colSpan={8} align="center" sx={{ py: 4, color: '#64748b' }}>Chưa có tài khoản người dùng nào.</TableCell>
+                                  <TableCell colSpan={10} align="center" sx={{ py: 4, color: '#64748b' }}>Chưa có tài khoản người dùng nào.</TableCell>
                                 </TableRow>
                               ) : (
                                 adminUsers.map((row) => {
                                   const allowedList = Array.isArray(row.allowed_apps)
                                     ? row.allowed_apps
                                     : (typeof row.allowed_apps === 'string' ? row.allowed_apps.split(/[;,]/) : (row.role === 'admin' ? ['All'] : ['Salary']));
+                                  const isUserActive = String(row.status || 'Active').toLowerCase() === 'active';
 
                                   return (
-                                    <TableRow key={row.id} hover>
+                                    <TableRow key={row.id || row.mail} hover>
                                       <TableCell align="center" sx={{ fontWeight: 800, color: '#475569' }}>{row.id}</TableCell>
                                       <TableCell sx={{ fontWeight: 800, color: '#2563eb' }}>{row.msnv || '-'}</TableCell>
                                       <TableCell sx={{ fontWeight: 700, color: '#0f172a' }}>{row.name}</TableCell>
                                       <TableCell sx={{ fontSize: '13px' }}>{row.mail}</TableCell>
                                       <TableCell sx={{ fontWeight: 600, color: '#475569' }}>{row.user}</TableCell>
+                                      <TableCell sx={{ fontSize: '12px', fontFamily: 'monospace' }}>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                          <span>{showPasswords[row.id] ? row.password : '••••••••'}</span>
+                                          <IconButton size="small" onClick={() => toggleShowPassword(row.id)}>
+                                            {showPasswords[row.id] ? <VisibilityOffIcon sx={{ fontSize: 16 }} /> : <ViewIcon sx={{ fontSize: 16 }} />}
+                                          </IconButton>
+                                        </Box>
+                                      </TableCell>
                                       <TableCell align="center">
                                         <Chip
                                           label={row.role === 'admin' ? 'ADMIN' : 'USER'}
@@ -4142,6 +4867,14 @@ export default function App() {
                                         </Box>
                                       </TableCell>
                                       <TableCell align="center">
+                                        <Chip
+                                          label={(row.status || 'Active').toUpperCase()}
+                                          color={isUserActive ? 'success' : 'error'}
+                                          size="small"
+                                          sx={{ fontWeight: 800, height: 22 }}
+                                        />
+                                      </TableCell>
+                                      <TableCell align="center">
                                         <Box sx={{ display: 'flex', justifyContent: 'center', gap: 0.5 }}>
                                           <IconButton
                                             size="small"
@@ -4153,8 +4886,9 @@ export default function App() {
                                                 name: row.name,
                                                 mail: row.mail,
                                                 user: row.user,
-                                                password: '',
+                                                password: row.password || '',
                                                 role: row.role,
+                                                status: row.status || 'Active',
                                                 allowed_apps: Array.isArray(row.allowed_apps) ? row.allowed_apps : (typeof row.allowed_apps === 'string' ? row.allowed_apps.split(/[;,]/) : ['Salary'])
                                               });
                                               setUserModalOpen(true);
@@ -4262,12 +4996,12 @@ export default function App() {
                       {/* FILTER BAR FOR LƯƠNG */}
                       <Grid container spacing={2} alignItems="center">
                         <Grid item xs={12} sm={4}>
-                          <TextField
+                          <DebouncedSearchInput
                             fullWidth
                             size="small"
                             placeholder="Tìm kiếm Mã NV, Họ Tên, Inside Acc, Mobisale..."
                             value={luongSearch}
-                            onChange={(e) => setLuongSearch(e.target.value)}
+                            onChange={(val) => setLuongSearch(val)}
                             InputProps={{ startAdornment: <SearchIcon sx={{ color: '#94a3b8', mr: 1 }} /> }}
                           />
                         </Grid>
@@ -4707,12 +5441,6 @@ export default function App() {
                 <Button type="submit" variant="contained" color="primary" fullWidth disabled={authLoading} sx={{ borderRadius: 2, height: 42, fontWeight: 800, mt: 1 }}>
                   {authLoading ? <CircularProgress size={24} /> : 'ĐĂNG NHẬP'}
                 </Button>
-
-                <Divider sx={{ my: 1 }}>hoặc</Divider>
-
-                <Button variant="text" color="secondary" size="small" onClick={() => { setAuthTab(2); setAuthError(null); }}>
-                  🔑 Cài đặt mật khẩu lần đầu cho admin phuongnam.phongnh5@fpt.net
-                </Button>
               </Box>
             )}
 
@@ -4725,10 +5453,7 @@ export default function App() {
                   label="Email nhân sự (FPT/PNC)"
                   placeholder="VD: namnp@fpt.net..."
                   value={regMail}
-                  onChange={(e) => {
-                    setRegMail(e.target.value);
-                    handleCheckHrEmail(e.target.value);
-                  }}
+                  onChange={(e) => setRegMail(e.target.value)}
                   required
                 />
 
@@ -4774,135 +5499,13 @@ export default function App() {
                 </Button>
               </Box>
             )}
-
-            {/* TAB 2: SETUP INITIAL ADMIN PASSWORD */}
-            {authTab === 2 && (
-              <Box component="form" onSubmit={handleSetupInitialAdminPassword} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <Typography variant="body2" sx={{ color: '#475569', fontWeight: 600 }}>
-                  Thiết lập mật khẩu lần đầu cho tài khoản quản trị mặc định: <b>phuongnam.phongnh5@fpt.net</b>
-                </Typography>
-
-                <TextField
-                  fullWidth
-                  size="small"
-                  type="password"
-                  label="Mật khẩu mới"
-                  value={setupPassword}
-                  onChange={(e) => setSetupPassword(e.target.value)}
-                  required
-                />
-
-                <TextField
-                  fullWidth
-                  size="small"
-                  type="password"
-                  label="Xác nhận mật khẩu mới"
-                  value={setupConfirmPassword}
-                  onChange={(e) => setSetupConfirmPassword(e.target.value)}
-                  required
-                />
-
-                <Button type="submit" variant="contained" color="secondary" fullWidth disabled={authLoading} sx={{ borderRadius: 2, height: 42, fontWeight: 800, mt: 1 }}>
-                  {authLoading ? <CircularProgress size={24} /> : 'LƯU MẬT KHẨU & ĐĂNG NHẬP'}
-                </Button>
-
-                <Button variant="text" color="inherit" size="small" onClick={() => setAuthTab(0)}>
-                  Quay lại Đăng nhập
-                </Button>
-              </Box>
-            )}
           </DialogContent>
           <DialogActions sx={{ p: 2 }}>
             <Button onClick={() => setAuthModalOpen(false)} color="inherit">Đóng</Button>
           </DialogActions>
         </Dialog>
 
-        {/* EDIT / ADD USER DIALOG MODAL WITH RBAC CHECKBOXES */}
-        <Dialog open={userModalOpen} onClose={() => setUserModalOpen(false)} maxWidth="sm" fullWidth>
-          <DialogTitle sx={{ fontWeight: 800, color: '#1a73e8' }}>
-            {editingUser ? '✏️ SỬA TÀI KHOẢN NGƯỜI DÙNG & PHÂN QUYỀN' : '➕ THÊM USER MỚI (SHEET ADMIN)'}
-          </DialogTitle>
-          <DialogContent dividers sx={{ p: 3 }}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
-                  <TextField fullWidth size="small" label="MSNV" value={userForm.msnv} onChange={(e) => setUserForm({ ...userForm, msnv: e.target.value })} />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField fullWidth size="small" label="Họ và Tên" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField fullWidth size="small" label="Email" value={userForm.mail} onChange={(e) => setUserForm({ ...userForm, mail: e.target.value })} required />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField fullWidth size="small" label="User (Mật danh)" value={userForm.user} onChange={(e) => setUserForm({ ...userForm, user: e.target.value })} />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField fullWidth size="small" type="password" label={editingUser ? "Mật khẩu mới (Tùy chọn)" : "Mật khẩu"} value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField select fullWidth size="small" label="Quyền Mặc Định" value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
-                    <MenuItem value="user">User (Người dùng thường)</MenuItem>
-                    <MenuItem value="admin">Admin (Quản trị viên)</MenuItem>
-                  </TextField>
-                </Grid>
-              </Grid>
-
-              <Divider sx={{ my: 1 }} />
-
-              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#1e293b' }}>
-                🔒 Phân Quyền Ứng Dụng Được Xem (RBAC Column Sheet Quyền):
-              </Typography>
-
-              <Grid container spacing={1}>
-                {[
-                  { key: 'Salary', label: '💵 Salary (Quản Lý Lương)' },
-                  { key: 'HR', label: '👥 HR (HR Nhân Sự)' },
-                  { key: 'KPIs', label: '📊 KPIs (Dashboard KPIs)' },
-                  { key: 'LichTruc', label: '📋 LichTruc (Lịch Trực)' },
-                  { key: 'TonTKBT', label: '📦 TonTKBT (Tồn TK-BT)' },
-                  { key: 'UserMgmt', label: '🔑 UserMgmt (Quản Trị User)' },
-                  { key: 'ImportDB', label: '📦 ImportDB (Import Data)' },
-                  { key: 'Admin', label: '⚙️ Admin (Trang Admin)' }
-                ].map((item) => {
-                  const appsList = Array.isArray(userForm.allowed_apps)
-                    ? userForm.allowed_apps.map(x => String(x).trim().toLowerCase())
-                    : (typeof userForm.allowed_apps === 'string' ? userForm.allowed_apps.toLowerCase().split(/[;,]/) : []);
-                  const isChecked = appsList.includes(item.key.toLowerCase());
-
-                  return (
-                    <Grid item xs={12} sm={6} key={item.key}>
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={isChecked}
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              let newApps = Array.isArray(userForm.allowed_apps) ? [...userForm.allowed_apps] : [];
-                              if (checked) {
-                                if (!newApps.some(a => a.toLowerCase() === item.key.toLowerCase())) {
-                                  newApps.push(item.key);
-                                }
-                              } else {
-                                newApps = newApps.filter(a => a.toLowerCase() !== item.key.toLowerCase());
-                              }
-                              setUserForm({ ...userForm, allowed_apps: newApps });
-                            }}
-                          />
-                        }
-                        label={<Typography variant="body2" sx={{ fontWeight: 600 }}>{item.label}</Typography>}
-                      />
-                    </Grid>
-                  );
-                })}
-              </Grid>
-            </Box>
-          </DialogContent>
-          <DialogActions sx={{ p: 2 }}>
-            <Button onClick={() => setUserModalOpen(false)} variant="outlined">Hủy</Button>
-            <Button onClick={handleSaveUser} variant="contained" color="primary">Lưu Phân Quyền</Button>
-          </DialogActions>
-        </Dialog>
+        <UserEditModal open={userModalOpen} onClose={() => setUserModalOpen(false)} initialData={userForm} isEditMode={Boolean(editingUser)} onSave={handleSaveUser} />
 
         {/* DELETE USER CONFIRM DIALOG */}
         <Dialog open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)} maxWidth="xs" fullWidth>
@@ -4918,362 +5521,153 @@ export default function App() {
           </DialogActions>
         </Dialog>
 
-        {/* HR DETAIL FULL PROFILE DIALOG MODAL (ELEGANT CATEGORIZED LAYOUT) */}
-        <Dialog open={hrDetailModalOpen} onClose={() => setHrDetailModalOpen(false)} maxWidth="md" fullWidth>
-          <DialogTitle sx={{ p: 0, overflow: 'hidden' }}>
-            {/* TOP HEADER PROFILE BANNER */}
-            <Box sx={{ p: 3, background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: '#ffffff', position: 'relative' }}>
-              <IconButton onClick={() => setHrDetailModalOpen(false)} sx={{ position: 'absolute', top: 12, right: 12, color: '#94a3b8' }}>
-                <CloseIcon />
-              </IconButton>
+        <UnifiedHrProfileModal open={unifiedHrModalOpen} onClose={() => setUnifiedHrModalOpen(false)} initialData={unifiedHrProfile} isNew={isNewHrProfile} loading={hrDetailLoading} options={options} hrList={hrList} onSave={handleSaveUnifiedHr} />
 
-              <Button
-                size="small"
-                variant="contained"
-                startIcon={<EditIcon />}
-                onClick={() => {
-                  if (!selectedHrDetail) return;
-                  const code = selectedHrDetail['Mã NV'] || '';
-                  const name = selectedHrDetail['Họ Tên NV'] || '';
-                  const account = selectedHrDetail['Inside Account'] || '';
-                  const mobisale = selectedHrDetail['Mobisale'] || '';
-                  const mail = selectedHrDetail['Email'] || '';
-                  const phone = selectedHrDetail['Số điện thoại'] || '';
-                  const block = selectedHrDetail['Block'] || '';
-                  const team_lead = selectedHrDetail['Họ tên Đội trưởng'] || '';
-                  const title = selectedHrDetail['Chức danh'] || '';
-                  const status = selectedHrDetail['Loại HĐLĐ'] || selectedHrDetail['Tình trạng Hợp đồng'] || 'Chính thức';
 
-                  const hrDataObj = { code, name, account, mobisale, mail, phone, block, team_lead, title, status };
-                  setEditingHr(hrDataObj);
-                  setHrForm(hrDataObj);
-                  setHrDetailModalOpen(false);
-                  setHrEditModalOpen(true);
-                }}
-                sx={{
-                  position: 'absolute',
-                  top: 14,
-                  right: 54,
-                  backgroundColor: '#2563eb',
-                  color: '#ffffff',
-                  fontWeight: 800,
-                  borderRadius: 2,
-                  px: 2,
-                  '&:hover': { backgroundColor: '#1d4ed8' }
-                }}
-              >
-                ✏️ Chỉnh Sửa Hồ Sơ
-              </Button>
-              
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2.5 }}>
-                <Box sx={{ width: 64, height: 64, borderRadius: '20px', background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(37,99,235,0.4)' }}>
-                  <PeopleIcon sx={{ fontSize: 36 }} />
-                </Box>
-                <Box>
-                  <Typography variant="h5" sx={{ fontWeight: 900, color: '#ffffff', lineHeight: 1.2 }}>
-                    {selectedHrDetail?.['Họ Tên NV'] || selectedHrDetail?.['Mã NV'] || 'Chi Tiết HR'}
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
-                    <Chip label={`Mã NV: ${selectedHrDetail?.['Mã NV'] || '-'}`} size="small" sx={{ backgroundColor: '#334155', color: '#f8fafc', fontWeight: 800 }} />
-                    <Chip label={`Inside: ${selectedHrDetail?.['Inside Account'] || '-'}`} size="small" sx={{ backgroundColor: '#312e81', color: '#c7d2fe', fontWeight: 800 }} />
-                    <Chip label={`Mobisale: ${selectedHrDetail?.['Mobisale'] || '-'}`} size="small" sx={{ backgroundColor: '#1e3a8a', color: '#bfdbfe', fontWeight: 800 }} />
-                  </Box>
-                </Box>
-              </Box>
-            </Box>
+        {/* GOOGLE APPS SCRIPT GUIDE & CODE MODAL */}
+        <Dialog open={appsScriptGuideOpen} onClose={() => setAppsScriptGuideOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle sx={{ fontWeight: 800, color: '#1d4ed8', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            📜 Hướng Dẫn Tải & Tạo Google Apps Script Web App Đồng Bộ Sheet
+            <IconButton onClick={() => setAppsScriptGuideOpen(false)} size="small"><CloseIcon /></IconButton>
           </DialogTitle>
-
           <DialogContent dividers sx={{ p: 3, backgroundColor: '#f8fafc' }}>
-            {hrDetailLoading ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}><CircularProgress /></Box>
-            ) : selectedHrDetail ? (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                
-                {/* SEARCH FILTER */}
-                <TextField
-                  fullWidth
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Alert severity="info" sx={{ borderRadius: 2 }}>
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  Đường dẫn export CSV của Google Sheet chỉ cho phép đọc. Để ghi toàn bộ danh sách tài khoản (MSNV, Họ Tên, Email, Mật Khẩu, Quyền, Trang Thái) tự động lên Google Sheet <b>10Y5WBM9PDng_AsiyNxgFbEUac8XFBviRc21G0ar6erY</b> (GID 0), hãy làm theo các bước bên dưới:
+                </Typography>
+              </Alert>
+
+              <Alert severity="warning" sx={{ borderRadius: 2, backgroundColor: '#fff7ed', border: '1px solid #ffedd5' }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#c2410c' }}>
+                  ⚠️ KHẮC PHỤC LỖI HTTP 403 (FORBIDDEN):
+                </Typography>
+                <Typography variant="body2" sx={{ fontSize: '13px', color: '#9a3412', mt: 0.5, lineHeight: 1.6 }}>
+                  Nếu bấm đồng bộ báo <b>Lỗi HTTP 403</b>, nguyên nhân duy nhất là khi cài đặt Apps Script mục <b>Who has access (Ai có quyền truy cập)</b> chưa chọn <b>"Bất kỳ ai" (Anyone)</b>.
+                  <br/>
+                  👉 <b>Cách sửa nhanh trong 10 giây:</b> Vào lại Apps Script ➔ Bấm góc phải <b>Triển khai (Deploy)</b> ➔ <b>Quản lý các bản triển khai (Manage deployments)</b> ➔ Bấm biểu tượng <b>Cây bút sửa (Edit icon ✏️)</b> ➔ Đổi <i>Who has access</i> thành <b>Anyone (Bất kỳ ai)</b> ➔ Bấm <b>Triển khai (Deploy)</b> là xong ngay!
+                </Typography>
+              </Alert>
+
+              <Typography variant="subtitle2" sx={{ fontWeight: 900, color: '#0f172a' }}>
+                📋 Các bước triển khai trong 30 giây:
+              </Typography>
+              <ol style={{ margin: 0, paddingLeft: 20, fontSize: '13px', lineHeight: '1.8', color: '#334155' }}>
+                <li>Mở file Google Sheet: <a href="https://docs.google.com/spreadsheets/d/10Y5WBM9PDng_AsiyNxgFbEUac8XFBviRc21G0ar6erY/edit#gid=0" target="_blank" rel="noreferrer"><b>Mở Google Sheet 10Y5WBM9PDng_AsiyNxgFbEUac8XFBviRc21G0ar6erY</b></a></li>
+                <li>Trên thanh menu chọn: <b>Tiện ích mở rộng (Extensions)</b> ➔ <b>Apps Script</b>.</li>
+                <li>Xóa toàn bộ mã mặc định và dán đoạn code bên dưới vào. Bấm <b>Lưu (Save icon 💾)</b>.</li>
+                <li>Bấm nút góc phải trên <b>Triển khai (Deploy)</b> ➔ <b>Triển khai dưới dạng ứng dụng web (New deployment &rarr; Web App)</b>.</li>
+                <li>Cấu hình:
+                  <ul>
+                    <li>Mô tả: <b>Admin Sync API</b></li>
+                    <li>Thực thi dưới dạng (Execute as): <b>Tôi (Me)</b></li>
+                    <li>Ai có quyền truy cập (Who has access): <b>Bất kỳ ai (Anyone)</b></li>
+                  </ul>
+                </li>
+                <li>Bấm <b>Triển khai (Deploy)</b> ➔ Cấp quyền truy cập ➔ Copy đường dẫn <b>URL ứng dụng Web (Web App URL)</b> và dán vào ô cấu hình Web App URL!</li>
+              </ol>
+
+              <Box sx={{ position: 'relative', mt: 1 }}>
+                <Button
                   size="small"
-                  placeholder="Lọc thông tin trong hồ sơ (VD: phone, email, lương, block, hợp đồng...)"
-                  value={hrDetailSearch}
-                  onChange={(e) => setHrDetailSearch(e.target.value)}
-                  InputProps={{ startAdornment: <SearchIcon sx={{ color: '#94a3b8', mr: 1 }} /> }}
-                  sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#ffffff' } }}
-                />
+                  variant="contained"
+                  color="secondary"
+                  onClick={() => {
+                    const code = `function doPost(e) {
+  try {
+    var contents = JSON.parse(e.postData.contents);
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+    var users = contents.users || [];
+    var headers = ["ID", "MSNV", "Họ và Tên", "Mail", "User", "Mật Khẩu", "Quyền", "Ứng dụng được xem", "Trạng thái"];
+    
+    sheet.clearContents();
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    
+    if (users.length > 0) {
+      var rows = users.map(function(u, idx) {
+        return [
+          u["ID"] || (idx + 1),
+          u["MSNV"] || "",
+          u["Họ và Tên"] || "",
+          u["Mail"] || "",
+          u["User"] || "",
+          u["Mật Khẩu"] || "",
+          u["Quyền"] || "user",
+          u["Ứng dụng được xem"] || "",
+          u["Trạng thái"] || "Active"
+        ];
+      });
+      sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify({ ok: true, message: "Đã đồng bộ " + users.length + " tài khoản lên Google Sheet thành công!" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ ok: false, error: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
 
-                {/* CATEGORIZED SECTIONS */}
-                {[
-                  {
-                    title: '👤 1. Thông Tin Cá Nhân & Tài Khoản Liên Hệ',
-                    color: '#2563eb',
-                    fields: ['Mã NV', 'Họ Tên NV', 'Inside Account', 'Mobisale', 'Email', 'Số điện thoại', 'Tình trạng Tài khoản', 'Số CMND', 'Ngày cấp', 'Nơi cấp', 'Ngày sinh', 'Giới tính']
-                  },
-                  {
-                    title: '🏢 2. Đơn Vị & Block Công Tác',
-                    color: '#7c3aed',
-                    fields: ['Block', 'Họ tên Đội trưởng', 'Chức danh', 'Tên Đối Tác', 'Vùng', 'Chi nhánh', 'Địa điểm làm việc']
-                  },
-                  {
-                    title: '📜 3. Hợp Đồng & Phân Công Tính Lương',
-                    color: '#059669',
-                    fields: ['Loại HĐLĐ', 'Ngày vào công ty', 'Tình trạng Hợp đồng', 'Phân công', 'Tính lương']
-                  }
-                ].map((section, sIdx) => {
-                  const filteredEntries = Object.entries(selectedHrDetail).filter(([k, v]) => {
-                    const isInSection = section.fields.some(f => k.toLowerCase().includes(f.toLowerCase()));
-                    if (!isInSection) return false;
-                    if (!hrDetailSearch) return true;
-                    const kw = hrDetailSearch.toLowerCase();
-                    return k.toLowerCase().includes(kw) || String(v).toLowerCase().includes(kw);
-                  });
+function doGet(e) {
+  return ContentService.createTextOutput(JSON.stringify({ ok: true, message: "Apps Script API đang hoạt động!" }))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+                    navigator.clipboard.writeText(code);
+                    alert("📋 Đã sao chép mã Google Apps Script vào bộ nhớ tạm!");
+                  }}
+                  sx={{ position: 'absolute', top: 8, right: 8, zIndex: 2, fontWeight: 800, borderRadius: 2 }}
+                >
+                  📋 Copy Code Apps Script
+                </Button>
+                <Paper sx={{ p: 2, backgroundColor: '#0f172a', color: '#38bdf8', fontFamily: 'monospace', fontSize: '12px', borderRadius: 2.5, overflowX: 'auto', maxHeight: 300 }}>
+                  <pre style={{ margin: 0 }}>{`function doPost(e) {
+  try {
+    var contents = JSON.parse(e.postData.contents);
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+    var users = contents.users || [];
+    var headers = ["ID", "MSNV", "Họ và Tên", "Mail", "User", "Mật Khẩu", "Quyền", "Ứng dụng được xem", "Trạng thái"];
+    
+    sheet.clearContents();
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    
+    if (users.length > 0) {
+      var rows = users.map(function(u, idx) {
+        return [
+          u["ID"] || (idx + 1),
+          u["MSNV"] || "",
+          u["Họ và Tên"] || "",
+          u["Mail"] || "",
+          u["User"] || "",
+          u["Mật Khẩu"] || "",
+          u["Quyền"] || "user",
+          u["Ứng dụng được xem"] || "",
+          u["Trạng thái"] || "Active"
+        ];
+      });
+      sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify({ ok: true, message: "Đã đồng bộ " + users.length + " tài khoản lên Google Sheet thành công!" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ ok: false, error: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
 
-                  if (filteredEntries.length === 0) return null;
-
-                  return (
-                    <Paper key={sIdx} elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 900, color: section.color, mb: 2 }}>
-                        {section.title}
-                      </Typography>
-                      <Grid container spacing={2}>
-                        {filteredEntries.map(([key, val]) => {
-                          const isSpecial = ['Inside Account', 'Mobisale', 'Mã NV', 'Block', 'Họ tên Đội trưởng'].includes(key);
-
-                          return (
-                            <Grid item xs={12} sm={6} md={4} key={key}>
-                              <Box sx={{ p: 1.5, borderRadius: 2, backgroundColor: isSpecial ? `${section.color}08` : '#f8fafc', border: isSpecial ? `1px solid ${section.color}30` : '1px solid #f1f5f9' }}>
-                                <Typography variant="caption" sx={{ color: isSpecial ? section.color : '#64748b', fontWeight: 800, textTransform: 'uppercase', display: 'block', fontSize: '10.5px' }}>
-                                  {key}
-                                </Typography>
-                                <Typography variant="body2" sx={{ fontWeight: isSpecial ? 900 : 600, color: isSpecial ? section.color : '#0f172a', wordBreak: 'break-word', mt: 0.2 }}>
-                                  {val || '-'}
-                                </Typography>
-                              </Box>
-                            </Grid>
-                          );
-                        })}
-                      </Grid>
-                    </Paper>
-                  );
-                })}
-
-                {/* EXTRA SECTION FOR REMAINING UNCLASSIFIED FIELDS */}
-                {(() => {
-                  const categorizedFields = ['Mã NV', 'Họ Tên NV', 'Inside Account', 'Mobisale', 'Email', 'Số điện thoại', 'Tình trạng Tài khoản', 'Số CMND', 'Ngày cấp', 'Nơi cấp', 'Ngày sinh', 'Giới tính', 'Block', 'Họ tên Đội trưởng', 'Chức danh', 'Tên Đối Tác', 'Vùng', 'Chi nhánh', 'Địa điểm làm việc', 'Loại HĐLĐ', 'Ngày vào công ty', 'Tình trạng Hợp đồng', 'Phân công', 'Tính lương'];
-                  const leftoverEntries = Object.entries(selectedHrDetail).filter(([k, v]) => {
-                    const isCategorized = categorizedFields.some(f => k.toLowerCase().includes(f.toLowerCase()));
-                    if (isCategorized) return false;
-                    if (!hrDetailSearch) return true;
-                    const kw = hrDetailSearch.toLowerCase();
-                    return k.toLowerCase().includes(kw) || String(v).toLowerCase().includes(kw);
-                  });
-
-                  if (leftoverEntries.length === 0) return null;
-
-                  return (
-                    <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#475569', mb: 2 }}>
-                        📌 4. Thông Tin Bổ Sung Khác
-                      </Typography>
-                      <Grid container spacing={2}>
-                        {leftoverEntries.map(([key, val]) => (
-                          <Grid item xs={12} sm={6} md={4} key={key}>
-                            <Box sx={{ p: 1.5, borderRadius: 2, backgroundColor: '#f8fafc', border: '1px solid #f1f5f9' }}>
-                              <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 800, textTransform: 'uppercase', display: 'block', fontSize: '10.5px' }}>
-                                {key}
-                              </Typography>
-                              <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a', wordBreak: 'break-word', mt: 0.2 }}>
-                                {val || '-'}
-                              </Typography>
-                            </Box>
-                          </Grid>
-                        ))}
-                      </Grid>
-                    </Paper>
-                  );
-                })()}
-
+function doGet(e) {
+  return ContentService.createTextOutput(JSON.stringify({ ok: true, message: "Apps Script API đang hoạt động!" }))
+    .setMimeType(ContentService.MimeType.JSON);
+}`}</pre>
+                </Paper>
               </Box>
-            ) : (
-              <Typography color="error" align="center" sx={{ py: 4 }}>Không có dữ liệu chi tiết.</Typography>
-            )}
+            </Box>
           </DialogContent>
-          <DialogActions sx={{ p: 2, backgroundColor: '#ffffff' }}>
-            <Button onClick={() => setHrDetailModalOpen(false)} variant="contained" color="primary" sx={{ borderRadius: 2, px: 3, fontWeight: 800 }}>
-              Đóng Hồ Sơ HR
-            </Button>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setAppsScriptGuideOpen(false)} variant="contained">Đóng</Button>
           </DialogActions>
         </Dialog>
 
-        {/* HR ADD / EDIT DIALOG MODAL (CATEGORIZED PROFILE DESIGN MATCHING VIEW MODAL) */}
-        <Dialog open={hrEditModalOpen} onClose={() => setHrEditModalOpen(false)} maxWidth="md" fullWidth>
-          <DialogTitle sx={{ p: 0, overflow: 'hidden' }}>
-            {/* TOP HEADER PROFILE BANNER */}
-            <Box sx={{ p: 3, background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: '#ffffff', position: 'relative' }}>
-              <IconButton onClick={() => setHrEditModalOpen(false)} sx={{ position: 'absolute', top: 12, right: 12, color: '#94a3b8' }}>
-                <CloseIcon />
-              </IconButton>
-              
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2.5 }}>
-                <Box sx={{ width: 64, height: 64, borderRadius: '20px', background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(37,99,235,0.4)' }}>
-                  <EditIcon sx={{ fontSize: 36 }} />
-                </Box>
-                <Box>
-                  <Typography variant="h5" sx={{ fontWeight: 900, color: '#ffffff', lineHeight: 1.2 }}>
-                    {editingHr ? `✏️ CHỈNH SỬA HỒ SƠ: ${hrForm.name || hrForm.code}` : '➕ THÊM MỚI NHÂN SỰ HR'}
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
-                    <Chip label={`Mã NV: ${hrForm.code || '-'}`} size="small" sx={{ backgroundColor: '#334155', color: '#f8fafc', fontWeight: 800 }} />
-                    <Chip label={`Inside: ${hrForm.account || '-'}`} size="small" sx={{ backgroundColor: '#312e81', color: '#c7d2fe', fontWeight: 800 }} />
-                    <Chip label={`Mobisale: ${hrForm.mobisale || '-'}`} size="small" sx={{ backgroundColor: '#1e3a8a', color: '#bfdbfe', fontWeight: 800 }} />
-                  </Box>
-                </Box>
-              </Box>
-            </Box>
-          </DialogTitle>
-
-          <DialogContent dividers sx={{ p: 3, backgroundColor: '#f8fafc' }}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              
-              {/* SECTION 1: PERSONAL INFO */}
-              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#2563eb', mb: 2 }}>
-                  👤 1. Thông Tin Cá Nhân & Tài Khoản Liên Hệ
-                </Typography>
-                <Grid container spacing={2}>
-                  <Grid item xs={12} sm={6} md={4}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Mã Nhân Viên (Code) *"
-                      value={hrForm.code}
-                      disabled={!!editingHr}
-                      onChange={(e) => setHrForm({ ...hrForm, code: e.target.value })}
-                      required
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={4}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Họ và Tên NV *"
-                      value={hrForm.name}
-                      onChange={(e) => setHrForm({ ...hrForm, name: e.target.value })}
-                      required
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={4}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Inside Account"
-                      value={hrForm.account}
-                      onChange={(e) => setHrForm({ ...hrForm, account: e.target.value })}
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={4}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Mobisale Account"
-                      value={hrForm.mobisale}
-                      onChange={(e) => setHrForm({ ...hrForm, mobisale: e.target.value })}
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={4}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Email Công Việc"
-                      value={hrForm.mail}
-                      onChange={(e) => setHrForm({ ...hrForm, mail: e.target.value })}
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={4}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Số Điện Thoại"
-                      value={hrForm.phone}
-                      onChange={(e) => setHrForm({ ...hrForm, phone: e.target.value })}
-                    />
-                  </Grid>
-                </Grid>
-              </Paper>
-
-              {/* SECTION 2: WORKPLACE & BLOCK */}
-              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#7c3aed', mb: 2 }}>
-                  🏢 2. Đơn Vị & Block Công Tác
-                </Typography>
-                <Grid container spacing={2}>
-                  <Grid item xs={12} sm={6} md={4}>
-                    <Autocomplete
-                      freeSolo
-                      options={options.blocks || []}
-                      value={hrForm.block || ''}
-                      onInputChange={(event, newInputValue) => {
-                        setHrForm(prev => ({ ...prev, block: newInputValue }));
-                      }}
-                      renderInput={(params) => (
-                        <TextField {...params} size="small" label="Block Kỹ Thuật" placeholder="Gõ tìm hoặc nhập Block mới..." />
-                      )}
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={4}>
-                    <Autocomplete
-                      freeSolo
-                      options={options.team_leads || []}
-                      value={hrForm.team_lead || ''}
-                      onInputChange={(event, newInputValue) => {
-                        setHrForm(prev => ({ ...prev, team_lead: newInputValue }));
-                      }}
-                      renderInput={(params) => (
-                        <TextField {...params} size="small" label="Họ tên Đội Trưởng" placeholder="Gõ tìm hoặc nhập Đội Trưởng..." />
-                      )}
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={4}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Chức Danh / Vị Trí"
-                      value={hrForm.title}
-                      onChange={(e) => setHrForm({ ...hrForm, title: e.target.value })}
-                    />
-                  </Grid>
-                </Grid>
-              </Paper>
-
-              {/* SECTION 3: CONTRACT & STATUS */}
-              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#059669', mb: 2 }}>
-                  📜 3. Hợp Đồng & Phân Công Tính Lương
-                </Typography>
-                <Grid container spacing={2}>
-                  <Grid item xs={12} sm={6}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="Loại HĐLĐ / Tình Trạng Làm Việc"
-                      placeholder="VD: Chính thức (Active)..."
-                      value={hrForm.status}
-                      onChange={(e) => setHrForm({ ...hrForm, status: e.target.value })}
-                    />
-                  </Grid>
-                </Grid>
-              </Paper>
-
-            </Box>
-          </DialogContent>
-
-          <DialogActions sx={{ p: 2, backgroundColor: '#ffffff', borderTop: '1px solid #e2e8f0' }}>
-            <Button onClick={() => setHrEditModalOpen(false)} variant="outlined" sx={{ borderRadius: 2, fontWeight: 700 }}>
-              Hủy Bỏ
-            </Button>
-            <Button onClick={handleSaveHr} variant="contained" color="primary" sx={{ borderRadius: 2, px: 3, fontWeight: 800 }}>
-              💾 Lưu Hồ Sơ HR
-            </Button>
-          </DialogActions>
-        </Dialog>
 
         {/* HR DELETE CONFIRM MODAL */}
         <Dialog open={hrDeleteModalOpen} onClose={() => setHrDeleteModalOpen(false)} maxWidth="xs" fullWidth>
@@ -5286,6 +5680,63 @@ export default function App() {
           <DialogActions sx={{ p: 2 }}>
             <Button onClick={() => setHrDeleteModalOpen(false)} variant="outlined">Hủy</Button>
             <Button onClick={handleDeleteHr} variant="contained" color="error">Xóa Nhân Sự</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* POSITION BREAKDOWN MODAL (CHỨC DANH CỘT O) */}
+        <Dialog open={positionModalOpen} onClose={() => setPositionModalOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle sx={{ fontWeight: 900, color: '#1e40af', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            👔 THỐNG KÊ CHỨC DANH NHÂN SỰ (CỘT O)
+            <IconButton onClick={() => setPositionModalOpen(false)} size="small"><CloseIcon /></IconButton>
+          </DialogTitle>
+          <DialogContent dividers sx={{ p: 3, backgroundColor: '#f8fafc' }}>
+            <Typography variant="body2" sx={{ color: '#64748b', mb: 2, fontWeight: 600 }}>
+              Tổng số <b>{hrList.length}</b> nhân sự phân loại theo Chức Danh / Vị Trí (Cột O):
+            </Typography>
+            <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
+              <Table size="small">
+                <TableHead sx={{ backgroundColor: '#eff6ff' }}>
+                  <TableRow>
+                    <TableCell align="center" sx={{ fontWeight: 800, color: '#1e40af', width: 60 }}>STT</TableCell>
+                    <TableCell sx={{ fontWeight: 800, color: '#1e40af' }}>Tên Chức Danh / Vị Trí (Cột O)</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 800, color: '#1e40af' }}>Số Lượng</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 800, color: '#1e40af' }}>Tỷ Lệ</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {(() => {
+                    const counts = {};
+                    hrList.forEach(r => {
+                      const title = (r.title || 'Chưa phân loại').trim();
+                      if (title) counts[title] = (counts[title] || 0) + 1;
+                    });
+                    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+                    const total = hrList.length || 1;
+                    
+                    return sorted.map(([pos, cnt], idx) => {
+                      const pct = ((cnt / total) * 100).toFixed(1);
+                      return (
+                        <TableRow key={pos} hover>
+                          <TableCell align="center" sx={{ fontWeight: 700, color: '#64748b' }}>{idx + 1}</TableCell>
+                          <TableCell sx={{ fontWeight: 700, color: '#0f172a' }}>{pos}</TableCell>
+                          <TableCell align="right">
+                            <Chip label={cnt} size="small" sx={{ fontWeight: 900, backgroundColor: '#dbeafe', color: '#1e40af', height: 22 }} />
+                          </TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 800, color: '#2563eb' }}>
+                            {pct}%
+                          </TableCell>
+                        </TableRow>
+                      );
+                    });
+                  })()}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </DialogContent>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setPositionModalOpen(false)} variant="contained" color="primary" sx={{ borderRadius: 2, fontWeight: 700 }}>
+              Đóng
+            </Button>
           </DialogActions>
         </Dialog>
 

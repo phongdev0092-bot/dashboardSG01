@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import datetime
+import json
 from pathlib import Path
 import re
 
@@ -43,8 +44,16 @@ class KPIEngine:
         self.lt_history = []
         self.lt_snapshot_map = {}
         self.admin_users_df = pd.DataFrame()
+        self.DEFAULT_PERMISSIONS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbxoVMX_hW1hTH82gyyRgKACTAo4TpPf_cmAK7gRZJxP5v2ZX-VmSS4u4J-YIoBWlFKJ/exec"
+        self.PERMISSIONS_WEBAPP_URL = os.environ.get("PERMISSIONS_WEBAPP_URL", "") or self.DEFAULT_PERMISSIONS_WEBAPP_URL
         try:
             CACHE_DIR.mkdir(exist_ok=True, parents=True)
+            cfg_file = CACHE_DIR / "webapp_config.json"
+            if cfg_file.exists():
+                with open(cfg_file, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                    if cfg.get('PERMISSIONS_WEBAPP_URL'):
+                        self.PERMISSIONS_WEBAPP_URL = cfg['PERMISSIONS_WEBAPP_URL']
         except Exception:
             pass
         self._load_lt_history_and_snapshot()
@@ -1169,16 +1178,22 @@ class KPIEngine:
         if not hasattr(self, 'lt_df') or self.lt_df.empty:
             return {"ok": False, "error": "No Lịch Trực data loaded"}
         
-        df_idx = row_number - 2
-        if 0 <= df_idx < len(self.lt_df):
-            for i, val in enumerate(values_b_to_al):
-                col_target = i + 1
-                if col_target < self.lt_df.shape[1]:
-                    self.lt_df.iloc[df_idx, col_target] = str(val)
-            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
-            self._snapshot_and_detect_lt_changes(source_label="Chỉnh sửa")
-            return {"ok": True}
-        return {"ok": False, "error": "Invalid row index"}
+        try:
+            df_idx = int(row_number) - 2
+            if 0 <= df_idx < len(self.lt_df):
+                for i, val in enumerate(values_b_to_al):
+                    col_target = i + 1
+                    if col_target < self.lt_df.shape[1]:
+                        self.lt_df.iloc[df_idx, col_target] = str(val)
+                self._save_pickle(self.lt_df, "lt.pkl.gz")
+                try:
+                    self._snapshot_and_detect_lt_changes(source_label="Chỉnh sửa")
+                except Exception as snap_err:
+                    print(f"Warning: snapshot update warning: {snap_err}", flush=True)
+                return {"ok": True, "message": "Đã lưu thay đổi lịch trực thành công!"}
+            return {"ok": False, "error": f"Invalid row index ({row_number})"}
+        except Exception as e:
+            return {"ok": False, "error": f"Lỗi lưu lịch trực: {str(e)}"}
 
     def delete_lich_truc_row(self, row_number: int):
         if not hasattr(self, 'lt_df') or self.lt_df.empty:
@@ -1655,6 +1670,8 @@ class KPIEngine:
     # =========================================================================
     # ADMIN USERS & AUTHENTICATION SYSTEM
     # =========================================================================
+    PERMISSIONS_SHEET_URL = "https://docs.google.com/spreadsheets/d/10Y5WBM9PDng_AsiyNxgFbEUac8XFBviRc21G0ar6erY/export?format=csv&gid=0"
+
     def _load_admin_users(self):
         def _get_path(name):
             tmp_dir = Path("/tmp/data_cache")
@@ -1669,32 +1686,186 @@ class KPIEngine:
                 return gz
             return CACHE_DIR / f"{name}.pkl"
 
-        admin_cache = _get_path("admin_users")
-        if admin_cache.exists():
-            try:
-                self.admin_users_df = pd.read_pickle(admin_cache)
-                print(f"Loaded {len(self.admin_users_df)} admin users from cache.", flush=True)
-                return
-            except Exception as e:
-                print(f"Failed to read admin users cache: {e}", flush=True)
+        sheet_fetched = False
+        try:
+            resp = requests.get(self.PERMISSIONS_SHEET_URL, timeout=8)
+            if resp.status_code == 200 and resp.content:
+                df = pd.read_csv(io.BytesIO(resp.content), dtype=str)
+                if not df.empty:
+                    col_map = {}
+                    for col in df.columns:
+                        c_clean = str(col).strip()
+                        if 'id' in c_clean.lower():
+                            col_map[col] = 'ID'
+                        elif 'msnv' in c_clean.lower():
+                            col_map[col] = 'MSNV'
+                        elif 'họ' in c_clean.lower() or 'ho' in c_clean.lower():
+                            col_map[col] = 'Họ và Tên'
+                        elif 'mail' in c_clean.lower():
+                            col_map[col] = 'Mail'
+                        elif 'user' in c_clean.lower():
+                            col_map[col] = 'User'
+                        elif 'mật' in c_clean.lower() or 'mat' in c_clean.lower():
+                            col_map[col] = 'Mật Khẩu'
+                        elif 'quyền' in c_clean.lower() or 'quyen' in c_clean.lower():
+                            col_map[col] = 'Quyền'
+                        elif 'ứng dụng' in c_clean.lower() or 'ung dung' in c_clean.lower():
+                            col_map[col] = 'Ứng dụng được xem'
+                        elif 'trạng thái' in c_clean.lower() or 'trang thai' in c_clean.lower():
+                            col_map[col] = 'Trạng thái'
 
-        # Initialize default seed admin dataset
-        default_data = [{
-            "ID": 1,
-            "MSNV": "PNC01.PHONGNH5",
-            "Họ và Tên": "Nguyễn Hồng Phong",
-            "Mail": "phuongnam.phongnh5@fpt.net",
-            "User": "phuongnam.phongnh5",
-            "Mật Khẩu": "Benngo@@2026",
-            "Quyền": "admin",
-            "Ứng dụng được xem": "kpis,lich_truc,ton_tk_bt,admin,hr,user_mgmt,import,luong",
-            "is_password_set": True
-        }]
-        self.admin_users_df = pd.DataFrame(default_data)
+                    df = df.rename(columns=col_map)
+                    self.admin_users_df = df
+                    sheet_fetched = True
+                    print(f"Loaded {len(self.admin_users_df)} admin users from Google Sheet.", flush=True)
+        except Exception as e:
+            print(f"Google Sheet admin fetch failed: {e}", flush=True)
+
+        if not sheet_fetched:
+            admin_cache = _get_path("admin_users")
+            if admin_cache.exists():
+                try:
+                    self.admin_users_df = pd.read_pickle(admin_cache)
+                    print(f"Loaded {len(self.admin_users_df)} admin users from cache.", flush=True)
+                except Exception as e:
+                    print(f"Failed to read admin users cache: {e}", flush=True)
+
+        if self.admin_users_df.empty:
+            default_data = [{
+                "ID": 1,
+                "MSNV": "00110827",
+                "Họ và Tên": "Nguyễn Hồng Phong",
+                "Mail": "phuongnam.phongnh5@fpt.net",
+                "User": "phuongnam.phongnh5",
+                "Mật Khẩu": "Benngo@@2026",
+                "Quyền": "admin",
+                "Ứng dụng được xem": "Salary;KPIs;LichTruc;TonTKBT;Admin;HR;UserMgmt;ImportDB",
+                "Trạng thái": "Active",
+                "is_password_set": True
+            }]
+            self.admin_users_df = pd.DataFrame(default_data)
+
+        for col in ['ID', 'MSNV', 'Họ và Tên', 'Mail', 'User', 'Mật Khẩu', 'Quyền', 'Ứng dụng được xem', 'Trạng thái']:
+            if col not in self.admin_users_df.columns:
+                self.admin_users_df[col] = ''
+
+        self.admin_users_df['Trạng thái'] = self.admin_users_df['Trạng thái'].replace({'nan': 'Active', 'None': 'Active', '': 'Active'}).fillna('Active')
+        self._sanitize_admin_users_df()
         self._save_admin_users()
+
+    def _sanitize_admin_users_df(self):
+        """Auto-fix MSNV and Name for admin users by matching against HR dataframe."""
+        if self.admin_users_df.empty or self.hr_df.empty:
+            return
+
+        cols = list(self.hr_df.columns)
+        col_email = cols[10] if len(cols) > 10 else 'Email' # Email (Column K)
+        col_code = cols[5] if len(cols) > 5 else 'Mã NV'    # Numeric MSNV (Column F)
+        col_name = cols[4] if len(cols) > 4 else 'Họ Tên NV' # Full Name (Column E)
+        col_acc = cols[6] if len(cols) > 6 else 'Inside Account' # Inside Acc (Column G)
+
+        modified = False
+        for i, row in self.admin_users_df.iterrows():
+            current_msnv = str(row.get('MSNV', '')).strip()
+            mail = str(row.get('Mail', '')).strip().lower()
+            user_alias = str(row.get('User', '')).strip().lower()
+
+            # If MSNV is missing or contains Inside Account (like PNC01... or letters)
+            if not current_msnv or not current_msnv.isdigit() or 'pnc' in current_msnv.lower() or '.' in current_msnv:
+                for _, hr_row in self.hr_df.iterrows():
+                    hr_mail = str(hr_row.get(col_email, '')).strip().lower()
+                    hr_acc = str(hr_row.get(col_acc, '')).strip().lower()
+                    if (mail and mail == hr_mail) or (user_alias and (user_alias == hr_acc or hr_acc.endswith(user_alias) or user_alias in hr_mail)):
+                        true_msnv = str(hr_row.get(col_code, '')).strip()
+                        true_name = str(hr_row.get(col_name, '')).strip()
+                        if true_msnv and true_msnv != current_msnv:
+                            self.admin_users_df.at[i, 'MSNV'] = true_msnv
+                            modified = True
+                        if true_name and (not row.get('Họ và Tên') or str(row.get('Họ và Tên')).lower() in ('nan', 'none', '')):
+                            self.admin_users_df.at[i, 'Họ và Tên'] = true_name
+                            modified = True
+                        break
+
+        if modified:
+            self._save_pickle(self.admin_users_df, "admin_users.pkl.gz")
 
     def _save_admin_users(self):
         self._save_pickle(self.admin_users_df, "admin_users.pkl.gz")
+        self.sync_admin_users_to_sheet()
+
+    def set_permissions_webapp_url(self, url: str):
+        self.PERMISSIONS_WEBAPP_URL = str(url).strip()
+        try:
+            cfg_file = CACHE_DIR / "webapp_config.json"
+            cfg = {}
+            if cfg_file.exists():
+                try:
+                    with open(cfg_file, 'r', encoding='utf-8') as f:
+                        cfg = json.load(f)
+                except Exception:
+                    pass
+            cfg['PERMISSIONS_WEBAPP_URL'] = self.PERMISSIONS_WEBAPP_URL
+            with open(cfg_file, 'w', encoding='utf-8') as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Error saving webapp_config.json: {e}", flush=True)
+        return {"ok": True, "url": self.PERMISSIONS_WEBAPP_URL, "msg": "Đã lưu Google Apps Script Web App URL!"}
+
+    def get_permissions_webapp_url(self):
+        return {"ok": True, "url": getattr(self, 'PERMISSIONS_WEBAPP_URL', '')}
+
+    def sync_admin_users_to_sheet(self):
+        url = getattr(self, 'PERMISSIONS_WEBAPP_URL', '') or os.environ.get("PERMISSIONS_WEBAPP_URL", "") or getattr(self, 'DEFAULT_PERMISSIONS_WEBAPP_URL', '')
+        if not url:
+            print("Notice: PERMISSIONS_WEBAPP_URL not set yet. Saved admin users locally.", flush=True)
+            return {"ok": False, "msg": "Chưa cấu hình Google Apps Script Web App URL."}
+        try:
+            cols = ['ID', 'MSNV', 'Họ và Tên', 'Mail', 'User', 'Mật Khẩu', 'Quyền', 'Ứng dụng được xem', 'Trạng thái']
+            records = []
+            for idx, row in self.admin_users_df.iterrows():
+                item = {}
+                for col in cols:
+                    val = row.get(col, '')
+                    if pd.isna(val) or val is None:
+                        val = ''
+                    item[col] = str(val).strip()
+                if not item['ID']:
+                    item['ID'] = str(idx + 1)
+                records.append(item)
+
+            payload = {"action": "sync", "users": records}
+            resp = requests.post(
+                url,
+                data=json.dumps(payload),
+                headers={'Content-Type': 'application/json'},
+                allow_redirects=True,
+                timeout=15
+            )
+
+            if resp.status_code == 200:
+                res_data = {}
+                try:
+                    res_data = resp.json()
+                except Exception:
+                    pass
+                print(f"Synced {len(records)} admin users to Google Sheet WebApp successfully.", flush=True)
+                return {
+                    "ok": True,
+                    "count": len(records),
+                    "msg": f"✅ Đã đồng bộ {len(records)} tài khoản lên Google Sheet thành công!",
+                    "response": res_data
+                }
+            elif resp.status_code == 403:
+                return {
+                    "ok": False,
+                    "msg": "❌ Lỗi HTTP 403 (Bị từ chối truy cập): Bạn chưa cấp quyền 'Bất kỳ ai (Anyone)' cho Google Apps Script. Vui lòng vào Google Sheet -> Tiện ích mở rộng -> Apps Script -> Triển khai -> Quản lý các bản triển khai -> Sửa bản triển khai -> Đổi 'Ai có quyền truy cập (Who has access)' thành 'Bất kỳ ai (Anyone)' ➔ Bấm Lưu/Triển khai lại!"
+                }
+            else:
+                print(f"Failed to sync to Google Sheet WebApp: status {resp.status_code}", flush=True)
+                return {"ok": False, "msg": f"Google Sheet WebApp trả về lỗi HTTP {resp.status_code}"}
+        except Exception as e:
+            print(f"Error calling Google Sheet WebApp sync: {e}", flush=True)
+            return {"ok": False, "msg": f"Lỗi kết nối WebApp Google Sheet: {e}"}
 
     def check_hr_email(self, email: str):
         if not email or not isinstance(email, str):
@@ -1742,8 +1913,15 @@ class KPIEngine:
             r_mail = str(r.get('Mail', '')).strip().lower()
             r_user = str(r.get('User', '')).strip().lower()
             r_pass = str(r.get('Mật Khẩu', '')).strip()
+            r_status = str(r.get('Trạng thái', 'Active')).strip()
 
             if (target == r_mail or target == r_user) and pwd == r_pass:
+                if r_status.lower() in ('inactive', 'ngưng hoạt động', 'khóa'):
+                    return {
+                        "ok": False,
+                        "error": "Tài khoản của bạn đang ở trạng thái Inactive (Không hoạt động). Vui lòng liên hệ Admin để chuyển trạng thái sang Active!"
+                    }
+
                 allowed_apps_raw = str(r.get('Ứng dụng được xem', '')).strip()
                 if not allowed_apps_raw:
                     allowed_apps_raw = "KPIs;LichTruc;TonTKBT;Admin;HR;UserMgmt;ImportDB;Salary" if str(r.get('Quyền', 'user')).strip().lower() == 'admin' else "Salary"
@@ -1754,12 +1932,13 @@ class KPIEngine:
                 return {
                     "ok": True,
                     "user": {
-                        "id": int(r.get('ID', 1)),
+                        "id": int(r.get('ID', 1)) if str(r.get('ID', '')).isdigit() else 1,
                         "msnv": str(r.get('MSNV', '')).strip(),
                         "name": str(r.get('Họ và Tên', '')).strip(),
                         "mail": str(r.get('Mail', '')).strip(),
                         "user": str(r.get('User', '')).strip(),
                         "role": str(r.get('Quyền', 'user')).strip().lower(),
+                        "status": r_status if r_status else 'Active',
                         "allowed_apps": apps_list,
                         "is_password_set": bool(r.get('is_password_set', True))
                     }
@@ -1802,8 +1981,12 @@ class KPIEngine:
                 return {"ok": False, "error": f"User (mật danh) '{user_alias}' đã tồn tại! Vui lòng chọn mật danh khác."}
 
         hr_info = self.check_hr_email(clean_mail)
-        msnv = hr_info.get('msnv', '') if hr_info.get('ok') and hr_info.get('found') else ''
-        name = hr_info.get('name', '') if hr_info.get('ok') and hr_info.get('found') else clean_user
+        found_in_hr = hr_info.get('ok') and hr_info.get('found')
+        msnv = hr_info.get('msnv', '') if found_in_hr else ''
+        name = hr_info.get('name', '') if found_in_hr else clean_user
+        
+        user_status = "Active" if found_in_hr else "Inactive"
+        allowed_apps = "Salary"
 
         existing_ids = [int(x) for x in self.admin_users_df['ID'].dropna() if str(x).isdigit()]
         new_id = (max(existing_ids) + 1) if existing_ids else 1
@@ -1816,16 +1999,19 @@ class KPIEngine:
             "User": clean_user,
             "Mật Khẩu": password.strip(),
             "Quyền": "user",
-            "Ứng dụng được xem": "Salary",
+            "Ứng dụng được xem": allowed_apps,
+            "Trạng thái": user_status,
             "is_password_set": True
         }
 
         self.admin_users_df = pd.concat([self.admin_users_df, pd.DataFrame([new_row])], ignore_index=True)
         self._save_admin_users()
 
+        msg = f"Đăng ký tài khoản thành công cho {name} ({clean_mail})! Trạng thái: Active (Đã xác thực HR)." if user_status == "Active" else f"Tài khoản {name} ({clean_mail}) đã đăng ký thành công! Nhưng do chưa nằm trong danh sách HR nên trạng thái là Inactive (Vui lòng chờ Admin kích hoạt Active)."
+
         return {
             "ok": True,
-            "message": f"Đăng ký tài khoản thành công cho {name} ({clean_mail})!",
+            "message": msg,
             "user": {
                 "id": new_id,
                 "msnv": msnv,
@@ -1833,6 +2019,7 @@ class KPIEngine:
                 "mail": clean_mail,
                 "user": clean_user,
                 "role": "user",
+                "status": user_status,
                 "allowed_apps": ["Salary"]
             }
         }
@@ -1840,6 +2027,8 @@ class KPIEngine:
     def get_admin_users(self):
         if self.admin_users_df.empty:
             self._load_admin_users()
+        else:
+            self._sanitize_admin_users_df()
 
         import re
         res = []
@@ -1848,14 +2037,19 @@ class KPIEngine:
             if not apps_raw:
                 apps_raw = "KPIs;LichTruc;TonTKBT;Admin;HR;UserMgmt;ImportDB;Salary" if str(r.get('Quyền', 'user')).strip().lower() == 'admin' else "Salary"
 
+            status_val = str(r.get('Trạng thái', 'Active')).strip()
+            if not status_val or status_val.lower() in ('nan', 'none', 'null'):
+                status_val = 'Active'
+
             res.append({
-                "id": int(r.get('ID', 0)),
+                "id": int(r.get('ID', 0)) if str(r.get('ID', '')).isdigit() else 0,
                 "msnv": str(r.get('MSNV', '')).strip(),
                 "name": str(r.get('Họ và Tên', '')).strip(),
                 "mail": str(r.get('Mail', '')).strip(),
                 "user": str(r.get('User', '')).strip(),
                 "password": str(r.get('Mật Khẩu', '')).strip(),
                 "role": str(r.get('Quyền', 'user')).strip().lower(),
+                "status": status_val,
                 "allowed_apps": [x.strip() for x in re.split(r'[;,]', apps_raw) if x.strip()]
             })
         return res
@@ -1865,6 +2059,7 @@ class KPIEngine:
         user_alias = str(payload.get('user', '')).strip().lower() or mail.split('@')[0]
         password = str(payload.get('password', '')).strip()
         role = str(payload.get('role', 'user')).strip().lower()
+        status = str(payload.get('status', 'Active')).strip() or 'Active'
         msnv = str(payload.get('msnv', '')).strip()
         name = str(payload.get('name', '')).strip()
         allowed_apps = payload.get('allowed_apps', ["Salary"])
@@ -1885,6 +2080,7 @@ class KPIEngine:
             "Mật Khẩu": password,
             "Quyền": role,
             "Ứng dụng được xem": allowed_str,
+            "Trạng thái": status,
             "is_password_set": True
         }
 
@@ -1898,7 +2094,7 @@ class KPIEngine:
 
         idx_to_update = None
         for i, r in self.admin_users_df.iterrows():
-            if int(r.get('ID', 0)) == user_id:
+            if str(r.get('ID', '')).isdigit() and int(r.get('ID', 0)) == user_id:
                 idx_to_update = i
                 break
 
@@ -1917,6 +2113,8 @@ class KPIEngine:
             self.admin_users_df.at[idx_to_update, 'Mật Khẩu'] = str(payload['password']).strip()
         if 'role' in payload:
             self.admin_users_df.at[idx_to_update, 'Quyền'] = str(payload['role']).strip().lower()
+        if 'status' in payload:
+            self.admin_users_df.at[idx_to_update, 'Trạng thái'] = str(payload['status']).strip()
         if 'allowed_apps' in payload:
             allowed = payload['allowed_apps']
             self.admin_users_df.at[idx_to_update, 'Ứng dụng được xem'] = ";".join(allowed) if isinstance(allowed, list) else str(allowed)
