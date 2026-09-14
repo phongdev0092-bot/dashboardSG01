@@ -238,7 +238,8 @@ export default function App() {
       }
     } catch (err) {
       console.error("Import Tồn TK-BT error:", err);
-      setImportTonResult({ ok: false, msg: "Lỗi gửi dữ liệu tới máy chủ!" });
+      const errMsg = err.response?.data?.detail || err.response?.data?.error || err.message || "Lỗi kết nối tới máy chủ khi tải file!";
+      setImportTonResult({ ok: false, msg: `Lỗi gửi dữ liệu: ${errMsg}` });
     } finally {
       setImportingTon(false);
       e.target.value = '';
@@ -661,6 +662,9 @@ export default function App() {
     const searchKw = tonTkBtSearch.trim().toUpperCase();
 
     return combined.filter(item => {
+      if (tonTkBtTypeFilter === 'TK' && item.type !== 'TK') return false;
+      if (tonTkBtTypeFilter === 'BT' && item.type !== 'BT') return false;
+
       if (tonTkBtDoiTruong !== '__ALL__' && item.doiTruong !== tonTkBtDoiTruong) return false;
       if (tonTkBtBlockFilter !== '__ALL__' && item.block !== tonTkBtBlockFilter) return false;
 
