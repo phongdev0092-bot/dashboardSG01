@@ -42,9 +42,35 @@ class KPIEngine:
         self.sync_error = None
         self.lt_history = []
         self.lt_snapshot_map = {}
-        CACHE_DIR.mkdir(exist_ok=True, parents=True)
+        try:
+            CACHE_DIR.mkdir(exist_ok=True, parents=True)
+        except Exception:
+            pass
         self._load_lt_history_and_snapshot()
         self.load_cache_or_fetch()
+
+    def _save_pickle(self, df_or_obj, filename: str):
+        try:
+            CACHE_DIR.mkdir(exist_ok=True, parents=True)
+            target = CACHE_DIR / filename
+            if hasattr(df_or_obj, 'to_pickle'):
+                df_or_obj.to_pickle(target)
+            else:
+                pd.to_pickle(df_or_obj, target)
+            return
+        except Exception:
+            pass
+
+        try:
+            tmp_dir = Path("/tmp/data_cache")
+            tmp_dir.mkdir(exist_ok=True, parents=True)
+            target = tmp_dir / filename
+            if hasattr(df_or_obj, 'to_pickle'):
+                df_or_obj.to_pickle(target)
+            else:
+                pd.to_pickle(df_or_obj, target)
+        except Exception:
+            pass
 
     def _get_sheet_url(self, gid: str) -> str:
         return f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={gid}'
@@ -54,6 +80,14 @@ class KPIEngine:
 
     def load_cache_or_fetch(self):
         def _get_path(name):
+            tmp_dir = Path("/tmp/data_cache")
+            tmp_gz = tmp_dir / f"{name}.pkl.gz"
+            if tmp_gz.exists():
+                return tmp_gz
+            tmp_pkl = tmp_dir / f"{name}.pkl"
+            if tmp_pkl.exists():
+                return tmp_pkl
+
             gz = CACHE_DIR / f"{name}.pkl.gz"
             if gz.exists():
                 return gz
@@ -1602,11 +1636,11 @@ class KPIEngine:
 
         if detected_mode == "TK":
             self.ton_tk_df = df
-            df.to_pickle(CACHE_DIR / "ton_tk.pkl.gz")
+            self._save_pickle(df, "ton_tk.pkl.gz")
             label = "Tồn Triển Khai (TK)"
         else:
             self.ton_bt_df = df
-            df.to_pickle(CACHE_DIR / "ton_bt.pkl.gz")
+            self._save_pickle(df, "ton_bt.pkl.gz")
             label = "Tồn Bảo Trì (BT)"
 
         return {
