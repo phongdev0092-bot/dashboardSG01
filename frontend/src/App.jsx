@@ -40,6 +40,9 @@ import {
   Badge,
   LinearProgress,
   Alert,
+  Checkbox,
+  FormControlLabel,
+  FormGroup,
   useMediaQuery,
   useTheme
 } from '@mui/material';
@@ -90,7 +93,10 @@ import {
   Delete as DeleteIcon,
   People as PeopleIcon,
   Storage as StorageIcon,
-  VpnKey as VpnKeyIcon
+  VpnKey as VpnKeyIcon,
+  MonetizationOn as SalaryIcon,
+  Visibility as ViewIcon,
+  CheckCircleOutlined as CheckCircleOutlineIcon
 } from '@mui/icons-material';
 
 import axios from 'axios';
@@ -253,15 +259,39 @@ export default function App() {
   const [authError, setAuthError] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
 
-  // Admin Page States
-  const [adminSubTab, setAdminSubTab] = useState(0); // 0: HR List, 1: Admin Users Table, 2: Import DB
+  // Admin Page States (0: HR Nhân Sự, 1: Sheet Quyền Admin, 2: Import Data Base, 3: Quản Lý Lương)
+  const [adminSubTab, setAdminSubTab] = useState(0);
 
-  // Topic 1: HR List States
+  // Topic 1: HR List & CRUD States
   const [hrList, setHrList] = useState([]);
   const [hrLoading, setHrLoading] = useState(false);
   const [hrSearch, setHrSearch] = useState('');
   const [hrBlockFilter, setHrBlockFilter] = useState('__ALL__');
   const [hrTlFilter, setHrTlFilter] = useState('__ALL__');
+
+  // HR Detail Modal States
+  const [hrDetailModalOpen, setHrDetailModalOpen] = useState(false);
+  const [selectedHrDetail, setSelectedHrDetail] = useState(null);
+  const [hrDetailLoading, setHrDetailLoading] = useState(false);
+  const [hrDetailSearch, setHrDetailSearch] = useState('');
+
+  // HR Add/Edit Modal States
+  const [hrEditModalOpen, setHrEditModalOpen] = useState(false);
+  const [editingHr, setEditingHr] = useState(null);
+  const [hrForm, setHrForm] = useState({
+    code: '', name: '', account: '', mobisale: '', mail: '', phone: '', block: '', team_lead: '', title: '', status: 'Chính thức (Active)'
+  });
+
+  // HR Delete Confirmation States
+  const [hrDeleteModalOpen, setHrDeleteModalOpen] = useState(false);
+  const [hrToDelete, setHrToDelete] = useState(null);
+
+  // Topic 4: Lương States
+  const [luongList, setLuongList] = useState([]);
+  const [luongLoading, setLuongLoading] = useState(false);
+  const [luongSearch, setLuongSearch] = useState('');
+  const [luongBlockFilter, setLuongBlockFilter] = useState('__ALL__');
+  const [luongTlFilter, setLuongTlFilter] = useState('__ALL__');
 
   // Topic 2: Admin Users Table States
   const [adminUsers, setAdminUsers] = useState([]);
@@ -269,7 +299,7 @@ export default function App() {
   const [userModalOpen, setUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null); // null for Add, user object for Edit
   const [userForm, setUserForm] = useState({
-    msnv: '', name: '', mail: '', user: '', password: '', role: 'user'
+    msnv: '', name: '', mail: '', user: '', password: '', role: 'user', allowed_apps: ['luong']
   });
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState(null);
@@ -411,6 +441,92 @@ export default function App() {
     }
   };
 
+  const fetchAdminHrDetail = async (code) => {
+    setHrDetailLoading(true);
+    setHrDetailSearch('');
+    setSelectedHrDetail(null);
+    setHrDetailModalOpen(true);
+    try {
+      const res = await axios.get(`/api/admin/hr-detail/${encodeURIComponent(code)}`);
+      if (res.data && res.data.ok) {
+        setSelectedHrDetail(res.data.detail);
+      } else {
+        alert(res.data?.error || "Không thể tải thông tin chi tiết nhân sự!");
+      }
+    } catch (err) {
+      alert("Lỗi khi tải thông tin chi tiết nhân sự!");
+    } finally {
+      setHrDetailLoading(false);
+    }
+  };
+
+  const handleSaveHr = async () => {
+    if (!hrForm.name || !hrForm.code) {
+      alert("Vui lòng nhập đầy đủ Mã NV và Họ Tên Nhân Sự!");
+      return;
+    }
+    try {
+      const payload = {
+        'Mã NV': hrForm.code,
+        'Họ Tên NV': hrForm.name,
+        'Inside Account': hrForm.account,
+        'Mobisale': hrForm.mobisale,
+        'Email': hrForm.mail,
+        'Số điện thoại': hrForm.phone,
+        'Block': hrForm.block,
+        'Họ tên Đội trưởng': hrForm.team_lead,
+        'Chức danh': hrForm.title,
+        'Tình trạng Hợp đồng': hrForm.status
+      };
+      if (editingHr) {
+        const res = await axios.post('/api/admin/hr/update', { code: editingHr.code, ...payload });
+        if (res.data && res.data.ok) {
+          alert(res.data.message || 'Đã cập nhật hồ sơ!');
+          setHrEditModalOpen(false);
+          fetchAdminHrList();
+        } else alert(res.data?.error || 'Lỗi cập nhật!');
+      } else {
+        const res = await axios.post('/api/admin/hr/add', payload);
+        if (res.data && res.data.ok) {
+          alert(res.data.message || 'Đã thêm mới nhân sự!');
+          setHrEditModalOpen(false);
+          fetchAdminHrList();
+        } else alert(res.data?.error || 'Lỗi thêm mới!');
+      }
+    } catch (err) {
+      alert("Lỗi khi lưu thông tin nhân sự!");
+    }
+  };
+
+  const handleDeleteHr = async () => {
+    if (!hrToDelete) return;
+    try {
+      const res = await axios.post('/api/admin/hr/delete', { code: hrToDelete.code });
+      if (res.data && res.data.ok) {
+        alert(res.data.message || 'Đã xóa nhân sự!');
+        setHrDeleteModalOpen(false);
+        setHrToDelete(null);
+        fetchAdminHrList();
+      } else alert(res.data?.error || 'Lỗi xóa nhân sự!');
+    } catch (err) {
+      alert("Lỗi kết nối khi xóa nhân sự!");
+    }
+  };
+
+  const fetchLuongList = async () => {
+    setLuongLoading(true);
+    try {
+      const res = await axios.get('/api/admin/luong-list', {
+        params: { search: luongSearch, block: luongBlockFilter, team_lead: luongTlFilter }
+      });
+      if (res.data) setLuongList(res.data);
+    } catch (err) {
+      console.error("Fetch Lương list error:", err);
+    } finally {
+      setLuongLoading(false);
+    }
+  };
+
   const handleSaveUser = async () => {
     if (!userForm.mail || (!editingUser && !userForm.password)) {
       alert("Vui lòng điền đầy đủ Email và Mật khẩu!");
@@ -425,7 +541,8 @@ export default function App() {
           mail: userForm.mail,
           user: userForm.user,
           password: userForm.password,
-          role: userForm.role
+          role: userForm.role,
+          allowed_apps: userForm.allowed_apps
         });
         if (res.data && res.data.ok) {
           alert(res.data.message);
@@ -3560,24 +3677,24 @@ export default function App() {
             {currentNav === 'admin' && (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {/* HEADER USER BAR */}
-                <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, backgroundColor: '#ffffff', border: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, backgroundColor: '#ffffff', border: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2, boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <Box sx={{ width: 48, height: 48, borderRadius: '50%', backgroundColor: '#e8f0fe', color: '#1a73e8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <AdminPanelSettingsIcon sx={{ fontSize: 28 }} />
+                    <Box sx={{ width: 52, height: 52, borderRadius: '16px', background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(30,41,59,0.25)' }}>
+                      <AdminPanelSettingsIcon sx={{ fontSize: 32 }} />
                     </Box>
                     <Box>
-                      <Typography variant="h6" sx={{ fontWeight: 800, color: '#202124', lineHeight: 1.2 }}>
+                      <Typography variant="h6" sx={{ fontWeight: 900, color: '#0f172a', lineHeight: 1.2, letterSpacing: '-0.3px' }}>
                         Trang Quản Trị Hệ Thống (Admin Panel)
                       </Typography>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                        <Typography variant="body2" sx={{ color: '#5f6368', fontWeight: 600 }}>
+                        <Typography variant="body2" sx={{ color: '#475569', fontWeight: 600 }}>
                           Đang đăng nhập: <b>{currentUser?.name || currentUser?.mail}</b> ({currentUser?.mail})
                         </Typography>
                         <Chip
                           label={currentUser?.role === 'admin' ? 'Quản trị viên (Admin)' : 'Người dùng (User)'}
                           size="small"
                           color={currentUser?.role === 'admin' ? 'secondary' : 'primary'}
-                          sx={{ fontWeight: 800, height: 22 }}
+                          sx={{ fontWeight: 800, height: 22, borderRadius: '6px' }}
                         />
                       </Box>
                     </Box>
@@ -3588,174 +3705,383 @@ export default function App() {
                     color="error"
                     startIcon={<LogoutIcon />}
                     onClick={handleLogout}
-                    sx={{ borderRadius: 2, fontWeight: 700 }}
+                    sx={{ borderRadius: '12px', fontWeight: 800, px: 2.5 }}
                   >
                     Đăng Xuất
                   </Button>
                 </Paper>
 
-                {/* SUB-TABS TOPIC SELECTION */}
-                <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid #e0e0e0', overflow: 'hidden', backgroundColor: '#ffffff' }}>
-                  <Tabs
-                    value={adminSubTab}
-                    onChange={(e, val) => setAdminSubTab(val)}
-                    variant="scrollable"
-                    scrollButtons="auto"
-                    sx={{
-                      borderBottom: '1px solid #e0e0e0',
-                      backgroundColor: '#f8fafc',
-                      '& .MuiTab-root': { fontWeight: 700, minHeight: 52 }
-                    }}
-                  >
-                    <Tab icon={<PeopleIcon />} iconPosition="start" label="1. HR Nhân Sự" />
-                    <Tab icon={<AdminPanelSettingsIcon />} iconPosition="start" label="2. Trang Quản Trị User (Sheet Admin)" />
-                    <Tab icon={<StorageIcon />} iconPosition="start" label="3. Import Data Base" />
-                  </Tabs>
+                {/* 4 INTERACTIVE TOPIC ICON ACTION CARDS BAR */}
+                <Grid container spacing={2.5}>
+                  {[
+                    {
+                      id: 0,
+                      title: '1. HR Nhân Sự',
+                      subtitle: 'Danh mục & Hồ sơ nhân sự SG01',
+                      icon: <PeopleIcon sx={{ fontSize: 30 }} />,
+                      gradient: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+                      activeColor: '#2563eb',
+                      badge: `${hrList.length || 'HR'} HS`
+                    },
+                    {
+                      id: 1,
+                      title: '2. Sheet Admin Users',
+                      subtitle: 'Phân quyền & Tài khoản hệ thống',
+                      icon: <VpnKeyIcon sx={{ fontSize: 30 }} />,
+                      gradient: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
+                      activeColor: '#7c3aed',
+                      badge: `${adminUsers.length || 'User'} Acc`
+                    },
+                    {
+                      id: 2,
+                      title: '3. Import Data Base',
+                      subtitle: 'Nạp dữ liệu Tồn, Lịch trực, Live KPI',
+                      icon: <StorageIcon sx={{ fontSize: 30 }} />,
+                      gradient: 'linear-gradient(135deg, #ea580c 0%, #c2410c 100%)',
+                      activeColor: '#ea580c',
+                      badge: 'Central Hub'
+                    },
+                    {
+                      id: 3,
+                      title: '4. Quản Lý Lương',
+                      subtitle: 'Tra cứu HĐLĐ & Tính lương nhân sự',
+                      icon: <SalaryIcon sx={{ fontSize: 30 }} />,
+                      gradient: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+                      activeColor: '#059669',
+                      badge: 'Lương & HĐ'
+                    }
+                  ].map((topic) => {
+                    const isSelected = adminSubTab === topic.id;
 
-                  <Box sx={{ p: 3 }}>
-                    {/* TOPIC 1: HR NHÂN SỰ */}
-                    {adminSubTab === 0 && (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#1e293b' }}>
-                          👥 Danh Sách Thông Tin Nhân Sự (HR Database)
-                        </Typography>
+                    return (
+                      <Grid item xs={12} sm={6} md={3} key={topic.id}>
+                        <Paper
+                          elevation={0}
+                          onClick={() => {
+                            setAdminSubTab(topic.id);
+                            if (topic.id === 0) fetchAdminHrList();
+                            if (topic.id === 1) fetchAdminUsers();
+                            if (topic.id === 3) fetchLuongList();
+                          }}
+                          sx={{
+                            p: 2.5,
+                            borderRadius: 3.5,
+                            cursor: 'pointer',
+                            transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                            backgroundColor: isSelected ? '#ffffff' : '#f8fafc',
+                            border: isSelected ? `2px solid ${topic.activeColor}` : '1px solid #e2e8f0',
+                            boxShadow: isSelected ? `0 8px 24px ${topic.activeColor}25` : '0 2px 6px rgba(0,0,0,0.02)',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            '&:hover': {
+                              transform: 'translateY(-4px)',
+                              boxShadow: `0 12px 28px ${topic.activeColor}30`,
+                              backgroundColor: '#ffffff'
+                            }
+                          }}
+                        >
+                          {isSelected && (
+                            <Box sx={{ position: 'absolute', top: 12, right: 12, color: topic.activeColor }}>
+                              <CheckCircleOutlineIcon sx={{ fontSize: 24 }} />
+                            </Box>
+                          )}
 
-                        {/* FILTER BAR */}
-                        <Grid container spacing={2} alignItems="center">
-                          <Grid item xs={12} sm={4} md={4}>
-                            <TextField
-                              fullWidth
-                              size="small"
-                              placeholder="Tìm kiếm Mã NV, Họ Tên, Email, Account, Phone..."
-                              value={hrSearch}
-                              onChange={(e) => setHrSearch(e.target.value)}
-                              InputProps={{ startAdornment: <SearchIcon sx={{ color: '#94a3b8', mr: 1 }} /> }}
-                            />
-                          </Grid>
-                          <Grid item xs={12} sm={4} md={3}>
-                            <TextField select fullWidth size="small" value={hrBlockFilter} onChange={(e) => setHrBlockFilter(e.target.value)} label="Lọc Block">
-                              <MenuItem value="__ALL__">-- Tất cả Block --</MenuItem>
-                              {options.blocks?.map(b => <MenuItem key={b} value={b}>{b}</MenuItem>)}
-                            </TextField>
-                          </Grid>
-                          <Grid item xs={12} sm={4} md={3}>
-                            <TextField select fullWidth size="small" value={hrTlFilter} onChange={(e) => setHrTlFilter(e.target.value)} label="Lọc Đội Trưởng">
-                              <MenuItem value="__ALL__">-- Tất cả Đội Trưởng --</MenuItem>
-                              {options.team_leads?.map(tl => <MenuItem key={tl} value={tl}>{tl}</MenuItem>)}
-                            </TextField>
-                          </Grid>
-                          <Grid item xs={12} sm={12} md={2}>
-                            <Button variant="contained" fullWidth onClick={fetchAdminHrList} startIcon={<RefreshIcon />} sx={{ borderRadius: 2, height: 40, fontWeight: 700 }}>
-                              Tải Lại
-                            </Button>
-                          </Grid>
-                        </Grid>
-
-                        {/* HR TABLE */}
-                        {hrLoading ? (
-                          <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress /></Box>
-                        ) : (
-                          <TableContainer sx={{ maxHeight: 600 }}>
-                            <Table stickyHeader size="small">
-                              <TableHead sx={{ backgroundColor: '#f1f5f9' }}>
-                                <TableRow>
-                                  <TableCell align="center" sx={{ fontWeight: 800, width: 50 }}>STT</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>Mã NV</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>Họ và Tên</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>Inside Account</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>Email</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>Số Điện Thoại</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>Block</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>Đội Trưởng</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>Chức Danh</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>Loại HĐ</TableCell>
-                                </TableRow>
-                              </TableHead>
-                              <TableBody>
-                                {hrList.length === 0 ? (
-                                  <TableRow>
-                                    <TableCell colSpan={10} align="center" sx={{ py: 4, color: '#64748b' }}>Không tìm thấy nhân sự phù hợp.</TableCell>
-                                  </TableRow>
-                                ) : (
-                                  hrList.map((row) => (
-                                    <TableRow key={row.stt} hover>
-                                      <TableCell align="center">{row.stt}</TableCell>
-                                      <TableCell sx={{ fontWeight: 800, color: '#1a73e8' }}>{row.code}</TableCell>
-                                      <TableCell sx={{ fontWeight: 700 }}>{row.name}</TableCell>
-                                      <TableCell sx={{ fontWeight: 600, color: '#334155' }}>{row.account}</TableCell>
-                                      <TableCell sx={{ fontSize: '12px' }}>{row.mail}</TableCell>
-                                      <TableCell sx={{ fontSize: '12px' }}>{row.phone}</TableCell>
-                                      <TableCell sx={{ fontWeight: 600 }}>{row.block}</TableCell>
-                                      <TableCell sx={{ fontSize: '12px' }}>{row.team_lead}</TableCell>
-                                      <TableCell sx={{ fontSize: '12px' }}>{row.title}</TableCell>
-                                      <TableCell>
-                                        <Chip label={row.status || 'Chính thức'} size="small" color={row.status?.includes('Chính thức') ? 'success' : 'default'} sx={{ height: 20, fontSize: '10px', fontWeight: 700 }} />
-                                      </TableCell>
-                                    </TableRow>
-                                  ))
-                                )}
-                              </TableBody>
-                            </Table>
-                          </TableContainer>
-                        )}
-                      </Box>
-                    )}
-
-                    {/* TOPIC 2: QỦAN TRỊ USER (SHEET ADMIN) */}
-                    {adminSubTab === 1 && (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
-                          <Box>
-                            <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#1e293b' }}>
-                              🔑 Quản Lý Tài Khoản Người Dùng (Sheet Admin Users)
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: '#64748b' }}>
-                              Sheet ID: <code>10Y5WBM9PDng_AsiyNxgFbEUac8XFBviRc21G0ar6erY</code> | GID: 0 (Cấu trúc: ID, MSNV, Họ và Tên, Mail, User, Mật Khẩu, Quyền)
-                            </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1.5 }}>
+                            <Box
+                              sx={{
+                                width: 50,
+                                height: 50,
+                                borderRadius: '16px',
+                                background: topic.gradient,
+                                color: '#ffffff',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                boxShadow: `0 4px 14px ${topic.activeColor}40`
+                              }}
+                            >
+                              {topic.icon}
+                            </Box>
+                            <Box>
+                              <Typography variant="subtitle1" sx={{ fontWeight: 900, color: isSelected ? topic.activeColor : '#1e293b', lineHeight: 1.2 }}>
+                                {topic.title}
+                              </Typography>
+                              <Chip
+                                label={topic.badge}
+                                size="small"
+                                sx={{
+                                  mt: 0.5,
+                                  height: 20,
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                  backgroundColor: isSelected ? `${topic.activeColor}15` : '#f1f5f9',
+                                  color: isSelected ? topic.activeColor : '#64748b'
+                                }}
+                              />
+                            </Box>
                           </Box>
 
-                          <Button
-                            variant="contained"
-                            color="primary"
-                            startIcon={<AddIcon />}
-                            onClick={() => {
-                              setEditingUser(null);
-                              setUserForm({ msnv: '', name: '', mail: '', user: '', password: '', role: 'user' });
-                              setUserModalOpen(true);
-                            }}
-                            sx={{ borderRadius: 2, fontWeight: 700 }}
-                          >
-                            Thêm User Mới
+                          <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 500, display: 'block' }}>
+                            {topic.subtitle}
+                          </Typography>
+                        </Paper>
+                      </Grid>
+                    );
+                  })}
+                </Grid>
+
+                {/* CONTENT AREA FOR SELECTED TOPIC */}
+                <Paper elevation={0} sx={{ p: 3, borderRadius: 3.5, border: '1px solid #e0e0e0', backgroundColor: '#ffffff', boxShadow: '0 2px 10px rgba(0,0,0,0.03)' }}>
+                  
+                  {/* TOPIC 0: HR NHÂN SỰ (FULL CRUD & MOBISALE NEXT TO INSIDE ACC) */}
+                  {adminSubTab === 0 && (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      
+                      {/* STAT METRICS BAR */}
+                      <Grid container spacing={2}>
+                        <Grid item xs={12} sm={3}>
+                          <Paper elevation={0} sx={{ p: 2, borderRadius: 2.5, backgroundColor: '#eff6ff', border: '1px solid #bfdbfe' }}>
+                            <Typography variant="caption" sx={{ color: '#1e40af', fontWeight: 800, textTransform: 'uppercase' }}>Tổng Nhân Sự</Typography>
+                            <Typography variant="h5" sx={{ fontWeight: 900, color: '#1d4ed8', mt: 0.5 }}>{hrList.length}</Typography>
+                          </Paper>
+                        </Grid>
+                        <Grid item xs={12} sm={3}>
+                          <Paper elevation={0} sx={{ p: 2, borderRadius: 2.5, backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+                            <Typography variant="caption" sx={{ color: '#166534', fontWeight: 800, textTransform: 'uppercase' }}>Hoạt Động (Active)</Typography>
+                            <Typography variant="h5" sx={{ fontWeight: 900, color: '#15803d', mt: 0.5 }}>
+                              {hrList.filter(r => (r.status || '').toUpperCase().includes('ACTIVE') || (r.status || '').toUpperCase().includes('BÌNH THƯỜNG') || (r.status || '').toUpperCase().includes('CHÍNH THỨC')).length}
+                            </Typography>
+                          </Paper>
+                        </Grid>
+                        <Grid item xs={12} sm={3}>
+                          <Paper elevation={0} sx={{ p: 2, borderRadius: 2.5, backgroundColor: '#faf5ff', border: '1px solid #e9d5ff' }}>
+                            <Typography variant="caption" sx={{ color: '#6b21a8', fontWeight: 800, textTransform: 'uppercase' }}>Số Đội Trưởng</Typography>
+                            <Typography variant="h5" sx={{ fontWeight: 900, color: '#7e22ce', mt: 0.5 }}>
+                              {new Set(hrList.map(r => r.team_lead).filter(Boolean)).size}
+                            </Typography>
+                          </Paper>
+                        </Grid>
+                        <Grid item xs={12} sm={3}>
+                          <Paper elevation={0} sx={{ p: 2, borderRadius: 2.5, backgroundColor: '#fff7ed', border: '1px solid #fed7aa' }}>
+                            <Typography variant="caption" sx={{ color: '#9a3412', fontWeight: 800, textTransform: 'uppercase' }}>Số Block Kỹ Thuật</Typography>
+                            <Typography variant="h5" sx={{ fontWeight: 900, color: '#c2410c', mt: 0.5 }}>
+                              {new Set(hrList.map(r => r.block).filter(Boolean)).size}
+                            </Typography>
+                          </Paper>
+                        </Grid>
+                      </Grid>
+
+                      {/* TOOLBAR ACTIONS & FILTERS */}
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', flexGrow: 1, maxWidth: 850 }}>
+                          <TextField
+                            size="small"
+                            placeholder="Tìm Mã NV, Họ Tên, Inside Acc, Mobisale, Mail, Phone..."
+                            value={hrSearch}
+                            onChange={(e) => setHrSearch(e.target.value)}
+                            sx={{ minWidth: 280, flexGrow: 1, '& .MuiInputBase-root': { borderRadius: 2 } }}
+                            InputProps={{ startAdornment: <SearchIcon sx={{ color: '#94a3b8', mr: 1 }} /> }}
+                          />
+                          <TextField select size="small" value={hrBlockFilter} onChange={(e) => setHrBlockFilter(e.target.value)} sx={{ minWidth: 160, '& .MuiInputBase-root': { borderRadius: 2 } }}>
+                            <MenuItem value="__ALL__">-- Tất cả Block --</MenuItem>
+                            {options.blocks?.map(b => <MenuItem key={b} value={b}>{b}</MenuItem>)}
+                          </TextField>
+                          <TextField select size="small" value={hrTlFilter} onChange={(e) => setHrTlFilter(e.target.value)} sx={{ minWidth: 170, '& .MuiInputBase-root': { borderRadius: 2 } }}>
+                            <MenuItem value="__ALL__">-- Tất cả Đội Trưởng --</MenuItem>
+                            {options.team_leads?.map(tl => <MenuItem key={tl} value={tl}>{tl}</MenuItem>)}
+                          </TextField>
+                          <Button variant="outlined" onClick={fetchAdminHrList} startIcon={<RefreshIcon />} sx={{ borderRadius: 2, fontWeight: 700 }}>
+                            Tải Lại
                           </Button>
                         </Box>
 
-                        {adminUsersLoading ? (
-                          <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress /></Box>
-                        ) : (
-                          <TableContainer sx={{ maxHeight: 600 }}>
-                            <Table stickyHeader size="small">
-                              <TableHead sx={{ backgroundColor: '#f1f5f9' }}>
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          startIcon={<AddIcon />}
+                          onClick={() => {
+                            setEditingHr(null);
+                            setHrForm({ code: '', name: '', account: '', mobisale: '', mail: '', phone: '', block: '', team_lead: '', title: '', status: 'Chính thức (Active)' });
+                            setHrEditModalOpen(true);
+                          }}
+                          sx={{ borderRadius: 2, fontWeight: 800, px: 2.5 }}
+                        >
+                          ➕ Thêm Nhân Sự Mới
+                        </Button>
+                      </Box>
+
+                      {/* STYLED HR DATATABLE */}
+                      {hrLoading ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}><CircularProgress /></Box>
+                      ) : (
+                        <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2.5, maxHeight: 620 }}>
+                          <Table stickyHeader size="small">
+                            <TableHead sx={{ backgroundColor: '#f8fafc' }}>
+                              <TableRow>
+                                <TableCell align="center" sx={{ fontWeight: 800, width: 50, backgroundColor: '#f8fafc' }}>STT</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f8fafc' }}>Mã NV</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f8fafc' }}>Họ và Tên</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#eef2ff', color: '#3730a3' }}>Inside Account</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#eff6ff', color: '#1d4ed8' }}>Mobisale</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f8fafc' }}>Email</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f8fafc' }}>Số Điện Thoại</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f8fafc' }}>Block</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f8fafc' }}>Đội Trưởng</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f8fafc' }}>Chức Danh</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f8fafc' }}>Loại HĐ</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800, width: 140, backgroundColor: '#f8fafc' }}>Thao Tác</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {hrList.length === 0 ? (
                                 <TableRow>
-                                  <TableCell align="center" sx={{ fontWeight: 800, width: 60 }}>ID</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>MSNV</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>Họ và Tên</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>Mail</TableCell>
-                                  <TableCell sx={{ fontWeight: 800 }}>User (Mật danh)</TableCell>
-                                  <TableCell align="center" sx={{ fontWeight: 800 }}>Quyền</TableCell>
-                                  <TableCell align="center" sx={{ fontWeight: 800, width: 120 }}>Thao Tác</TableCell>
+                                  <TableCell colSpan={12} align="center" sx={{ py: 6, color: '#64748b' }}>
+                                    Không tìm thấy dữ liệu nhân sự phù hợp bộ lọc.
+                                  </TableCell>
                                 </TableRow>
-                              </TableHead>
-                              <TableBody>
-                                {adminUsers.length === 0 ? (
-                                  <TableRow>
-                                    <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#64748b' }}>Chưa có tài khoản người dùng nào.</TableCell>
+                              ) : (
+                                hrList.map((row) => (
+                                  <TableRow key={row.code || row.stt} hover sx={{ '&:nth-of-type(even)': { backgroundColor: '#f8fafc' } }}>
+                                    <TableCell align="center" sx={{ color: '#64748b' }}>{row.stt}</TableCell>
+                                    <TableCell sx={{ fontWeight: 800, color: '#2563eb' }}>{row.code}</TableCell>
+                                    <TableCell sx={{ fontWeight: 800, color: '#0f172a' }}>{row.name}</TableCell>
+                                    <TableCell sx={{ fontWeight: 700, color: '#3730a3', backgroundColor: 'rgba(238, 242, 255, 0.4)' }}>
+                                      {row.account || '-'}
+                                    </TableCell>
+                                    <TableCell sx={{ fontWeight: 700, color: '#1d4ed8', backgroundColor: 'rgba(239, 246, 255, 0.4)' }}>
+                                      {row.mobisale || '-'}
+                                    </TableCell>
+                                    <TableCell sx={{ fontSize: '12px' }}>{row.mail}</TableCell>
+                                    <TableCell sx={{ fontSize: '12px' }}>{row.phone}</TableCell>
+                                    <TableCell sx={{ fontWeight: 700, color: '#334155' }}>{row.block}</TableCell>
+                                    <TableCell sx={{ fontSize: '12px' }}>{row.team_lead}</TableCell>
+                                    <TableCell sx={{ fontSize: '12px' }}>{row.title}</TableCell>
+                                    <TableCell>
+                                      <Chip
+                                        label={row.status || 'Chính thức'}
+                                        size="small"
+                                        color={row.status?.includes('Chính thức') || row.status?.includes('ACTIVE') ? 'success' : 'default'}
+                                        sx={{ height: 20, fontSize: '10px', fontWeight: 800 }}
+                                      />
+                                    </TableCell>
+                                    <TableCell align="center">
+                                      <Box sx={{ display: 'flex', justifyContent: 'center', gap: 0.5 }}>
+                                        <Tooltip title="Xem Chi Tiết Hồ Sơ HR">
+                                          <IconButton
+                                            size="small"
+                                            color="info"
+                                            onClick={() => fetchAdminHrDetail(row.code || row.account)}
+                                          >
+                                            <ViewIcon fontSize="small" />
+                                          </IconButton>
+                                        </Tooltip>
+                                        <Tooltip title="Sửa Hồ Sơ">
+                                          <IconButton
+                                            size="small"
+                                            color="primary"
+                                            onClick={() => {
+                                              setEditingHr(row);
+                                              setHrForm({
+                                                code: row.code,
+                                                name: row.name,
+                                                account: row.account,
+                                                mobisale: row.mobisale,
+                                                mail: row.mail,
+                                                phone: row.phone,
+                                                block: row.block,
+                                                team_lead: row.team_lead,
+                                                title: row.title,
+                                                status: row.status || 'Chính thức'
+                                              });
+                                              setHrEditModalOpen(true);
+                                            }}
+                                          >
+                                            <EditIcon fontSize="small" />
+                                          </IconButton>
+                                        </Tooltip>
+                                        <Tooltip title="Xóa Nhân Sự">
+                                          <IconButton
+                                            size="small"
+                                            color="error"
+                                            onClick={() => {
+                                              setHrToDelete(row);
+                                              setHrDeleteModalOpen(true);
+                                            }}
+                                          >
+                                            <DeleteIcon fontSize="small" />
+                                          </IconButton>
+                                        </Tooltip>
+                                      </Box>
+                                    </TableCell>
                                   </TableRow>
-                                ) : (
-                                  adminUsers.map((row) => (
+                                ))
+                              )}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      )}
+                    </Box>
+                  )}
+
+                  {/* TOPIC 1: TRANG QUẢN TRỊ USER (SHEET ADMIN) */}
+                  {adminSubTab === 1 && (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                        <Box>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#1e293b' }}>
+                            🔑 Bảng Quản Lý Tài Khoản User & Phân Quyền (Sheet Admin)
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#64748b' }}>
+                            Sheet ID: <code>10Y5WBM9PDng_AsiyNxgFbEUac8XFBviRc21G0ar6erY</code> | GID: 0
+                          </Typography>
+                        </Box>
+
+                        <Button
+                          variant="contained"
+                          color="secondary"
+                          startIcon={<AddIcon />}
+                          onClick={() => {
+                            setEditingUser(null);
+                            setUserForm({ msnv: '', name: '', mail: '', user: '', password: '', role: 'user', allowed_apps: ['luong'] });
+                            setUserModalOpen(true);
+                          }}
+                          sx={{ borderRadius: 2, fontWeight: 800 }}
+                        >
+                          ➕ Thêm User Mới
+                        </Button>
+                      </Box>
+
+                      {adminUsersLoading ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress /></Box>
+                      ) : (
+                        <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2.5, maxHeight: 600 }}>
+                          <Table stickyHeader size="small">
+                            <TableHead sx={{ backgroundColor: '#f8fafc' }}>
+                              <TableRow>
+                                <TableCell align="center" sx={{ fontWeight: 800, width: 60 }}>ID</TableCell>
+                                <TableCell sx={{ fontWeight: 800 }}>MSNV</TableCell>
+                                <TableCell sx={{ fontWeight: 800 }}>Họ và Tên</TableCell>
+                                <TableCell sx={{ fontWeight: 800 }}>Mail Login</TableCell>
+                                <TableCell sx={{ fontWeight: 800 }}>User (Mật danh)</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800 }}>Quyền Mặc Định</TableCell>
+                                <TableCell sx={{ fontWeight: 800 }}>Ứng Dụng Được Xem (RBAC)</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800, width: 120 }}>Thao Tác</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {adminUsers.length === 0 ? (
+                                <TableRow>
+                                  <TableCell colSpan={8} align="center" sx={{ py: 4, color: '#64748b' }}>Chưa có tài khoản người dùng nào.</TableCell>
+                                </TableRow>
+                              ) : (
+                                adminUsers.map((row) => {
+                                  const allowedList = row.allowed_apps ? row.allowed_apps.split(',') : (row.role === 'admin' ? ['All'] : ['luong']);
+
+                                  return (
                                     <TableRow key={row.id} hover>
                                       <TableCell align="center" sx={{ fontWeight: 800, color: '#475569' }}>{row.id}</TableCell>
-                                      <TableCell sx={{ fontWeight: 700, color: '#1a73e8' }}>{row.msnv || '-'}</TableCell>
-                                      <TableCell sx={{ fontWeight: 700, color: '#1e293b' }}>{row.name}</TableCell>
+                                      <TableCell sx={{ fontWeight: 800, color: '#2563eb' }}>{row.msnv || '-'}</TableCell>
+                                      <TableCell sx={{ fontWeight: 700, color: '#0f172a' }}>{row.name}</TableCell>
                                       <TableCell sx={{ fontSize: '13px' }}>{row.mail}</TableCell>
                                       <TableCell sx={{ fontWeight: 600, color: '#475569' }}>{row.user}</TableCell>
                                       <TableCell align="center">
@@ -3765,6 +4091,18 @@ export default function App() {
                                           size="small"
                                           sx={{ fontWeight: 800, height: 22 }}
                                         />
+                                      </TableCell>
+                                      <TableCell>
+                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                                          {allowedList.map((app) => (
+                                            <Chip
+                                              key={app}
+                                              label={app.toUpperCase()}
+                                              size="small"
+                                              sx={{ height: 18, fontSize: '9px', fontWeight: 800, backgroundColor: '#eff6ff', color: '#1d4ed8' }}
+                                            />
+                                          ))}
+                                        </Box>
                                       </TableCell>
                                       <TableCell align="center">
                                         <Box sx={{ display: 'flex', justifyContent: 'center', gap: 0.5 }}>
@@ -3779,7 +4117,8 @@ export default function App() {
                                                 mail: row.mail,
                                                 user: row.user,
                                                 password: '',
-                                                role: row.role
+                                                role: row.role,
+                                                allowed_apps: row.allowed_apps ? row.allowed_apps.split(',') : ['luong']
                                               });
                                               setUserModalOpen(true);
                                             }}
@@ -3800,78 +4139,175 @@ export default function App() {
                                         </Box>
                                       </TableCell>
                                     </TableRow>
-                                  ))
-                                )}
-                              </TableBody>
-                            </Table>
-                          </TableContainer>
-                        )}
-                      </Box>
-                    )}
+                                  );
+                                })
+                              )}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      )}
+                    </Box>
+                  )}
 
-                    {/* TOPIC 3: IMPORT DATA BASE */}
-                    {adminSubTab === 2 && (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#1e293b' }}>
-                          📦 Trung Tâm Import Dữ Liệu Hệ Thống (Central Data Hub)
-                        </Typography>
+                  {/* TOPIC 2: IMPORT DATA BASE */}
+                  {adminSubTab === 2 && (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#1e293b' }}>
+                        📦 Trung Tâm Import & Đồng Bộ Dữ Liệu Dùng Chung (Data Hub)
+                      </Typography>
 
-                        <Grid container spacing={3}>
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 4px 12px rgba(0,0,0,0.05)' } }}>
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#1a73e8' }}>
-                                <PendingActionsIcon />
-                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Tồn TK-BT</Typography>
-                              </Box>
-                              <Typography variant="caption" sx={{ color: '#64748b' }}>Import file CSV/Excel danh sách phiếu tồn Triển Khai và Bảo Trì mới nhất.</Typography>
-                              <Button variant="contained" size="small" startIcon={<FileUploadIcon />} onClick={() => setImportTonModalOpen(true)} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
-                                Import Tồn TK-BT
-                              </Button>
-                            </Paper>
-                          </Grid>
-
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 4px 12px rgba(0,0,0,0.05)' } }}>
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#2e7d32' }}>
-                                <CalendarMonthIcon />
-                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Lịch Trực Ca</Typography>
-                              </Box>
-                              <Typography variant="caption" sx={{ color: '#64748b' }}>Import file CSV lịch phân ca kỹ thuật tháng hiện tại để tính toán tỉ lệ trực.</Typography>
-                              <Button variant="contained" color="success" size="small" startIcon={<FileUploadIcon />} onClick={() => importInputRef.current && importInputRef.current.click()} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
-                                Import Lịch Trực
-                              </Button>
-                            </Paper>
-                          </Grid>
-
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 4px 12px rgba(0,0,0,0.05)' } }}>
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#9c27b0' }}>
-                                <BarChartIcon />
-                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>KPIs Tổng Hợp</Typography>
-                              </Box>
-                              <Typography variant="caption" sx={{ color: '#64748b' }}>Đồng bộ dữ liệu live từ Google Sheet KPI Triển Khai & Bảo Trì chính.</Typography>
-                              <Button variant="contained" color="secondary" size="small" startIcon={<RefreshIcon />} onClick={triggerSync} disabled={syncing} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
-                                {syncing ? 'Đang Đồng Bộ...' : 'Đồng Bộ Live KPI'}
-                              </Button>
-                            </Paper>
-                          </Grid>
-
-                          <Grid item xs={12} sm={6} md={3}>
-                            <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 4px 12px rgba(0,0,0,0.05)' } }}>
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#ea580c' }}>
-                                <PeopleIcon />
-                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>HR Nhân Sự</Typography>
-                              </Box>
-                              <Typography variant="caption" sx={{ color: '#64748b' }}>Nạp lại bảng danh mục nhân sự và danh sách Đội trưởng / Block.</Typography>
-                              <Button variant="outlined" color="warning" size="small" startIcon={<RefreshIcon />} onClick={fetchAdminHrList} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
-                                Nạp Lại HR Data
-                              </Button>
-                            </Paper>
-                          </Grid>
+                      <Grid container spacing={3}>
+                        <Grid item xs={12} sm={6} md={3}>
+                          <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 6px 16px rgba(0,0,0,0.06)' } }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#2563eb' }}>
+                              <PendingActionsIcon />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Tồn TK-BT</Typography>
+                            </Box>
+                            <Typography variant="caption" sx={{ color: '#64748b' }}>Import file CSV/Excel danh sách phiếu tồn Triển Khai và Bảo Trì mới nhất.</Typography>
+                            <Button variant="contained" size="small" startIcon={<FileUploadIcon />} onClick={() => setImportTonModalOpen(true)} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
+                              Import Tồn TK-BT
+                            </Button>
+                          </Paper>
                         </Grid>
+
+                        <Grid item xs={12} sm={6} md={3}>
+                          <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 6px 16px rgba(0,0,0,0.06)' } }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#166534' }}>
+                              <CalendarMonthIcon />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Lịch Trực Ca</Typography>
+                            </Box>
+                            <Typography variant="caption" sx={{ color: '#64748b' }}>Import file CSV lịch phân ca kỹ thuật tháng hiện tại để tính tỉ lệ trực.</Typography>
+                            <Button variant="contained" color="success" size="small" startIcon={<FileUploadIcon />} onClick={() => importInputRef.current && importInputRef.current.click()} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
+                              Import Lịch Trực
+                            </Button>
+                          </Paper>
+                        </Grid>
+
+                        <Grid item xs={12} sm={6} md={3}>
+                          <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 6px 16px rgba(0,0,0,0.06)' } }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#7c3aed' }}>
+                              <BarChartIcon />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>KPIs Live Sync</Typography>
+                            </Box>
+                            <Typography variant="caption" sx={{ color: '#64748b' }}>Đồng bộ dữ liệu trực tiếp từ Google Sheet KPI Triển Khai & Bảo Trì.</Typography>
+                            <Button variant="contained" color="secondary" size="small" startIcon={<RefreshIcon />} onClick={triggerSync} disabled={syncing} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
+                              {syncing ? 'Đang Đồng Bộ...' : 'Đồng Bộ Live KPI'}
+                            </Button>
+                          </Paper>
+                        </Grid>
+
+                        <Grid item xs={12} sm={6} md={3}>
+                          <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 6px 16px rgba(0,0,0,0.06)' } }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#ea580c' }}>
+                              <PeopleIcon />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>HR Nhân Sự Data</Typography>
+                            </Box>
+                            <Typography variant="caption" sx={{ color: '#64748b' }}>Nạp lại bảng danh mục nhân sự và danh sách Đội trưởng / Block.</Typography>
+                            <Button variant="outlined" color="warning" size="small" startIcon={<RefreshIcon />} onClick={fetchAdminHrList} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
+                              Nạp Lại HR Data
+                            </Button>
+                          </Paper>
+                        </Grid>
+                      </Grid>
+                    </Box>
+                  )}
+
+                  {/* TOPIC 3: QUẢN LÝ LƯƠNG & HỢP ĐỒNG LƯƠNG */}
+                  {adminSubTab === 3 && (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#047857' }}>
+                          💵 Tra Cứu Quản Lý Lương & Loại Hợp Đồng Nhân Sự (Payroll & Contracts)
+                        </Typography>
+                        <Chip label={`${luongList.length} Nhân Sự`} color="success" sx={{ fontWeight: 800 }} />
                       </Box>
-                    )}
-                  </Box>
+
+                      {/* FILTER BAR FOR LƯƠNG */}
+                      <Grid container spacing={2} alignItems="center">
+                        <Grid item xs={12} sm={4}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            placeholder="Tìm kiếm Mã NV, Họ Tên, Inside Acc, Mobisale..."
+                            value={luongSearch}
+                            onChange={(e) => setLuongSearch(e.target.value)}
+                            InputProps={{ startAdornment: <SearchIcon sx={{ color: '#94a3b8', mr: 1 }} /> }}
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={3}>
+                          <TextField select fullWidth size="small" value={luongBlockFilter} onChange={(e) => setLuongBlockFilter(e.target.value)} label="Lọc Block">
+                            <MenuItem value="__ALL__">-- Tất cả Block --</MenuItem>
+                            {options.blocks?.map(b => <MenuItem key={b} value={b}>{b}</MenuItem>)}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={3}>
+                          <TextField select fullWidth size="small" value={luongTlFilter} onChange={(e) => setLuongTlFilter(e.target.value)} label="Lọc Đội Trưởng">
+                            <MenuItem value="__ALL__">-- Tất cả Đội Trưởng --</MenuItem>
+                            {options.team_leads?.map(tl => <MenuItem key={tl} value={tl}>{tl}</MenuItem>)}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={2}>
+                          <Button variant="contained" color="success" fullWidth onClick={fetchLuongList} startIcon={<RefreshIcon />} sx={{ borderRadius: 2, height: 40, fontWeight: 700 }}>
+                            Tải Lại
+                          </Button>
+                        </Grid>
+                      </Grid>
+
+                      {/* LƯƠNG TABLE */}
+                      {luongLoading ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress /></Box>
+                      ) : (
+                        <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 2.5, maxHeight: 600 }}>
+                          <Table stickyHeader size="small">
+                            <TableHead sx={{ backgroundColor: '#f0fdf4' }}>
+                              <TableRow>
+                                <TableCell align="center" sx={{ fontWeight: 800, width: 50, backgroundColor: '#f0fdf4' }}>STT</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f0fdf4' }}>Mã NV</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f0fdf4' }}>Họ và Tên</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#eef2ff', color: '#3730a3' }}>Inside Account</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#eff6ff', color: '#1d4ed8' }}>Mobisale</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f0fdf4' }}>Block</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f0fdf4' }}>Đội Trưởng</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f0fdf4' }}>Loại HĐLĐ</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#dcfce7', color: '#15803d' }}>Tính Lương</TableCell>
+                                <TableCell sx={{ fontWeight: 800, backgroundColor: '#f0fdf4' }}>Phân Công</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {luongList.length === 0 ? (
+                                <TableRow>
+                                  <TableCell colSpan={10} align="center" sx={{ py: 6, color: '#64748b' }}>Không tìm thấy thông tin lương nhân sự phù hợp.</TableCell>
+                                </TableRow>
+                              ) : (
+                                luongList.map((row) => (
+                                  <TableRow key={row.stt} hover sx={{ '&:nth-of-type(even)': { backgroundColor: '#f8fafc' } }}>
+                                    <TableCell align="center" sx={{ color: '#64748b' }}>{row.stt}</TableCell>
+                                    <TableCell sx={{ fontWeight: 800, color: '#059669' }}>{row.code}</TableCell>
+                                    <TableCell sx={{ fontWeight: 800, color: '#0f172a' }}>{row.name}</TableCell>
+                                    <TableCell sx={{ fontWeight: 700, color: '#3730a3' }}>{row.account || '-'}</TableCell>
+                                    <TableCell sx={{ fontWeight: 700, color: '#1d4ed8' }}>{row.mobisale || '-'}</TableCell>
+                                    <TableCell sx={{ fontWeight: 700 }}>{row.block}</TableCell>
+                                    <TableCell sx={{ fontSize: '12px' }}>{row.team_lead}</TableCell>
+                                    <TableCell sx={{ fontSize: '12px', fontWeight: 600 }}>{row.contract_type || '-'}</TableCell>
+                                    <TableCell align="center">
+                                      <Chip
+                                        label={row.calc_salary || 'Có tính'}
+                                        size="small"
+                                        color={row.calc_salary?.toLowerCase().includes('không') ? 'error' : 'success'}
+                                        sx={{ height: 20, fontSize: '10px', fontWeight: 800 }}
+                                      />
+                                    </TableCell>
+                                    <TableCell sx={{ fontSize: '12px' }}>{row.assignment || '-'}</TableCell>
+                                  </TableRow>
+                                ))
+                              )}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      )}
+                    </Box>
+                  )}
+
                 </Paper>
               </Box>
             )}
@@ -4326,27 +4762,85 @@ export default function App() {
           </DialogActions>
         </Dialog>
 
-        {/* EDIT / ADD USER DIALOG MODAL */}
-        <Dialog open={userModalOpen} onClose={() => setUserModalOpen(false)} maxWidth="xs" fullWidth>
+        {/* EDIT / ADD USER DIALOG MODAL WITH RBAC CHECKBOXES */}
+        <Dialog open={userModalOpen} onClose={() => setUserModalOpen(false)} maxWidth="sm" fullWidth>
           <DialogTitle sx={{ fontWeight: 800, color: '#1a73e8' }}>
-            {editingUser ? '✏️ SỬA TÀI KHOẢN NGƯỜI DÙNG' : '➕ THÊM USER MỚI (SHEET ADMIN)'}
+            {editingUser ? '✏️ SỬA TÀI KHOẢN NGƯỜI DÙNG & PHÂN QUYỀN' : '➕ THÊM USER MỚI (SHEET ADMIN)'}
           </DialogTitle>
-          <DialogContent dividers>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-              <TextField fullWidth size="small" label="MSNV" value={userForm.msnv} onChange={(e) => setUserForm({ ...userForm, msnv: e.target.value })} />
-              <TextField fullWidth size="small" label="Họ và Tên" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} />
-              <TextField fullWidth size="small" label="Mail" value={userForm.mail} onChange={(e) => setUserForm({ ...userForm, mail: e.target.value })} required />
-              <TextField fullWidth size="small" label="User (Mật danh)" value={userForm.user} onChange={(e) => setUserForm({ ...userForm, user: e.target.value })} />
-              <TextField fullWidth size="small" type="password" label={editingUser ? "Mật khẩu mới (Để trống nếu không đổi)" : "Mật khẩu"} value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} />
-              <TextField select fullWidth size="small" label="Quyền Hạn" value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
-                <MenuItem value="user">User (Người dùng thường)</MenuItem>
-                <MenuItem value="admin">Admin (Quản trị viên)</MenuItem>
-              </TextField>
+          <DialogContent dividers sx={{ p: 3 }}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6}>
+                  <TextField fullWidth size="small" label="MSNV" value={userForm.msnv} onChange={(e) => setUserForm({ ...userForm, msnv: e.target.value })} />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField fullWidth size="small" label="Họ và Tên" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField fullWidth size="small" label="Email" value={userForm.mail} onChange={(e) => setUserForm({ ...userForm, mail: e.target.value })} required />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField fullWidth size="small" label="User (Mật danh)" value={userForm.user} onChange={(e) => setUserForm({ ...userForm, user: e.target.value })} />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField fullWidth size="small" type="password" label={editingUser ? "Mật khẩu mới (Tùy chọn)" : "Mật khẩu"} value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField select fullWidth size="small" label="Quyền Mặc Định" value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
+                    <MenuItem value="user">User (Người dùng thường)</MenuItem>
+                    <MenuItem value="admin">Admin (Quản trị viên)</MenuItem>
+                  </TextField>
+                </Grid>
+              </Grid>
+
+              <Divider sx={{ my: 1 }} />
+
+              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#1e293b' }}>
+                🔒 Phân Quyền Ứng Dụng Được Xem (RBAC Column Sheet Quyền):
+              </Typography>
+
+              <Grid container spacing={1}>
+                {[
+                  { key: 'luong', label: '💵 Quản Lý Lương' },
+                  { key: 'hr', label: '👥 HR Nhân Sự' },
+                  { key: 'kpis', label: '📊 Dashboard KPIs' },
+                  { key: 'lich_truc', label: '📋 Lịch Trực' },
+                  { key: 'ton_tk_bt', label: '📦 Tồn TK-BT' },
+                  { key: 'user_mgmt', label: '🔑 Quản Trị User' },
+                  { key: 'import', label: '📦 Import DB' },
+                  { key: 'admin', label: '⚙️ Trang Admin' }
+                ].map((item) => {
+                  const isChecked = Array.isArray(userForm.allowed_apps) && userForm.allowed_apps.includes(item.key);
+
+                  return (
+                    <Grid item xs={12} sm={6} key={item.key}>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={isChecked}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              let newApps = Array.isArray(userForm.allowed_apps) ? [...userForm.allowed_apps] : [];
+                              if (checked) {
+                                if (!newApps.includes(item.key)) newApps.push(item.key);
+                              } else {
+                                newApps = newApps.filter(k => k !== item.key);
+                              }
+                              setUserForm({ ...userForm, allowed_apps: newApps });
+                            }}
+                          />
+                        }
+                        label={<Typography variant="body2" sx={{ fontWeight: 600 }}>{item.label}</Typography>}
+                      />
+                    </Grid>
+                  );
+                })}
+              </Grid>
             </Box>
           </DialogContent>
           <DialogActions sx={{ p: 2 }}>
             <Button onClick={() => setUserModalOpen(false)} variant="outlined">Hủy</Button>
-            <Button onClick={handleSaveUser} variant="contained" color="primary">Lưu Thay Đổi</Button>
+            <Button onClick={handleSaveUser} variant="contained" color="primary">Lưu Phân Quyền</Button>
           </DialogActions>
         </Dialog>
 
@@ -4361,6 +4855,147 @@ export default function App() {
           <DialogActions sx={{ p: 2 }}>
             <Button onClick={() => setDeleteConfirmOpen(false)} variant="outlined">Hủy</Button>
             <Button onClick={handleDeleteUser} variant="contained" color="error">Xóa Tài Khoản</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* HR DETAIL FULL PROFILE DIALOG MODAL */}
+        <Dialog open={hrDetailModalOpen} onClose={() => setHrDetailModalOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1, backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <Box sx={{ width: 44, height: 44, borderRadius: '12px', background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <PeopleIcon />
+              </Box>
+              <Box>
+                <Typography variant="h6" sx={{ fontWeight: 900, color: '#0f172a', lineHeight: 1.2 }}>
+                  HỒ SƠ CHI TIẾT NHÂN SỰ HR — {selectedHrDetail?.['Họ Tên NV'] || selectedHrDetail?.['Mã NV']}
+                </Typography>
+                <Typography variant="caption" sx={{ color: '#64748b' }}>
+                  Mã NV: <b>{selectedHrDetail?.['Mã NV']}</b> | Inside Acc: <b>{selectedHrDetail?.['Inside Account']}</b> | Mobisale: <b>{selectedHrDetail?.['Mobisale']}</b>
+                </Typography>
+              </Box>
+            </Box>
+            <IconButton onClick={() => setHrDetailModalOpen(false)}><CloseIcon /></IconButton>
+          </DialogTitle>
+
+          <DialogContent dividers sx={{ p: 3 }}>
+            {hrDetailLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}><CircularProgress /></Box>
+            ) : selectedHrDetail ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                
+                {/* SEARCH INPUT IN DETAIL */}
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="Lọc nhanh trường thông tin (VD: email, phone, lương, block, hợp đồng...)"
+                  value={hrDetailSearch}
+                  onChange={(e) => setHrDetailSearch(e.target.value)}
+                  InputProps={{ startAdornment: <SearchIcon sx={{ color: '#94a3b8', mr: 1 }} /> }}
+                  sx={{ '& .MuiInputBase-root': { borderRadius: 2 } }}
+                />
+
+                {/* GRID DISPLAY OF ALL HR FIELDS */}
+                <Grid container spacing={2}>
+                  {Object.entries(selectedHrDetail)
+                    .filter(([k, v]) => {
+                      if (!hrDetailSearch) return true;
+                      const kw = hrDetailSearch.toLowerCase();
+                      return String(k).toLowerCase().includes(kw) || String(v).toLowerCase().includes(kw);
+                    })
+                    .map(([key, val]) => {
+                      const isHighlight = ['Inside Account', 'Mobisale', 'Mã NV', 'Họ Tên NV', 'Block', 'Họ tên Đội trưởng'].includes(key);
+
+                      return (
+                        <Grid item xs={12} sm={6} md={4} key={key}>
+                          <Paper
+                            elevation={0}
+                            sx={{
+                              p: 1.8,
+                              borderRadius: 2,
+                              backgroundColor: isHighlight ? '#eff6ff' : '#f8fafc',
+                              border: isHighlight ? '1px solid #bfdbfe' : '1px solid #e2e8f0',
+                              height: '100%'
+                            }}
+                          >
+                            <Typography variant="caption" sx={{ color: isHighlight ? '#1d4ed8' : '#64748b', fontWeight: 800, textTransform: 'uppercase', display: 'block', mb: 0.5, fontSize: '11px' }}>
+                              {key}
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontWeight: isHighlight ? 800 : 600, color: isHighlight ? '#1e40af' : '#0f172a', wordBreak: 'break-word' }}>
+                              {val || '-'}
+                            </Typography>
+                          </Paper>
+                        </Grid>
+                      );
+                    })}
+                </Grid>
+              </Box>
+            ) : (
+              <Typography color="error" align="center" sx={{ py: 4 }}>Không có dữ liệu chi tiết.</Typography>
+            )}
+          </DialogContent>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setHrDetailModalOpen(false)} variant="contained" color="primary" sx={{ borderRadius: 2, px: 3 }}>
+              Đóng Hồ Sơ
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* HR ADD / EDIT DIALOG MODAL */}
+        <Dialog open={hrEditModalOpen} onClose={() => setHrEditModalOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle sx={{ fontWeight: 800, color: '#2563eb' }}>
+            {editingHr ? '✏️ CHỈNH SỬA HỒ SƠ NHÂN SỰ' : '➕ THÊM MỚI NHÂN SỰ HR'}
+          </DialogTitle>
+          <DialogContent dividers sx={{ p: 3 }}>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                <TextField fullWidth size="small" label="Mã NV" value={hrForm.code} onChange={(e) => setHrForm({ ...hrForm, code: e.target.value })} required />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField fullWidth size="small" label="Họ và Tên" value={hrForm.name} onChange={(e) => setHrForm({ ...hrForm, name: e.target.value })} required />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField fullWidth size="small" label="Inside Account" value={hrForm.account} onChange={(e) => setHrForm({ ...hrForm, account: e.target.value })} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField fullWidth size="small" label="Mobisale" value={hrForm.mobisale} onChange={(e) => setHrForm({ ...hrForm, mobisale: e.target.value })} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField fullWidth size="small" label="Email" value={hrForm.mail} onChange={(e) => setHrForm({ ...hrForm, mail: e.target.value })} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField fullWidth size="small" label="Số Điện Thoại" value={hrForm.phone} onChange={(e) => setHrForm({ ...hrForm, phone: e.target.value })} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField fullWidth size="small" label="Block Kỹ Thuật" value={hrForm.block} onChange={(e) => setHrForm({ ...hrForm, block: e.target.value })} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField fullWidth size="small" label="Họ tên Đội Trưởng" value={hrForm.team_lead} onChange={(e) => setHrForm({ ...hrForm, team_lead: e.target.value })} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField fullWidth size="small" label="Chức Danh" value={hrForm.title} onChange={(e) => setHrForm({ ...hrForm, title: e.target.value })} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField fullWidth size="small" label="Loại HĐ / Tình Trạng" value={hrForm.status} onChange={(e) => setHrForm({ ...hrForm, status: e.target.value })} />
+              </Grid>
+            </Grid>
+          </DialogContent>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setHrEditModalOpen(false)} variant="outlined">Hủy</Button>
+            <Button onClick={handleSaveHr} variant="contained" color="primary">Lưu Hồ Sơ HR</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* HR DELETE CONFIRM MODAL */}
+        <Dialog open={hrDeleteModalOpen} onClose={() => setHrDeleteModalOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle sx={{ fontWeight: 800, color: '#dc2626' }}>⚠️ XÁC NHẬN XÓA NHÂN SỰ</DialogTitle>
+          <DialogContent dividers>
+            <Typography variant="body2">
+              Bạn có chắc chắn muốn xóa nhân sự <b>{hrToDelete?.name}</b> (Mã NV: <b>{hrToDelete?.code}</b>) khỏi danh sách HR?
+            </Typography>
+          </DialogContent>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setHrDeleteModalOpen(false)} variant="outlined">Hủy</Button>
+            <Button onClick={handleDeleteHr} variant="contained" color="error">Xóa Nhân Sự</Button>
           </DialogActions>
         </Dialog>
 

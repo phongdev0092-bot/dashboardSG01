@@ -1687,6 +1687,7 @@ class KPIEngine:
             "User": "phuongnam.phongnh5",
             "Mật Khẩu": "Benngo@@2026",
             "Quyền": "admin",
+            "Ứng dụng được xem": "kpis,lich_truc,ton_tk_bt,admin,hr,user_mgmt,import,luong",
             "is_password_set": True
         }]
         self.admin_users_df = pd.DataFrame(default_data)
@@ -1703,7 +1704,6 @@ class KPIEngine:
         if self.hr_df.empty:
             return {"ok": False, "found": False, "msg": "Dữ liệu Nhân sự HR chưa sẵn sàng!"}
 
-        # Check Column K ('Email') or Inside Account
         cols = list(self.hr_df.columns)
         col_email = cols[10] if len(cols) > 10 else 'Email'
         col_code = cols[5] if len(cols) > 5 else 'Mã NV'
@@ -1744,6 +1744,10 @@ class KPIEngine:
             r_pass = str(r.get('Mật Khẩu', '')).strip()
 
             if (target == r_mail or target == r_user) and pwd == r_pass:
+                allowed_apps_raw = str(r.get('Ứng dụng được xem', '')).strip()
+                if not allowed_apps_raw:
+                    allowed_apps_raw = "kpis,lich_truc,ton_tk_bt,admin,hr,user_mgmt,import,luong" if str(r.get('Quyền', 'user')).strip().lower() == 'admin' else "luong"
+
                 return {
                     "ok": True,
                     "user": {
@@ -1753,6 +1757,7 @@ class KPIEngine:
                         "mail": str(r.get('Mail', '')).strip(),
                         "user": str(r.get('User', '')).strip(),
                         "role": str(r.get('Quyền', 'user')).strip().lower(),
+                        "allowed_apps": [x.strip() for x in allowed_apps_raw.split(',') if x.strip()],
                         "is_password_set": bool(r.get('is_password_set', True))
                     }
                 }
@@ -1787,19 +1792,16 @@ class KPIEngine:
         clean_mail = mail.strip().lower()
         clean_user = (user_alias.strip() if user_alias else clean_mail.split('@')[0]).lower()
 
-        # Check existing
         for _, r in self.admin_users_df.iterrows():
             if str(r.get('Mail', '')).strip().lower() == clean_mail:
                 return {"ok": False, "error": f"Email '{mail}' đã được đăng ký tài khoản trước đó!"}
             if str(r.get('User', '')).strip().lower() == clean_user:
                 return {"ok": False, "error": f"User (mật danh) '{user_alias}' đã tồn tại! Vui lòng chọn mật danh khác."}
 
-        # Check HR email info
         hr_info = self.check_hr_email(clean_mail)
         msnv = hr_info.get('msnv', '') if hr_info.get('ok') and hr_info.get('found') else ''
         name = hr_info.get('name', '') if hr_info.get('ok') and hr_info.get('found') else clean_user
 
-        # Auto MAX(ID) + 1
         existing_ids = [int(x) for x in self.admin_users_df['ID'].dropna() if str(x).isdigit()]
         new_id = (max(existing_ids) + 1) if existing_ids else 1
 
@@ -1811,6 +1813,7 @@ class KPIEngine:
             "User": clean_user,
             "Mật Khẩu": password.strip(),
             "Quyền": "user",
+            "Ứng dụng được xem": "luong",
             "is_password_set": True
         }
 
@@ -1826,7 +1829,8 @@ class KPIEngine:
                 "name": name,
                 "mail": clean_mail,
                 "user": clean_user,
-                "role": "user"
+                "role": "user",
+                "allowed_apps": ["luong"]
             }
         }
 
@@ -1836,6 +1840,10 @@ class KPIEngine:
 
         res = []
         for _, r in self.admin_users_df.iterrows():
+            apps_raw = str(r.get('Ứng dụng được xem', '')).strip()
+            if not apps_raw:
+                apps_raw = "kpis,lich_truc,ton_tk_bt,admin,hr,user_mgmt,import,luong" if str(r.get('Quyền', 'user')).strip().lower() == 'admin' else "luong"
+
             res.append({
                 "id": int(r.get('ID', 0)),
                 "msnv": str(r.get('MSNV', '')).strip(),
@@ -1843,7 +1851,8 @@ class KPIEngine:
                 "mail": str(r.get('Mail', '')).strip(),
                 "user": str(r.get('User', '')).strip(),
                 "password": str(r.get('Mật Khẩu', '')).strip(),
-                "role": str(r.get('Quyền', 'user')).strip().lower()
+                "role": str(r.get('Quyền', 'user')).strip().lower(),
+                "allowed_apps": [x.strip() for x in apps_raw.split(',') if x.strip()]
             })
         return res
 
@@ -1854,6 +1863,8 @@ class KPIEngine:
         role = str(payload.get('role', 'user')).strip().lower()
         msnv = str(payload.get('msnv', '')).strip()
         name = str(payload.get('name', '')).strip()
+        allowed_apps = payload.get('allowed_apps', ["luong"])
+        allowed_str = ",".join(allowed_apps) if isinstance(allowed_apps, list) else str(allowed_apps)
 
         if not mail or not password:
             return {"ok": False, "error": "Vui lòng nhập Mail và Mật khẩu!"}
@@ -1869,6 +1880,7 @@ class KPIEngine:
             "User": user_alias,
             "Mật Khẩu": password,
             "Quyền": role,
+            "Ứng dụng được xem": allowed_str,
             "is_password_set": True
         }
 
@@ -1901,6 +1913,9 @@ class KPIEngine:
             self.admin_users_df.at[idx_to_update, 'Mật Khẩu'] = str(payload['password']).strip()
         if 'role' in payload:
             self.admin_users_df.at[idx_to_update, 'Quyền'] = str(payload['role']).strip().lower()
+        if 'allowed_apps' in payload:
+            allowed = payload['allowed_apps']
+            self.admin_users_df.at[idx_to_update, 'Ứng dụng được xem'] = ",".join(allowed) if isinstance(allowed, list) else str(allowed)
 
         self._save_admin_users()
         return {"ok": True, "message": "Đã cập nhật thông tin tài khoản thành công!"}
@@ -1927,6 +1942,7 @@ class KPIEngine:
         col_tl = cols[24] if len(cols) > 24 else 'Họ tên Đội trưởng'
         col_title = cols[14] if len(cols) > 14 else 'Chức danh'
         col_status = cols[13] if len(cols) > 13 else 'Tình trạng Hợp đồng'
+        col_mobi = cols[28] if len(cols) > 28 else 'Mobisale'
 
         kw = search.strip().upper()
         res = []
@@ -1935,6 +1951,9 @@ class KPIEngine:
             c_code = str(r.get(col_code, '')).strip()
             c_name = str(r.get(col_name, '')).strip()
             c_acc = str(r.get(col_acc, '')).strip()
+            c_mobi = str(r.get(col_mobi, '')).strip()
+            if c_mobi.upper() in ('NAN', 'NONE', '-', 'NULL'):
+                c_mobi = ''
             c_mail = str(r.get(col_mail, '')).strip()
             c_block = str(r.get(col_block, '')).strip()
             c_tl = str(r.get(col_tl, '')).strip()
@@ -1947,7 +1966,7 @@ class KPIEngine:
                 continue
 
             if kw:
-                text = f"{c_code} {c_name} {c_acc} {c_mail} {c_block} {c_tl}".upper()
+                text = f"{c_code} {c_name} {c_acc} {c_mobi} {c_mail} {c_block} {c_tl}".upper()
                 if kw not in text:
                     continue
 
@@ -1956,6 +1975,7 @@ class KPIEngine:
                 "code": c_code,
                 "name": c_name,
                 "account": c_acc,
+                "mobisale": c_mobi,
                 "mail": c_mail,
                 "phone": str(r.get(col_phone, '')).strip(),
                 "block": c_block,
@@ -1965,6 +1985,138 @@ class KPIEngine:
             })
 
         return res
+
+    def get_hr_detail(self, code: str):
+        if self.hr_df.empty:
+            return {"ok": False, "error": "Dữ liệu HR rỗng"}
+
+        c = str(code).strip().upper()
+        cols = list(self.hr_df.columns)
+        col_code = cols[5] if len(cols) > 5 else 'Mã NV'
+        col_acc = cols[6] if len(cols) > 6 else 'Inside Account'
+
+        for _, r in self.hr_df.iterrows():
+            if str(r.get(col_code, '')).strip().upper() == c or str(r.get(col_acc, '')).strip().upper() == c:
+                detail = {}
+                for k, v in r.items():
+                    val = str(v).strip()
+                    if val.upper() in ('NAN', 'NONE', 'NULL'):
+                        val = ''
+                    detail[str(k)] = val
+                return {"ok": True, "detail": detail}
+
+        return {"ok": False, "error": f"Không tìm thấy hồ sơ cho nhân sự {code}"}
+
+    def add_hr_employee(self, payload: dict):
+        if self.hr_df.empty:
+            return {"ok": False, "error": "Chưa có dữ liệu HR!"}
+
+        cols = list(self.hr_df.columns)
+        new_row = {col: str(payload.get(col, '')).strip() for col in cols}
+        self.hr_df = pd.concat([self.hr_df, pd.DataFrame([new_row])], ignore_index=True)
+        self._save_pickle(self.hr_df, "hr.pkl.gz")
+        self._process_metadata()
+        return {"ok": True, "message": "Đã thêm mới nhân sự thành công!"}
+
+    def update_hr_employee(self, code: str, payload: dict):
+        if self.hr_df.empty:
+            return {"ok": False, "error": "Chưa có dữ liệu HR!"}
+
+        c = str(code).strip().upper()
+        cols = list(self.hr_df.columns)
+        col_code = cols[5] if len(cols) > 5 else 'Mã NV'
+        col_acc = cols[6] if len(cols) > 6 else 'Inside Account'
+
+        matched_idx = None
+        for i, r in self.hr_df.iterrows():
+            if str(r.get(col_code, '')).strip().upper() == c or str(r.get(col_acc, '')).strip().upper() == c:
+                matched_idx = i
+                break
+
+        if matched_idx is None:
+            return {"ok": False, "error": f"Không tìm thấy nhân sự {code}!"}
+
+        for k, v in payload.items():
+            if k in cols:
+                self.hr_df.at[matched_idx, k] = str(v).strip()
+
+        self._save_pickle(self.hr_df, "hr.pkl.gz")
+        self._process_metadata()
+        return {"ok": True, "message": "Đã cập nhật hồ sơ nhân sự thành công!"}
+
+    def delete_hr_employee(self, code: str):
+        if self.hr_df.empty:
+            return {"ok": False, "error": "Chưa có dữ liệu HR!"}
+
+        c = str(code).strip().upper()
+        cols = list(self.hr_df.columns)
+        col_code = cols[5] if len(cols) > 5 else 'Mã NV'
+        col_acc = cols[6] if len(cols) > 6 else 'Inside Account'
+
+        self.hr_df = self.hr_df[
+            (self.hr_df[col_code].astype(str).str.strip().str.upper() != c) &
+            (self.hr_df[col_acc].astype(str).str.strip().str.upper() != c)
+        ]
+        self._save_pickle(self.hr_df, "hr.pkl.gz")
+        self._process_metadata()
+        return {"ok": True, "message": f"Đã xóa nhân sự {code} thành công!"}
+
+    def get_luong_list(self, search: str = "", block: str = "__ALL__", team_lead: str = "__ALL__"):
+        if self.hr_df.empty:
+            return []
+
+        cols = list(self.hr_df.columns)
+        col_code = cols[5] if len(cols) > 5 else 'Mã NV'
+        col_name = cols[4] if len(cols) > 4 else 'Họ Tên NV'
+        col_acc = cols[6] if len(cols) > 6 else 'Inside Account'
+        col_mobi = cols[28] if len(cols) > 28 else 'Mobisale'
+        col_block = cols[3] if len(cols) > 3 else 'Block'
+        col_tl = cols[24] if len(cols) > 24 else 'Họ tên Đội trưởng'
+        col_hd = cols[16] if len(cols) > 16 else 'Loại HĐLĐ'
+        col_tinh_luong = cols[18] if len(cols) > 18 else 'Tính lương'
+        col_phan_cong = cols[17] if len(cols) > 17 else 'Phân công'
+
+        kw = search.strip().upper()
+        res = []
+
+        for idx, r in self.hr_df.iterrows():
+            c_code = str(r.get(col_code, '')).strip()
+            c_name = str(r.get(col_name, '')).strip()
+            c_acc = str(r.get(col_acc, '')).strip()
+            c_mobi = str(r.get(col_mobi, '')).strip()
+            if c_mobi.upper() in ('NAN', 'NONE', '-', 'NULL'):
+                c_mobi = ''
+            c_block = str(r.get(col_block, '')).strip()
+            c_tl = str(r.get(col_tl, '')).strip()
+            c_hd = str(r.get(col_hd, '')).strip()
+            c_luong = str(r.get(col_tinh_luong, '')).strip()
+            c_pc = str(r.get(col_phan_cong, '')).strip()
+
+            if block != "__ALL__" and c_block != block:
+                continue
+            if team_lead != "__ALL__" and c_tl != team_lead:
+                continue
+
+            if kw:
+                text = f"{c_code} {c_name} {c_acc} {c_mobi} {c_block} {c_tl}".upper()
+                if kw not in text:
+                    continue
+
+            res.append({
+                "stt": idx + 1,
+                "code": c_code,
+                "name": c_name,
+                "account": c_acc,
+                "mobisale": c_mobi,
+                "block": c_block,
+                "team_lead": c_tl,
+                "contract_type": c_hd,
+                "calc_salary": c_luong,
+                "assignment": c_pc
+            })
+
+        return res
+
 
 
 

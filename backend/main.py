@@ -232,6 +232,33 @@ def get_admin_hr_list(
 ):
     return engine.get_hr_list(search=search, block=block, team_lead=team_lead)
 
+@app.get("/api/admin/hr-detail/{code}")
+def get_admin_hr_detail(code: str):
+    return engine.get_hr_detail(code)
+
+@app.post("/api/admin/hr/add")
+def add_admin_hr(payload: dict):
+    return engine.add_hr_employee(payload)
+
+@app.post("/api/admin/hr/update")
+def update_admin_hr(payload: dict):
+    code = payload.get('code', '')
+    return engine.update_hr_employee(code, payload)
+
+@app.post("/api/admin/hr/delete")
+def delete_admin_hr(payload: dict):
+    code = payload.get('code', '')
+    return engine.delete_hr_employee(code)
+
+@app.get("/api/admin/luong-list")
+def get_admin_luong_list(
+    search: Optional[str] = Query(""),
+    block: Optional[str] = Query("__ALL__"),
+    team_lead: Optional[str] = Query("__ALL__")
+):
+    return engine.get_luong_list(search=search, block=block, team_lead=team_lead)
+
+
 # Serve frontend build if dist directory exists
 frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(frontend_dist):
