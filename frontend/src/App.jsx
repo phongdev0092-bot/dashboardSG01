@@ -1157,6 +1157,12 @@ export default function App() {
       sublabel: 'Tồn triển khai & bảo trì',
       icon: <PendingActionsIcon />,
       badge: totalBacklogSummary.total > 0 ? totalBacklogSummary.total : null
+    },
+    {
+      id: 'admin',
+      label: 'Quản Trị',
+      sublabel: 'Trang Quản Trị Hệ Thống (Admin)',
+      icon: <AdminPanelSettingsIcon />
     }
   ];
 
