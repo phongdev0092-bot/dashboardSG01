@@ -4110,7 +4110,9 @@ export default function App() {
                                 </TableRow>
                               ) : (
                                 adminUsers.map((row) => {
-                                  const allowedList = row.allowed_apps ? row.allowed_apps.split(',') : (row.role === 'admin' ? ['All'] : ['luong']);
+                                  const allowedList = Array.isArray(row.allowed_apps)
+                                    ? row.allowed_apps
+                                    : (typeof row.allowed_apps === 'string' ? row.allowed_apps.split(/[;,]/) : (row.role === 'admin' ? ['All'] : ['Salary']));
 
                                   return (
                                     <TableRow key={row.id} hover>
@@ -4153,7 +4155,7 @@ export default function App() {
                                                 user: row.user,
                                                 password: '',
                                                 role: row.role,
-                                                allowed_apps: row.allowed_apps ? row.allowed_apps.split(',') : ['luong']
+                                                allowed_apps: Array.isArray(row.allowed_apps) ? row.allowed_apps : (typeof row.allowed_apps === 'string' ? row.allowed_apps.split(/[;,]/) : ['Salary'])
                                               });
                                               setUserModalOpen(true);
                                             }}
@@ -4924,6 +4926,44 @@ export default function App() {
               <IconButton onClick={() => setHrDetailModalOpen(false)} sx={{ position: 'absolute', top: 12, right: 12, color: '#94a3b8' }}>
                 <CloseIcon />
               </IconButton>
+
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={<EditIcon />}
+                onClick={() => {
+                  if (!selectedHrDetail) return;
+                  const code = selectedHrDetail['Mã NV'] || '';
+                  const name = selectedHrDetail['Họ Tên NV'] || '';
+                  const account = selectedHrDetail['Inside Account'] || '';
+                  const mobisale = selectedHrDetail['Mobisale'] || '';
+                  const mail = selectedHrDetail['Email'] || '';
+                  const phone = selectedHrDetail['Số điện thoại'] || '';
+                  const block = selectedHrDetail['Block'] || '';
+                  const team_lead = selectedHrDetail['Họ tên Đội trưởng'] || '';
+                  const title = selectedHrDetail['Chức danh'] || '';
+                  const status = selectedHrDetail['Loại HĐLĐ'] || selectedHrDetail['Tình trạng Hợp đồng'] || 'Chính thức';
+
+                  const hrDataObj = { code, name, account, mobisale, mail, phone, block, team_lead, title, status };
+                  setEditingHr(hrDataObj);
+                  setHrForm(hrDataObj);
+                  setHrDetailModalOpen(false);
+                  setHrEditModalOpen(true);
+                }}
+                sx={{
+                  position: 'absolute',
+                  top: 14,
+                  right: 54,
+                  backgroundColor: '#2563eb',
+                  color: '#ffffff',
+                  fontWeight: 800,
+                  borderRadius: 2,
+                  px: 2,
+                  '&:hover': { backgroundColor: '#1d4ed8' }
+                }}
+              >
+                ✏️ Chỉnh Sửa Hồ Sơ
+              </Button>
               
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2.5 }}>
                 <Box sx={{ width: 64, height: 64, borderRadius: '20px', background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(37,99,235,0.4)' }}>
@@ -5063,73 +5103,175 @@ export default function App() {
           </DialogActions>
         </Dialog>
 
-        {/* HR ADD / EDIT DIALOG MODAL WITH AUTOCOMPLETE FOR BLOCK AND TEAM LEAD */}
-        <Dialog open={hrEditModalOpen} onClose={() => setHrEditModalOpen(false)} maxWidth="sm" fullWidth>
-          <DialogTitle sx={{ fontWeight: 800, color: '#2563eb' }}>
-            {editingHr ? '✏️ CHỈNH SỬA HỒ SƠ NHÂN SỰ' : '➕ THÊM MỚI NHÂN SỰ HR'}
-          </DialogTitle>
-          <DialogContent dividers sx={{ p: 3 }}>
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={6}>
-                <TextField fullWidth size="small" label="Mã NV" value={hrForm.code} onChange={(e) => setHrForm({ ...hrForm, code: e.target.value })} required />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField fullWidth size="small" label="Họ và Tên" value={hrForm.name} onChange={(e) => setHrForm({ ...hrForm, name: e.target.value })} required />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField fullWidth size="small" label="Inside Account" value={hrForm.account} onChange={(e) => setHrForm({ ...hrForm, account: e.target.value })} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField fullWidth size="small" label="Mobisale" value={hrForm.mobisale} onChange={(e) => setHrForm({ ...hrForm, mobisale: e.target.value })} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField fullWidth size="small" label="Email" value={hrForm.mail} onChange={(e) => setHrForm({ ...hrForm, mail: e.target.value })} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField fullWidth size="small" label="Số Điện Thoại" value={hrForm.phone} onChange={(e) => setHrForm({ ...hrForm, phone: e.target.value })} />
-              </Grid>
+        {/* HR ADD / EDIT DIALOG MODAL (CATEGORIZED PROFILE DESIGN MATCHING VIEW MODAL) */}
+        <Dialog open={hrEditModalOpen} onClose={() => setHrEditModalOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle sx={{ p: 0, overflow: 'hidden' }}>
+            {/* TOP HEADER PROFILE BANNER */}
+            <Box sx={{ p: 3, background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: '#ffffff', position: 'relative' }}>
+              <IconButton onClick={() => setHrEditModalOpen(false)} sx={{ position: 'absolute', top: 12, right: 12, color: '#94a3b8' }}>
+                <CloseIcon />
+              </IconButton>
               
-              {/* BLOCK AUTOCOMPLETE WITH FREESOLO */}
-              <Grid item xs={12} sm={6}>
-                <Autocomplete
-                  freeSolo
-                  options={options.blocks || []}
-                  value={hrForm.block || ''}
-                  onInputChange={(event, newInputValue) => {
-                    setHrForm(prev => ({ ...prev, block: newInputValue }));
-                  }}
-                  renderInput={(params) => (
-                    <TextField {...params} size="small" label="Block Kỹ Thuật" placeholder="Chọn hoặc nhập Block mới..." />
-                  )}
-                />
-              </Grid>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2.5 }}>
+                <Box sx={{ width: 64, height: 64, borderRadius: '20px', background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(37,99,235,0.4)' }}>
+                  <EditIcon sx={{ fontSize: 36 }} />
+                </Box>
+                <Box>
+                  <Typography variant="h5" sx={{ fontWeight: 900, color: '#ffffff', lineHeight: 1.2 }}>
+                    {editingHr ? `✏️ CHỈNH SỬA HỒ SƠ: ${hrForm.name || hrForm.code}` : '➕ THÊM MỚI NHÂN SỰ HR'}
+                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                    <Chip label={`Mã NV: ${hrForm.code || '-'}`} size="small" sx={{ backgroundColor: '#334155', color: '#f8fafc', fontWeight: 800 }} />
+                    <Chip label={`Inside: ${hrForm.account || '-'}`} size="small" sx={{ backgroundColor: '#312e81', color: '#c7d2fe', fontWeight: 800 }} />
+                    <Chip label={`Mobisale: ${hrForm.mobisale || '-'}`} size="small" sx={{ backgroundColor: '#1e3a8a', color: '#bfdbfe', fontWeight: 800 }} />
+                  </Box>
+                </Box>
+              </Box>
+            </Box>
+          </DialogTitle>
 
-              {/* TEAM LEAD AUTOCOMPLETE WITH FREESOLO */}
-              <Grid item xs={12} sm={6}>
-                <Autocomplete
-                  freeSolo
-                  options={options.team_leads || []}
-                  value={hrForm.team_lead || ''}
-                  onInputChange={(event, newInputValue) => {
-                    setHrForm(prev => ({ ...prev, team_lead: newInputValue }));
-                  }}
-                  renderInput={(params) => (
-                    <TextField {...params} size="small" label="Họ tên Đội Trưởng" placeholder="Chọn hoặc nhập Đội Trưởng mới..." />
-                  )}
-                />
-              </Grid>
+          <DialogContent dividers sx={{ p: 3, backgroundColor: '#f8fafc' }}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              
+              {/* SECTION 1: PERSONAL INFO */}
+              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#2563eb', mb: 2 }}>
+                  👤 1. Thông Tin Cá Nhân & Tài Khoản Liên Hệ
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Mã Nhân Viên (Code) *"
+                      value={hrForm.code}
+                      disabled={!!editingHr}
+                      onChange={(e) => setHrForm({ ...hrForm, code: e.target.value })}
+                      required
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Họ và Tên NV *"
+                      value={hrForm.name}
+                      onChange={(e) => setHrForm({ ...hrForm, name: e.target.value })}
+                      required
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Inside Account"
+                      value={hrForm.account}
+                      onChange={(e) => setHrForm({ ...hrForm, account: e.target.value })}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Mobisale Account"
+                      value={hrForm.mobisale}
+                      onChange={(e) => setHrForm({ ...hrForm, mobisale: e.target.value })}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Email Công Việc"
+                      value={hrForm.mail}
+                      onChange={(e) => setHrForm({ ...hrForm, mail: e.target.value })}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Số Điện Thoại"
+                      value={hrForm.phone}
+                      onChange={(e) => setHrForm({ ...hrForm, phone: e.target.value })}
+                    />
+                  </Grid>
+                </Grid>
+              </Paper>
 
-              <Grid item xs={12} sm={6}>
-                <TextField fullWidth size="small" label="Chức Danh" value={hrForm.title} onChange={(e) => setHrForm({ ...hrForm, title: e.target.value })} />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField fullWidth size="small" label="Loại HĐ / Tình Trạng" value={hrForm.status} onChange={(e) => setHrForm({ ...hrForm, status: e.target.value })} />
-              </Grid>
-            </Grid>
+              {/* SECTION 2: WORKPLACE & BLOCK */}
+              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#7c3aed', mb: 2 }}>
+                  🏢 2. Đơn Vị & Block Công Tác
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <Autocomplete
+                      freeSolo
+                      options={options.blocks || []}
+                      value={hrForm.block || ''}
+                      onInputChange={(event, newInputValue) => {
+                        setHrForm(prev => ({ ...prev, block: newInputValue }));
+                      }}
+                      renderInput={(params) => (
+                        <TextField {...params} size="small" label="Block Kỹ Thuật" placeholder="Gõ tìm hoặc nhập Block mới..." />
+                      )}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <Autocomplete
+                      freeSolo
+                      options={options.team_leads || []}
+                      value={hrForm.team_lead || ''}
+                      onInputChange={(event, newInputValue) => {
+                        setHrForm(prev => ({ ...prev, team_lead: newInputValue }));
+                      }}
+                      renderInput={(params) => (
+                        <TextField {...params} size="small" label="Họ tên Đội Trưởng" placeholder="Gõ tìm hoặc nhập Đội Trưởng..." />
+                      )}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={4}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Chức Danh / Vị Trí"
+                      value={hrForm.title}
+                      onChange={(e) => setHrForm({ ...hrForm, title: e.target.value })}
+                    />
+                  </Grid>
+                </Grid>
+              </Paper>
+
+              {/* SECTION 3: CONTRACT & STATUS */}
+              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#059669', mb: 2 }}>
+                  📜 3. Hợp Đồng & Phân Công Tính Lương
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Loại HĐLĐ / Tình Trạng Làm Việc"
+                      placeholder="VD: Chính thức (Active)..."
+                      value={hrForm.status}
+                      onChange={(e) => setHrForm({ ...hrForm, status: e.target.value })}
+                    />
+                  </Grid>
+                </Grid>
+              </Paper>
+
+            </Box>
           </DialogContent>
-          <DialogActions sx={{ p: 2 }}>
-            <Button onClick={() => setHrEditModalOpen(false)} variant="outlined">Hủy</Button>
-            <Button onClick={handleSaveHr} variant="contained" color="primary">Lưu Hồ Sơ HR</Button>
+
+          <DialogActions sx={{ p: 2, backgroundColor: '#ffffff', borderTop: '1px solid #e2e8f0' }}>
+            <Button onClick={() => setHrEditModalOpen(false)} variant="outlined" sx={{ borderRadius: 2, fontWeight: 700 }}>
+              Hủy Bỏ
+            </Button>
+            <Button onClick={handleSaveHr} variant="contained" color="primary" sx={{ borderRadius: 2, px: 3, fontWeight: 800 }}>
+              💾 Lưu Hồ Sơ HR
+            </Button>
           </DialogActions>
         </Dialog>
 
