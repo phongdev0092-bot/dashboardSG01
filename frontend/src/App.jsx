@@ -40,6 +40,7 @@ import {
   Badge,
   LinearProgress,
   Alert,
+  Autocomplete,
   Checkbox,
   FormControlLabel,
   FormGroup,
@@ -464,6 +465,12 @@ export default function App() {
     if (!hrForm.name || !hrForm.code) {
       alert("Vui lòng nhập đầy đủ Mã NV và Họ Tên Nhân Sự!");
       return;
+    }
+    if (hrForm.block && !options.blocks.includes(hrForm.block)) {
+      setOptions(prev => ({ ...prev, blocks: [...prev.blocks, hrForm.block].sort() }));
+    }
+    if (hrForm.team_lead && !options.team_leads.includes(hrForm.team_lead)) {
+      setOptions(prev => ({ ...prev, team_leads: [...prev.team_leads, hrForm.team_lead].sort() }));
     }
     try {
       const payload = {
@@ -1455,9 +1462,9 @@ export default function App() {
           <Typography variant="caption" sx={{ color: '#5f6368', display: 'block' }}>
             📅 Cập nhật: <strong>{options.last_sync_time || 'Hôm nay'}</strong>
           </Typography>
-          {meta.execution_time_ms && (
+          {reportData?.metadata?.execution_time_ms && (
             <Typography variant="caption" sx={{ color: '#1a73e8', fontWeight: 600, display: 'block', mt: 0.2 }}>
-              ⚡ Độ trễ API: {meta.execution_time_ms} ms
+              ⚡ Độ trễ API: {reportData.metadata.execution_time_ms} ms
             </Typography>
           )}
         </Box>
@@ -4801,16 +4808,19 @@ export default function App() {
 
               <Grid container spacing={1}>
                 {[
-                  { key: 'luong', label: '💵 Quản Lý Lương' },
-                  { key: 'hr', label: '👥 HR Nhân Sự' },
-                  { key: 'kpis', label: '📊 Dashboard KPIs' },
-                  { key: 'lich_truc', label: '📋 Lịch Trực' },
-                  { key: 'ton_tk_bt', label: '📦 Tồn TK-BT' },
-                  { key: 'user_mgmt', label: '🔑 Quản Trị User' },
-                  { key: 'import', label: '📦 Import DB' },
-                  { key: 'admin', label: '⚙️ Trang Admin' }
+                  { key: 'Salary', label: '💵 Salary (Quản Lý Lương)' },
+                  { key: 'HR', label: '👥 HR (HR Nhân Sự)' },
+                  { key: 'KPIs', label: '📊 KPIs (Dashboard KPIs)' },
+                  { key: 'LichTruc', label: '📋 LichTruc (Lịch Trực)' },
+                  { key: 'TonTKBT', label: '📦 TonTKBT (Tồn TK-BT)' },
+                  { key: 'UserMgmt', label: '🔑 UserMgmt (Quản Trị User)' },
+                  { key: 'ImportDB', label: '📦 ImportDB (Import Data)' },
+                  { key: 'Admin', label: '⚙️ Admin (Trang Admin)' }
                 ].map((item) => {
-                  const isChecked = Array.isArray(userForm.allowed_apps) && userForm.allowed_apps.includes(item.key);
+                  const appsList = Array.isArray(userForm.allowed_apps)
+                    ? userForm.allowed_apps.map(x => String(x).trim().toLowerCase())
+                    : (typeof userForm.allowed_apps === 'string' ? userForm.allowed_apps.toLowerCase().split(/[;,]/) : []);
+                  const isChecked = appsList.includes(item.key.toLowerCase());
 
                   return (
                     <Grid item xs={12} sm={6} key={item.key}>
@@ -4822,9 +4832,11 @@ export default function App() {
                               const checked = e.target.checked;
                               let newApps = Array.isArray(userForm.allowed_apps) ? [...userForm.allowed_apps] : [];
                               if (checked) {
-                                if (!newApps.includes(item.key)) newApps.push(item.key);
+                                if (!newApps.some(a => a.toLowerCase() === item.key.toLowerCase())) {
+                                  newApps.push(item.key);
+                                }
                               } else {
-                                newApps = newApps.filter(k => k !== item.key);
+                                newApps = newApps.filter(a => a.toLowerCase() !== item.key.toLowerCase());
                               }
                               setUserForm({ ...userForm, allowed_apps: newApps });
                             }}
@@ -4858,89 +4870,154 @@ export default function App() {
           </DialogActions>
         </Dialog>
 
-        {/* HR DETAIL FULL PROFILE DIALOG MODAL */}
+        {/* HR DETAIL FULL PROFILE DIALOG MODAL (ELEGANT CATEGORIZED LAYOUT) */}
         <Dialog open={hrDetailModalOpen} onClose={() => setHrDetailModalOpen(false)} maxWidth="md" fullWidth>
-          <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1, backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-              <Box sx={{ width: 44, height: 44, borderRadius: '12px', background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <PeopleIcon />
-              </Box>
-              <Box>
-                <Typography variant="h6" sx={{ fontWeight: 900, color: '#0f172a', lineHeight: 1.2 }}>
-                  HỒ SƠ CHI TIẾT NHÂN SỰ HR — {selectedHrDetail?.['Họ Tên NV'] || selectedHrDetail?.['Mã NV']}
-                </Typography>
-                <Typography variant="caption" sx={{ color: '#64748b' }}>
-                  Mã NV: <b>{selectedHrDetail?.['Mã NV']}</b> | Inside Acc: <b>{selectedHrDetail?.['Inside Account']}</b> | Mobisale: <b>{selectedHrDetail?.['Mobisale']}</b>
-                </Typography>
+          <DialogTitle sx={{ p: 0, overflow: 'hidden' }}>
+            {/* TOP HEADER PROFILE BANNER */}
+            <Box sx={{ p: 3, background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: '#ffffff', position: 'relative' }}>
+              <IconButton onClick={() => setHrDetailModalOpen(false)} sx={{ position: 'absolute', top: 12, right: 12, color: '#94a3b8' }}>
+                <CloseIcon />
+              </IconButton>
+              
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2.5 }}>
+                <Box sx={{ width: 64, height: 64, borderRadius: '20px', background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(37,99,235,0.4)' }}>
+                  <PeopleIcon sx={{ fontSize: 36 }} />
+                </Box>
+                <Box>
+                  <Typography variant="h5" sx={{ fontWeight: 900, color: '#ffffff', lineHeight: 1.2 }}>
+                    {selectedHrDetail?.['Họ Tên NV'] || selectedHrDetail?.['Mã NV'] || 'Chi Tiết HR'}
+                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                    <Chip label={`Mã NV: ${selectedHrDetail?.['Mã NV'] || '-'}`} size="small" sx={{ backgroundColor: '#334155', color: '#f8fafc', fontWeight: 800 }} />
+                    <Chip label={`Inside: ${selectedHrDetail?.['Inside Account'] || '-'}`} size="small" sx={{ backgroundColor: '#312e81', color: '#c7d2fe', fontWeight: 800 }} />
+                    <Chip label={`Mobisale: ${selectedHrDetail?.['Mobisale'] || '-'}`} size="small" sx={{ backgroundColor: '#1e3a8a', color: '#bfdbfe', fontWeight: 800 }} />
+                  </Box>
+                </Box>
               </Box>
             </Box>
-            <IconButton onClick={() => setHrDetailModalOpen(false)}><CloseIcon /></IconButton>
           </DialogTitle>
 
-          <DialogContent dividers sx={{ p: 3 }}>
+          <DialogContent dividers sx={{ p: 3, backgroundColor: '#f8fafc' }}>
             {hrDetailLoading ? (
               <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}><CircularProgress /></Box>
             ) : selectedHrDetail ? (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 
-                {/* SEARCH INPUT IN DETAIL */}
+                {/* SEARCH FILTER */}
                 <TextField
                   fullWidth
                   size="small"
-                  placeholder="Lọc nhanh trường thông tin (VD: email, phone, lương, block, hợp đồng...)"
+                  placeholder="Lọc thông tin trong hồ sơ (VD: phone, email, lương, block, hợp đồng...)"
                   value={hrDetailSearch}
                   onChange={(e) => setHrDetailSearch(e.target.value)}
                   InputProps={{ startAdornment: <SearchIcon sx={{ color: '#94a3b8', mr: 1 }} /> }}
-                  sx={{ '& .MuiInputBase-root': { borderRadius: 2 } }}
+                  sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#ffffff' } }}
                 />
 
-                {/* GRID DISPLAY OF ALL HR FIELDS */}
-                <Grid container spacing={2}>
-                  {Object.entries(selectedHrDetail)
-                    .filter(([k, v]) => {
-                      if (!hrDetailSearch) return true;
-                      const kw = hrDetailSearch.toLowerCase();
-                      return String(k).toLowerCase().includes(kw) || String(v).toLowerCase().includes(kw);
-                    })
-                    .map(([key, val]) => {
-                      const isHighlight = ['Inside Account', 'Mobisale', 'Mã NV', 'Họ Tên NV', 'Block', 'Họ tên Đội trưởng'].includes(key);
+                {/* CATEGORIZED SECTIONS */}
+                {[
+                  {
+                    title: '👤 1. Thông Tin Cá Nhân & Tài Khoản Liên Hệ',
+                    color: '#2563eb',
+                    fields: ['Mã NV', 'Họ Tên NV', 'Inside Account', 'Mobisale', 'Email', 'Số điện thoại', 'Tình trạng Tài khoản', 'Số CMND', 'Ngày cấp', 'Nơi cấp', 'Ngày sinh', 'Giới tính']
+                  },
+                  {
+                    title: '🏢 2. Đơn Vị & Block Công Tác',
+                    color: '#7c3aed',
+                    fields: ['Block', 'Họ tên Đội trưởng', 'Chức danh', 'Tên Đối Tác', 'Vùng', 'Chi nhánh', 'Địa điểm làm việc']
+                  },
+                  {
+                    title: '📜 3. Hợp Đồng & Phân Công Tính Lương',
+                    color: '#059669',
+                    fields: ['Loại HĐLĐ', 'Ngày vào công ty', 'Tình trạng Hợp đồng', 'Phân công', 'Tính lương']
+                  }
+                ].map((section, sIdx) => {
+                  const filteredEntries = Object.entries(selectedHrDetail).filter(([k, v]) => {
+                    const isInSection = section.fields.some(f => k.toLowerCase().includes(f.toLowerCase()));
+                    if (!isInSection) return false;
+                    if (!hrDetailSearch) return true;
+                    const kw = hrDetailSearch.toLowerCase();
+                    return k.toLowerCase().includes(kw) || String(v).toLowerCase().includes(kw);
+                  });
 
-                      return (
-                        <Grid item xs={12} sm={6} md={4} key={key}>
-                          <Paper
-                            elevation={0}
-                            sx={{
-                              p: 1.8,
-                              borderRadius: 2,
-                              backgroundColor: isHighlight ? '#eff6ff' : '#f8fafc',
-                              border: isHighlight ? '1px solid #bfdbfe' : '1px solid #e2e8f0',
-                              height: '100%'
-                            }}
-                          >
-                            <Typography variant="caption" sx={{ color: isHighlight ? '#1d4ed8' : '#64748b', fontWeight: 800, textTransform: 'uppercase', display: 'block', mb: 0.5, fontSize: '11px' }}>
-                              {key}
-                            </Typography>
-                            <Typography variant="body2" sx={{ fontWeight: isHighlight ? 800 : 600, color: isHighlight ? '#1e40af' : '#0f172a', wordBreak: 'break-word' }}>
-                              {val || '-'}
-                            </Typography>
-                          </Paper>
-                        </Grid>
-                      );
-                    })}
-                </Grid>
+                  if (filteredEntries.length === 0) return null;
+
+                  return (
+                    <Paper key={sIdx} elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 900, color: section.color, mb: 2 }}>
+                        {section.title}
+                      </Typography>
+                      <Grid container spacing={2}>
+                        {filteredEntries.map(([key, val]) => {
+                          const isSpecial = ['Inside Account', 'Mobisale', 'Mã NV', 'Block', 'Họ tên Đội trưởng'].includes(key);
+
+                          return (
+                            <Grid item xs={12} sm={6} md={4} key={key}>
+                              <Box sx={{ p: 1.5, borderRadius: 2, backgroundColor: isSpecial ? `${section.color}08` : '#f8fafc', border: isSpecial ? `1px solid ${section.color}30` : '1px solid #f1f5f9' }}>
+                                <Typography variant="caption" sx={{ color: isSpecial ? section.color : '#64748b', fontWeight: 800, textTransform: 'uppercase', display: 'block', fontSize: '10.5px' }}>
+                                  {key}
+                                </Typography>
+                                <Typography variant="body2" sx={{ fontWeight: isSpecial ? 900 : 600, color: isSpecial ? section.color : '#0f172a', wordBreak: 'break-word', mt: 0.2 }}>
+                                  {val || '-'}
+                                </Typography>
+                              </Box>
+                            </Grid>
+                          );
+                        })}
+                      </Grid>
+                    </Paper>
+                  );
+                })}
+
+                {/* EXTRA SECTION FOR REMAINING UNCLASSIFIED FIELDS */}
+                {(() => {
+                  const categorizedFields = ['Mã NV', 'Họ Tên NV', 'Inside Account', 'Mobisale', 'Email', 'Số điện thoại', 'Tình trạng Tài khoản', 'Số CMND', 'Ngày cấp', 'Nơi cấp', 'Ngày sinh', 'Giới tính', 'Block', 'Họ tên Đội trưởng', 'Chức danh', 'Tên Đối Tác', 'Vùng', 'Chi nhánh', 'Địa điểm làm việc', 'Loại HĐLĐ', 'Ngày vào công ty', 'Tình trạng Hợp đồng', 'Phân công', 'Tính lương'];
+                  const leftoverEntries = Object.entries(selectedHrDetail).filter(([k, v]) => {
+                    const isCategorized = categorizedFields.some(f => k.toLowerCase().includes(f.toLowerCase()));
+                    if (isCategorized) return false;
+                    if (!hrDetailSearch) return true;
+                    const kw = hrDetailSearch.toLowerCase();
+                    return k.toLowerCase().includes(kw) || String(v).toLowerCase().includes(kw);
+                  });
+
+                  if (leftoverEntries.length === 0) return null;
+
+                  return (
+                    <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#475569', mb: 2 }}>
+                        📌 4. Thông Tin Bổ Sung Khác
+                      </Typography>
+                      <Grid container spacing={2}>
+                        {leftoverEntries.map(([key, val]) => (
+                          <Grid item xs={12} sm={6} md={4} key={key}>
+                            <Box sx={{ p: 1.5, borderRadius: 2, backgroundColor: '#f8fafc', border: '1px solid #f1f5f9' }}>
+                              <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 800, textTransform: 'uppercase', display: 'block', fontSize: '10.5px' }}>
+                                {key}
+                              </Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 600, color: '#0f172a', wordBreak: 'break-word', mt: 0.2 }}>
+                                {val || '-'}
+                              </Typography>
+                            </Box>
+                          </Grid>
+                        ))}
+                      </Grid>
+                    </Paper>
+                  );
+                })()}
+
               </Box>
             ) : (
               <Typography color="error" align="center" sx={{ py: 4 }}>Không có dữ liệu chi tiết.</Typography>
             )}
           </DialogContent>
-          <DialogActions sx={{ p: 2 }}>
-            <Button onClick={() => setHrDetailModalOpen(false)} variant="contained" color="primary" sx={{ borderRadius: 2, px: 3 }}>
-              Đóng Hồ Sơ
+          <DialogActions sx={{ p: 2, backgroundColor: '#ffffff' }}>
+            <Button onClick={() => setHrDetailModalOpen(false)} variant="contained" color="primary" sx={{ borderRadius: 2, px: 3, fontWeight: 800 }}>
+              Đóng Hồ Sơ HR
             </Button>
           </DialogActions>
         </Dialog>
 
-        {/* HR ADD / EDIT DIALOG MODAL */}
+        {/* HR ADD / EDIT DIALOG MODAL WITH AUTOCOMPLETE FOR BLOCK AND TEAM LEAD */}
         <Dialog open={hrEditModalOpen} onClose={() => setHrEditModalOpen(false)} maxWidth="sm" fullWidth>
           <DialogTitle sx={{ fontWeight: 800, color: '#2563eb' }}>
             {editingHr ? '✏️ CHỈNH SỬA HỒ SƠ NHÂN SỰ' : '➕ THÊM MỚI NHÂN SỰ HR'}
@@ -4965,12 +5042,37 @@ export default function App() {
               <Grid item xs={12} sm={6}>
                 <TextField fullWidth size="small" label="Số Điện Thoại" value={hrForm.phone} onChange={(e) => setHrForm({ ...hrForm, phone: e.target.value })} />
               </Grid>
+              
+              {/* BLOCK AUTOCOMPLETE WITH FREESOLO */}
               <Grid item xs={12} sm={6}>
-                <TextField fullWidth size="small" label="Block Kỹ Thuật" value={hrForm.block} onChange={(e) => setHrForm({ ...hrForm, block: e.target.value })} />
+                <Autocomplete
+                  freeSolo
+                  options={options.blocks || []}
+                  value={hrForm.block || ''}
+                  onInputChange={(event, newInputValue) => {
+                    setHrForm(prev => ({ ...prev, block: newInputValue }));
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} size="small" label="Block Kỹ Thuật" placeholder="Chọn hoặc nhập Block mới..." />
+                  )}
+                />
               </Grid>
+
+              {/* TEAM LEAD AUTOCOMPLETE WITH FREESOLO */}
               <Grid item xs={12} sm={6}>
-                <TextField fullWidth size="small" label="Họ tên Đội Trưởng" value={hrForm.team_lead} onChange={(e) => setHrForm({ ...hrForm, team_lead: e.target.value })} />
+                <Autocomplete
+                  freeSolo
+                  options={options.team_leads || []}
+                  value={hrForm.team_lead || ''}
+                  onInputChange={(event, newInputValue) => {
+                    setHrForm(prev => ({ ...prev, team_lead: newInputValue }));
+                  }}
+                  renderInput={(params) => (
+                    <TextField {...params} size="small" label="Họ tên Đội Trưởng" placeholder="Chọn hoặc nhập Đội Trưởng mới..." />
+                  )}
+                />
               </Grid>
+
               <Grid item xs={12} sm={6}>
                 <TextField fullWidth size="small" label="Chức Danh" value={hrForm.title} onChange={(e) => setHrForm({ ...hrForm, title: e.target.value })} />
               </Grid>

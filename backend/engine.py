@@ -1746,7 +1746,10 @@ class KPIEngine:
             if (target == r_mail or target == r_user) and pwd == r_pass:
                 allowed_apps_raw = str(r.get('Ứng dụng được xem', '')).strip()
                 if not allowed_apps_raw:
-                    allowed_apps_raw = "kpis,lich_truc,ton_tk_bt,admin,hr,user_mgmt,import,luong" if str(r.get('Quyền', 'user')).strip().lower() == 'admin' else "luong"
+                    allowed_apps_raw = "KPIs;LichTruc;TonTKBT;Admin;HR;UserMgmt;ImportDB;Salary" if str(r.get('Quyền', 'user')).strip().lower() == 'admin' else "Salary"
+
+                import re
+                apps_list = [x.strip() for x in re.split(r'[;,]', allowed_apps_raw) if x.strip()]
 
                 return {
                     "ok": True,
@@ -1757,7 +1760,7 @@ class KPIEngine:
                         "mail": str(r.get('Mail', '')).strip(),
                         "user": str(r.get('User', '')).strip(),
                         "role": str(r.get('Quyền', 'user')).strip().lower(),
-                        "allowed_apps": [x.strip() for x in allowed_apps_raw.split(',') if x.strip()],
+                        "allowed_apps": apps_list,
                         "is_password_set": bool(r.get('is_password_set', True))
                     }
                 }
@@ -1813,7 +1816,7 @@ class KPIEngine:
             "User": clean_user,
             "Mật Khẩu": password.strip(),
             "Quyền": "user",
-            "Ứng dụng được xem": "luong",
+            "Ứng dụng được xem": "Salary",
             "is_password_set": True
         }
 
@@ -1830,7 +1833,7 @@ class KPIEngine:
                 "mail": clean_mail,
                 "user": clean_user,
                 "role": "user",
-                "allowed_apps": ["luong"]
+                "allowed_apps": ["Salary"]
             }
         }
 
@@ -1838,11 +1841,12 @@ class KPIEngine:
         if self.admin_users_df.empty:
             self._load_admin_users()
 
+        import re
         res = []
         for _, r in self.admin_users_df.iterrows():
             apps_raw = str(r.get('Ứng dụng được xem', '')).strip()
             if not apps_raw:
-                apps_raw = "kpis,lich_truc,ton_tk_bt,admin,hr,user_mgmt,import,luong" if str(r.get('Quyền', 'user')).strip().lower() == 'admin' else "luong"
+                apps_raw = "KPIs;LichTruc;TonTKBT;Admin;HR;UserMgmt;ImportDB;Salary" if str(r.get('Quyền', 'user')).strip().lower() == 'admin' else "Salary"
 
             res.append({
                 "id": int(r.get('ID', 0)),
@@ -1852,7 +1856,7 @@ class KPIEngine:
                 "user": str(r.get('User', '')).strip(),
                 "password": str(r.get('Mật Khẩu', '')).strip(),
                 "role": str(r.get('Quyền', 'user')).strip().lower(),
-                "allowed_apps": [x.strip() for x in apps_raw.split(',') if x.strip()]
+                "allowed_apps": [x.strip() for x in re.split(r'[;,]', apps_raw) if x.strip()]
             })
         return res
 
@@ -1863,8 +1867,8 @@ class KPIEngine:
         role = str(payload.get('role', 'user')).strip().lower()
         msnv = str(payload.get('msnv', '')).strip()
         name = str(payload.get('name', '')).strip()
-        allowed_apps = payload.get('allowed_apps', ["luong"])
-        allowed_str = ",".join(allowed_apps) if isinstance(allowed_apps, list) else str(allowed_apps)
+        allowed_apps = payload.get('allowed_apps', ["Salary"])
+        allowed_str = ";".join(allowed_apps) if isinstance(allowed_apps, list) else str(allowed_apps)
 
         if not mail or not password:
             return {"ok": False, "error": "Vui lòng nhập Mail và Mật khẩu!"}
@@ -1915,7 +1919,7 @@ class KPIEngine:
             self.admin_users_df.at[idx_to_update, 'Quyền'] = str(payload['role']).strip().lower()
         if 'allowed_apps' in payload:
             allowed = payload['allowed_apps']
-            self.admin_users_df.at[idx_to_update, 'Ứng dụng được xem'] = ",".join(allowed) if isinstance(allowed, list) else str(allowed)
+            self.admin_users_df.at[idx_to_update, 'Ứng dụng được xem'] = ";".join(allowed) if isinstance(allowed, list) else str(allowed)
 
         self._save_admin_users()
         return {"ok": True, "message": "Đã cập nhật thông tin tài khoản thành công!"}
