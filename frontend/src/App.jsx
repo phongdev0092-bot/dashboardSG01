@@ -1261,6 +1261,357 @@ export default function App() {
     };
   }, [backlogData]);
 
+  // Helper function to render Lịch Trực Chi Tiết table (read-only for public, editable for admin)
+  const renderLichTrucChiTiet = (isEditable = false) => (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      
+      {/* HIDDEN CSV INPUT */}
+      {isEditable && (
+        <input
+          type="file"
+          accept=".csv"
+          ref={importInputRef}
+          style={{ display: 'none' }}
+          onChange={handleImportCsvFile}
+        />
+      )}
+
+      {/* TOOLBAR */}
+      <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, backgroundColor: '#ffffff', border: '1px solid #e0e0e0' }}>
+        <Grid container spacing={2} alignItems="center">
+          <Grid item xs={12} sm={3} md={isEditable ? 1.5 : 2}>
+            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Tháng</FormLabel>
+            <TextField select fullWidth size="small" value={ltCtMonth} onChange={(e) => setLtCtMonth(Number(e.target.value))}>
+              <MenuItem value={0}>Tất cả</MenuItem>
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                <MenuItem key={m} value={m}>Tháng {m}</MenuItem>
+              ))}
+            </TextField>
+          </Grid>
+
+          <Grid item xs={12} sm={3} md={isEditable ? 1.5 : 2}>
+            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Năm</FormLabel>
+            <TextField select fullWidth size="small" value={ltCtYear} onChange={(e) => setLtCtYear(Number(e.target.value))}>
+              <MenuItem value={0}>Tất cả</MenuItem>
+              {[2024, 2025, 2026, 2027, 2028].map((y) => (
+                <MenuItem key={y} value={y}>{y}</MenuItem>
+              ))}
+            </TextField>
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={isEditable ? 2.5 : 3}>
+            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Đội Trưởng</FormLabel>
+            <TextField select fullWidth size="small" value={ltCtDoiTruong} onChange={(e) => setLtCtDoiTruong(e.target.value)}>
+              <MenuItem value="__ALL__">-- Tất cả --</MenuItem>
+              {options.team_leads.map((tl) => (
+                <MenuItem key={tl} value={tl}>{tl}</MenuItem>
+              ))}
+            </TextField>
+          </Grid>
+
+          <Grid item xs={12} sm={3} md={1.2}>
+            <Button variant="contained" color="primary" fullWidth onClick={fetchLichTrucChiTiet} sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5 }}>
+              Lọc
+            </Button>
+          </Grid>
+
+          <Grid item xs={12} sm={4} md={isEditable ? 1.8 : 2}>
+            <Button variant="outlined" color="primary" fullWidth onClick={() => setSortBlockEnabled(!sortBlockEnabled)} sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5, fontSize: '12px' }}>
+              🔤 Sort Block: {sortBlockEnabled ? 'Bật' : 'Tắt'}
+            </Button>
+          </Grid>
+
+          {isEditable && (
+            <Grid item xs={12} sm={4} md={1.2}>
+              <Button variant="contained" color="info" fullWidth onClick={() => setAddRowOpen(true)} sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5 }}>
+                ➕ Thêm
+              </Button>
+            </Grid>
+          )}
+
+          {isEditable && (
+            <Grid item xs={12} sm={4} md={1.2}>
+              <Button variant="outlined" color="secondary" fullWidth onClick={() => importInputRef.current && importInputRef.current.click()} sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5 }}>
+                📥 Import
+              </Button>
+            </Grid>
+          )}
+
+          <Grid item xs={12} sm={4} md={isEditable ? 1.6 : 1.8}>
+            <Button variant="contained" color="success" fullWidth onClick={handleExportLichTrucCSV} startIcon={<DownloadIcon />} sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5, backgroundColor: '#1e8e3e' }}>
+              Xuất CSV
+            </Button>
+          </Grid>
+        </Grid>
+      </Paper>
+
+      {/* STICKY DATA TABLE FOR 31 DAYS */}
+      <Paper elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', backgroundColor: '#ffffff', border: '1px solid #e0e0e0' }}>
+        <TableContainer sx={{ maxHeight: 680 }}>
+          <Table stickyHeader size="small">
+            <TableHead sx={{ backgroundColor: '#f1f5f9' }}>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 700, position: 'sticky', left: 0, zIndex: 4, backgroundColor: '#f1f5f9', minWidth: 100 }}>CodeStaff</TableCell>
+                <TableCell sx={{ fontWeight: 700, position: 'sticky', left: 100, zIndex: 4, backgroundColor: '#f1f5f9', minWidth: 150 }}>Name</TableCell>
+                <TableCell sx={{ fontWeight: 700, position: 'sticky', left: 250, zIndex: 4, backgroundColor: '#f1f5f9', minWidth: 130 }}>Partner</TableCell>
+                <TableCell sx={{ fontWeight: 700, position: 'sticky', left: 380, zIndex: 4, backgroundColor: '#f1f5f9', minWidth: 180, boxShadow: '2px 0 5px rgba(0,0,0,0.08)' }}>Block</TableCell>
+                
+                {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                  <TableCell key={d} align="center" sx={{ fontWeight: 700, minWidth: 45, px: 0.5 }}>
+                    Day{d}
+                  </TableCell>
+                ))}
+                <TableCell sx={{ fontWeight: 700, minWidth: 140 }}>Đội Trưởng</TableCell>
+                {isEditable && <TableCell align="center" sx={{ fontWeight: 700, minWidth: 120 }}>Thao Tác</TableCell>}
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {ltCtData?.data
+                ?.slice()
+                .sort((a, b) => {
+                  if (!sortBlockEnabled) return 0;
+                  const blockA = String(a.values[3] || '');
+                  const blockB = String(b.values[3] || '');
+                  return blockA.localeCompare(blockB, 'vi', { numeric: true, sensitivity: 'base' });
+                })
+                .map((rowObj) => {
+                  const isEditing = isEditable && editingRowNumber === rowObj.row;
+
+                  return (
+                    <TableRow key={rowObj.row} hover sx={{ backgroundColor: isEditing ? '#eff6ff' : 'inherit' }}>
+                      
+                      {/* CodeStaff */}
+                      <TableCell sx={{ fontWeight: 600, position: 'sticky', left: 0, backgroundColor: isEditing ? '#eff6ff' : '#ffffff', zIndex: 2 }}>
+                        {isEditing ? (
+                          <TextField
+                            size="small"
+                            value={editingRowValues[0] || ''}
+                            onChange={(e) => {
+                              const copy = [...editingRowValues];
+                              copy[0] = e.target.value;
+                              setEditingRowValues(copy);
+                            }}
+                            sx={{ width: 90 }}
+                          />
+                        ) : rowObj.values[0]}
+                      </TableCell>
+
+                      {/* Name */}
+                      <TableCell sx={{ fontWeight: 700, position: 'sticky', left: 100, backgroundColor: isEditing ? '#eff6ff' : '#ffffff', zIndex: 2 }}>
+                        {isEditing ? (
+                          <TextField
+                            size="small"
+                            value={editingRowValues[1] || ''}
+                            onChange={(e) => {
+                              const copy = [...editingRowValues];
+                              copy[1] = e.target.value;
+                              setEditingRowValues(copy);
+                            }}
+                            sx={{ width: 140 }}
+                          />
+                        ) : rowObj.values[1]}
+                      </TableCell>
+
+                      {/* Partner */}
+                      <TableCell sx={{ color: '#5f6368', position: 'sticky', left: 250, backgroundColor: isEditing ? '#eff6ff' : '#ffffff', zIndex: 2 }}>
+                        {isEditing ? (
+                          <TextField
+                            size="small"
+                            value={editingRowValues[2] || ''}
+                            onChange={(e) => {
+                              const copy = [...editingRowValues];
+                              copy[2] = e.target.value;
+                              setEditingRowValues(copy);
+                            }}
+                            sx={{ width: 120 }}
+                          />
+                        ) : rowObj.values[2]}
+                      </TableCell>
+
+                      {/* Block */}
+                      <TableCell sx={{ fontWeight: 700, color: '#1a73e8', position: 'sticky', left: 380, backgroundColor: isEditing ? '#eff6ff' : '#ffffff', zIndex: 2, boxShadow: '2px 0 5px rgba(0,0,0,0.08)' }}>
+                        {isEditing ? (
+                          <TextField
+                            size="small"
+                            value={editingRowValues[3] || ''}
+                            onChange={(e) => {
+                              const copy = [...editingRowValues];
+                              copy[3] = e.target.value;
+                              setEditingRowValues(copy);
+                            }}
+                            sx={{ width: 160 }}
+                          />
+                        ) : rowObj.values[3]}
+                      </TableCell>
+                      
+                      {/* Day1..Day31 */}
+                      {(isEditing ? editingRowValues.slice(4, 35) : rowObj.values.slice(4, 35)).map((shiftVal, sIdx) => {
+                        const isCa1 = String(shiftVal).toUpperCase() === 'CA1';
+                        return (
+                          <TableCell key={sIdx} align="center" sx={{ px: 0.3 }}>
+                            {isEditing ? (
+                              <TextField
+                                select
+                                size="small"
+                                value={String(shiftVal).toUpperCase() === 'CA1' ? 'CA1' : 'O'}
+                                onChange={(e) => {
+                                  const copy = [...editingRowValues];
+                                  copy[4 + sIdx] = e.target.value;
+                                  setEditingRowValues(copy);
+                                }}
+                                sx={{ width: 55, '& .MuiSelect-select': { py: 0.3, px: 0.5, fontSize: '11px' } }}
+                              >
+                                <MenuItem value="CA1">Ca1</MenuItem>
+                                <MenuItem value="O">O</MenuItem>
+                              </TextField>
+                            ) : (
+                              <Chip
+                                label={isCa1 ? 'Ca1' : 'O'}
+                                size="small"
+                                sx={{
+                                  height: 20,
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                  backgroundColor: isCa1 ? '#dcfce7' : '#f3f4f6',
+                                  color: isCa1 ? '#16a34a' : '#6b7280',
+                                  borderRadius: '6px'
+                                }}
+                              />
+                            )}
+                          </TableCell>
+                        );
+                      })}
+                      
+                      {/* Đội Trưởng */}
+                      <TableCell sx={{ fontWeight: 600 }}>{rowObj.doiTruong}</TableCell>
+
+                      {/* Thao tác CRUD */}
+                      {isEditable && (
+                        <TableCell align="center">
+                          {isEditing ? (
+                            <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'center' }}>
+                              <Button size="small" variant="contained" color="primary" onClick={handleSaveEditRow} sx={{ minWidth: 40, px: 1, py: 0.2, fontSize: '11px', fontWeight: 700 }}>
+                                💾
+                              </Button>
+                              <Button size="small" variant="outlined" onClick={handleCancelEditRow} sx={{ minWidth: 40, px: 1, py: 0.2, fontSize: '11px' }}>
+                                ❌
+                              </Button>
+                            </Box>
+                          ) : (
+                            <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'center' }}>
+                              <Button size="small" variant="outlined" color="primary" onClick={() => handleStartEditRow(rowObj)} sx={{ minWidth: 40, px: 1, py: 0.2, fontSize: '11px', fontWeight: 700 }}>
+                                ✏️
+                              </Button>
+                              <Button size="small" variant="outlined" color="error" onClick={() => handleDeleteRow(rowObj.row)} sx={{ minWidth: 40, px: 1, py: 0.2, fontSize: '11px' }}>
+                                🗑️
+                              </Button>
+                            </Box>
+                          )}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  );
+                })}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+
+      {/* ADD ROW DIALOG MODAL */}
+      {isEditable && (
+        <Dialog open={addRowOpen} onClose={() => setAddRowOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle sx={{ fontWeight: 800 }}>➕ Thêm Dòng Lịch Trực Mới</DialogTitle>
+          <DialogContent dividers>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 1 }}>
+              <Box>
+                <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Mail *</FormLabel>
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="vd: PNC01.NHANHT6@fpt.com"
+                  value={addRowData.mail}
+                  onChange={(e) => setAddRowData({ ...addRowData, mail: e.target.value })}
+                />
+              </Box>
+
+              <Box>
+                <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Mã Nhân Viên (CodeStaff)</FormLabel>
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="vd: 280558"
+                  value={addRowData.code}
+                  onChange={(e) => setAddRowData({ ...addRowData, code: e.target.value })}
+                />
+              </Box>
+
+              <Box>
+                <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Họ và Tên (Name)</FormLabel>
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="vd: Cao Tiến Triều"
+                  value={addRowData.name}
+                  onChange={(e) => setAddRowData({ ...addRowData, name: e.target.value })}
+                />
+              </Box>
+
+              <Box>
+                <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Đối Tác (Partner)</FormLabel>
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="vd: Phương Nam-01"
+                  value={addRowData.partner}
+                  onChange={(e) => setAddRowData({ ...addRowData, partner: e.target.value })}
+                />
+              </Box>
+
+              <Box>
+                <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Block</FormLabel>
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="vd: Phuong Long Truong-002"
+                  value={addRowData.block}
+                  onChange={(e) => setAddRowData({ ...addRowData, block: e.target.value })}
+                />
+              </Box>
+
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <Box sx={{ flex: 1 }}>
+                  <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Tháng</FormLabel>
+                  <TextField
+                    type="number"
+                    fullWidth
+                    size="small"
+                    value={addRowData.month}
+                    onChange={(e) => setAddRowData({ ...addRowData, month: Number(e.target.value) })}
+                  />
+                </Box>
+                <Box sx={{ flex: 1 }}>
+                  <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Năm</FormLabel>
+                  <TextField
+                    type="number"
+                    fullWidth
+                    size="small"
+                    value={addRowData.year}
+                    onChange={(e) => setAddRowData({ ...addRowData, year: Number(e.target.value) })}
+                  />
+                </Box>
+              </Box>
+            </Box>
+          </DialogContent>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setAddRowOpen(false)} variant="outlined">Hủy</Button>
+            <Button onClick={handleAddRowSubmit} variant="contained" color="primary">Thêm Dòng</Button>
+          </DialogActions>
+        </Dialog>
+      )}
+
+    </Box>
+  );
+
   // Sidebar Menu Definitions
   const navItems = [
     {
@@ -2390,345 +2741,7 @@ export default function App() {
                 )}
 
                 {/* ==================== SUB-TAB 2: CHI TIẾT LỊCH TRỰC ==================== */}
-                {ltTab === 'chitiet' && (
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    
-                    {/* HIDDEN CSV INPUT */}
-                    <input
-                      type="file"
-                      accept=".csv"
-                      ref={importInputRef}
-                      style={{ display: 'none' }}
-                      onChange={handleImportCsvFile}
-                    />
-
-                    {/* TOOLBAR */}
-                    <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, backgroundColor: '#ffffff', border: '1px solid #e0e0e0' }}>
-                      <Grid container spacing={2} alignItems="center">
-                        <Grid item xs={12} sm={3} md={1.5}>
-                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Tháng</FormLabel>
-                          <TextField select fullWidth size="small" value={ltCtMonth} onChange={(e) => setLtCtMonth(Number(e.target.value))}>
-                            <MenuItem value={0}>Tất cả</MenuItem>
-                            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                              <MenuItem key={m} value={m}>Tháng {m}</MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-
-                        <Grid item xs={12} sm={3} md={1.5}>
-                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Năm</FormLabel>
-                          <TextField select fullWidth size="small" value={ltCtYear} onChange={(e) => setLtCtYear(Number(e.target.value))}>
-                            <MenuItem value={0}>Tất cả</MenuItem>
-                            {[2024, 2025, 2026, 2027, 2028].map((y) => (
-                              <MenuItem key={y} value={y}>{y}</MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-
-                        <Grid item xs={12} sm={6} md={2.5}>
-                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Đội Trưởng</FormLabel>
-                          <TextField select fullWidth size="small" value={ltCtDoiTruong} onChange={(e) => setLtCtDoiTruong(e.target.value)}>
-                            <MenuItem value="__ALL__">-- Tất cả --</MenuItem>
-                            {options.team_leads.map((tl) => (
-                              <MenuItem key={tl} value={tl}>{tl}</MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-
-                        <Grid item xs={12} sm={3} md={1.2}>
-                          <Button variant="contained" color="primary" fullWidth onClick={fetchLichTrucChiTiet} sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5 }}>
-                            Lọc
-                          </Button>
-                        </Grid>
-
-                        <Grid item xs={12} sm={4} md={1.8}>
-                          <Button variant="outlined" color="primary" fullWidth onClick={() => setSortBlockEnabled(!sortBlockEnabled)} sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5, fontSize: '12px' }}>
-                            🔤 Sort Block: {sortBlockEnabled ? 'Bật' : 'Tắt'}
-                          </Button>
-                        </Grid>
-
-                        <Grid item xs={12} sm={4} md={1.2}>
-                          <Button variant="contained" color="info" fullWidth onClick={() => setAddRowOpen(true)} sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5 }}>
-                            ➕ Thêm
-                          </Button>
-                        </Grid>
-
-                        <Grid item xs={12} sm={4} md={1.2}>
-                          <Button variant="outlined" color="secondary" fullWidth onClick={() => importInputRef.current && importInputRef.current.click()} sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5 }}>
-                            📥 Import
-                          </Button>
-                        </Grid>
-
-                        <Grid item xs={12} sm={4} md={1.6}>
-                          <Button variant="contained" color="success" fullWidth onClick={handleExportLichTrucCSV} startIcon={<DownloadIcon />} sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5, backgroundColor: '#1e8e3e' }}>
-                            Xuất CSV
-                          </Button>
-                        </Grid>
-                      </Grid>
-                    </Paper>
-
-                    {/* STICKY DATA TABLE FOR 31 DAYS WITH CRUD */}
-                    <Paper elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', backgroundColor: '#ffffff', border: '1px solid #e0e0e0' }}>
-                      <TableContainer sx={{ maxHeight: 680 }}>
-                        <Table stickyHeader size="small">
-                          <TableHead sx={{ backgroundColor: '#f1f5f9' }}>
-                            <TableRow>
-                              <TableCell sx={{ fontWeight: 700, position: 'sticky', left: 0, zIndex: 4, backgroundColor: '#f1f5f9', minWidth: 100 }}>CodeStaff</TableCell>
-                              <TableCell sx={{ fontWeight: 700, position: 'sticky', left: 100, zIndex: 4, backgroundColor: '#f1f5f9', minWidth: 150 }}>Name</TableCell>
-                              <TableCell sx={{ fontWeight: 700, position: 'sticky', left: 250, zIndex: 4, backgroundColor: '#f1f5f9', minWidth: 130 }}>Partner</TableCell>
-                              <TableCell sx={{ fontWeight: 700, position: 'sticky', left: 380, zIndex: 4, backgroundColor: '#f1f5f9', minWidth: 180, boxShadow: '2px 0 5px rgba(0,0,0,0.08)' }}>Block</TableCell>
-                              
-                              {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
-                                <TableCell key={d} align="center" sx={{ fontWeight: 700, minWidth: 45, px: 0.5 }}>
-                                  Day{d}
-                                </TableCell>
-                              ))}
-                              <TableCell sx={{ fontWeight: 700, minWidth: 140 }}>Đội Trưởng</TableCell>
-                              <TableCell align="center" sx={{ fontWeight: 700, minWidth: 120 }}>Thao Tác</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {ltCtData?.data
-                              ?.slice()
-                              .sort((a, b) => {
-                                if (!sortBlockEnabled) return 0;
-                                const blockA = String(a.values[3] || '');
-                                const blockB = String(b.values[3] || '');
-                                return blockA.localeCompare(blockB, 'vi', { numeric: true, sensitivity: 'base' });
-                              })
-                              .map((rowObj) => {
-                                const isEditing = editingRowNumber === rowObj.row;
-
-                                return (
-                                  <TableRow key={rowObj.row} hover sx={{ backgroundColor: isEditing ? '#eff6ff' : 'inherit' }}>
-                                    
-                                    {/* CodeStaff */}
-                                    <TableCell sx={{ fontWeight: 600, position: 'sticky', left: 0, backgroundColor: isEditing ? '#eff6ff' : '#ffffff', zIndex: 2 }}>
-                                      {isEditing ? (
-                                        <TextField
-                                          size="small"
-                                          value={editingRowValues[0] || ''}
-                                          onChange={(e) => {
-                                            const copy = [...editingRowValues];
-                                            copy[0] = e.target.value;
-                                            setEditingRowValues(copy);
-                                          }}
-                                          sx={{ width: 90 }}
-                                        />
-                                      ) : rowObj.values[0]}
-                                    </TableCell>
-
-                                    {/* Name */}
-                                    <TableCell sx={{ fontWeight: 700, position: 'sticky', left: 100, backgroundColor: isEditing ? '#eff6ff' : '#ffffff', zIndex: 2 }}>
-                                      {isEditing ? (
-                                        <TextField
-                                          size="small"
-                                          value={editingRowValues[1] || ''}
-                                          onChange={(e) => {
-                                            const copy = [...editingRowValues];
-                                            copy[1] = e.target.value;
-                                            setEditingRowValues(copy);
-                                          }}
-                                          sx={{ width: 140 }}
-                                        />
-                                      ) : rowObj.values[1]}
-                                    </TableCell>
-
-                                    {/* Partner */}
-                                    <TableCell sx={{ color: '#5f6368', position: 'sticky', left: 250, backgroundColor: isEditing ? '#eff6ff' : '#ffffff', zIndex: 2 }}>
-                                      {isEditing ? (
-                                        <TextField
-                                          size="small"
-                                          value={editingRowValues[2] || ''}
-                                          onChange={(e) => {
-                                            const copy = [...editingRowValues];
-                                            copy[2] = e.target.value;
-                                            setEditingRowValues(copy);
-                                          }}
-                                          sx={{ width: 120 }}
-                                        />
-                                      ) : rowObj.values[2]}
-                                    </TableCell>
-
-                                    {/* Block */}
-                                    <TableCell sx={{ fontWeight: 700, color: '#1a73e8', position: 'sticky', left: 380, backgroundColor: isEditing ? '#eff6ff' : '#ffffff', zIndex: 2, boxShadow: '2px 0 5px rgba(0,0,0,0.08)' }}>
-                                      {isEditing ? (
-                                        <TextField
-                                          size="small"
-                                          value={editingRowValues[3] || ''}
-                                          onChange={(e) => {
-                                            const copy = [...editingRowValues];
-                                            copy[3] = e.target.value;
-                                            setEditingRowValues(copy);
-                                          }}
-                                          sx={{ width: 160 }}
-                                        />
-                                      ) : rowObj.values[3]}
-                                    </TableCell>
-                                    
-                                    {/* Day1..Day31 */}
-                                    {(isEditing ? editingRowValues.slice(4, 35) : rowObj.values.slice(4, 35)).map((shiftVal, sIdx) => {
-                                      const isCa1 = String(shiftVal).toUpperCase() === 'CA1';
-                                      return (
-                                        <TableCell key={sIdx} align="center" sx={{ px: 0.3 }}>
-                                          {isEditing ? (
-                                            <TextField
-                                              select
-                                              size="small"
-                                              value={String(shiftVal).toUpperCase() === 'CA1' ? 'CA1' : 'O'}
-                                              onChange={(e) => {
-                                                const copy = [...editingRowValues];
-                                                copy[4 + sIdx] = e.target.value;
-                                                setEditingRowValues(copy);
-                                              }}
-                                              sx={{ width: 55, '& .MuiSelect-select': { py: 0.3, px: 0.5, fontSize: '11px' } }}
-                                            >
-                                              <MenuItem value="CA1">Ca1</MenuItem>
-                                              <MenuItem value="O">O</MenuItem>
-                                            </TextField>
-                                          ) : (
-                                            <Chip
-                                              label={isCa1 ? 'Ca1' : 'O'}
-                                              size="small"
-                                              sx={{
-                                                height: 20,
-                                                fontSize: '10px',
-                                                fontWeight: 800,
-                                                backgroundColor: isCa1 ? '#dcfce7' : '#f3f4f6',
-                                                color: isCa1 ? '#16a34a' : '#6b7280',
-                                                borderRadius: '6px'
-                                              }}
-                                            />
-                                          )}
-                                        </TableCell>
-                                      );
-                                    })}
-                                    
-                                    {/* Đội Trưởng */}
-                                    <TableCell sx={{ fontWeight: 600 }}>{rowObj.doiTruong}</TableCell>
-
-                                    {/* Thao tác CRUD */}
-                                    <TableCell align="center">
-                                      {isEditing ? (
-                                        <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'center' }}>
-                                          <Button size="small" variant="contained" color="primary" onClick={handleSaveEditRow} sx={{ minWidth: 40, px: 1, py: 0.2, fontSize: '11px', fontWeight: 700 }}>
-                                            💾
-                                          </Button>
-                                          <Button size="small" variant="outlined" onClick={handleCancelEditRow} sx={{ minWidth: 40, px: 1, py: 0.2, fontSize: '11px' }}>
-                                            ❌
-                                          </Button>
-                                        </Box>
-                                      ) : (
-                                        <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'center' }}>
-                                          <Button size="small" variant="outlined" color="primary" onClick={() => handleStartEditRow(rowObj)} sx={{ minWidth: 40, px: 1, py: 0.2, fontSize: '11px', fontWeight: 700 }}>
-                                            ✏️
-                                          </Button>
-                                          <Button size="small" variant="outlined" color="error" onClick={() => handleDeleteRow(rowObj.row)} sx={{ minWidth: 40, px: 1, py: 0.2, fontSize: '11px' }}>
-                                            🗑️
-                                          </Button>
-                                        </Box>
-                                      )}
-                                    </TableCell>
-                                  </TableRow>
-                                );
-                              })}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
-                    </Paper>
-
-                    {/* ADD ROW DIALOG MODAL */}
-                    <Dialog open={addRowOpen} onClose={() => setAddRowOpen(false)} maxWidth="xs" fullWidth>
-                      <DialogTitle sx={{ fontWeight: 800 }}>➕ Thêm Dòng Lịch Trực Mới</DialogTitle>
-                      <DialogContent dividers>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 1 }}>
-                          <Box>
-                            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Mail *</FormLabel>
-                            <TextField
-                              fullWidth
-                              size="small"
-                              placeholder="vd: PNC01.NHANHT6@fpt.com"
-                              value={addRowData.mail}
-                              onChange={(e) => setAddRowData({ ...addRowData, mail: e.target.value })}
-                            />
-                          </Box>
-
-                          <Box>
-                            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Mã Nhân Viên (CodeStaff)</FormLabel>
-                            <TextField
-                              fullWidth
-                              size="small"
-                              placeholder="vd: 280558"
-                              value={addRowData.code}
-                              onChange={(e) => setAddRowData({ ...addRowData, code: e.target.value })}
-                            />
-                          </Box>
-
-                          <Box>
-                            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Họ và Tên (Name)</FormLabel>
-                            <TextField
-                              fullWidth
-                              size="small"
-                              placeholder="vd: Cao Tiến Triều"
-                              value={addRowData.name}
-                              onChange={(e) => setAddRowData({ ...addRowData, name: e.target.value })}
-                            />
-                          </Box>
-
-                          <Box>
-                            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Đối Tác (Partner)</FormLabel>
-                            <TextField
-                              fullWidth
-                              size="small"
-                              placeholder="vd: Phương Nam-01"
-                              value={addRowData.partner}
-                              onChange={(e) => setAddRowData({ ...addRowData, partner: e.target.value })}
-                            />
-                          </Box>
-
-                          <Box>
-                            <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Block</FormLabel>
-                            <TextField
-                              fullWidth
-                              size="small"
-                              placeholder="vd: Phuong Long Truong-002"
-                              value={addRowData.block}
-                              onChange={(e) => setAddRowData({ ...addRowData, block: e.target.value })}
-                            />
-                          </Box>
-
-                          <Box sx={{ display: 'flex', gap: 2 }}>
-                            <Box sx={{ flex: 1 }}>
-                              <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Tháng</FormLabel>
-                              <TextField
-                                type="number"
-                                fullWidth
-                                size="small"
-                                value={addRowData.month}
-                                onChange={(e) => setAddRowData({ ...addRowData, month: Number(e.target.value) })}
-                              />
-                            </Box>
-                            <Box sx={{ flex: 1 }}>
-                              <FormLabel sx={{ fontSize: '12px', fontWeight: 700, display: 'block', mb: 0.5 }}>Năm</FormLabel>
-                              <TextField
-                                type="number"
-                                fullWidth
-                                size="small"
-                                value={addRowData.year}
-                                onChange={(e) => setAddRowData({ ...addRowData, year: Number(e.target.value) })}
-                              />
-                            </Box>
-                          </Box>
-                        </Box>
-                      </DialogContent>
-                      <DialogActions sx={{ p: 2 }}>
-                        <Button onClick={() => setAddRowOpen(false)} variant="outlined">Hủy</Button>
-                        <Button onClick={handleAddRowSubmit} variant="contained" color="primary">Thêm Dòng</Button>
-                      </DialogActions>
-                    </Dialog>
-
-                  </Box>
-                )}
+                {ltTab === 'chitiet' && renderLichTrucChiTiet(false)}
 
                 {/* ==================== SUB-TAB 3: LỊCH SỬ THAY ĐỔI & ĐỐI SOÁT ==================== */}
                 {ltTab === 'history' && (
@@ -3718,14 +3731,20 @@ export default function App() {
                   </Button>
                 </Paper>
 
-                {/* 4 INTERACTIVE TOPIC ICON ACTION CARDS BAR */}
-                <Grid container spacing={2.5}>
+                {/* 5 INTERACTIVE TOPIC ICON ACTION CARDS BAR */}
+                <Box
+                  sx={{
+                    display: 'grid',
+                    gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(5, 1fr)' },
+                    gap: 2
+                  }}
+                >
                   {[
                     {
                       id: 0,
                       title: '1. HR Nhân Sự',
                       subtitle: 'Danh mục & Hồ sơ nhân sự SG01',
-                      icon: <PeopleIcon sx={{ fontSize: 30 }} />,
+                      icon: <PeopleIcon sx={{ fontSize: 28 }} />,
                       gradient: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
                       activeColor: '#2563eb',
                       badge: `${hrList.length || 'HR'} HS`
@@ -3734,7 +3753,7 @@ export default function App() {
                       id: 1,
                       title: '2. Sheet Admin Users',
                       subtitle: 'Phân quyền & Tài khoản hệ thống',
-                      icon: <VpnKeyIcon sx={{ fontSize: 30 }} />,
+                      icon: <VpnKeyIcon sx={{ fontSize: 28 }} />,
                       gradient: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
                       activeColor: '#7c3aed',
                       badge: `${adminUsers.length || 'User'} Acc`
@@ -3743,7 +3762,7 @@ export default function App() {
                       id: 2,
                       title: '3. Import Data Base',
                       subtitle: 'Nạp dữ liệu Tồn, Lịch trực, Live KPI',
-                      icon: <StorageIcon sx={{ fontSize: 30 }} />,
+                      icon: <StorageIcon sx={{ fontSize: 28 }} />,
                       gradient: 'linear-gradient(135deg, #ea580c 0%, #c2410c 100%)',
                       activeColor: '#ea580c',
                       badge: 'Central Hub'
@@ -3751,30 +3770,40 @@ export default function App() {
                     {
                       id: 3,
                       title: '4. Quản Lý Lương',
-                      subtitle: 'Tra cứu HĐLĐ & Tính lương nhân sự',
-                      icon: <SalaryIcon sx={{ fontSize: 30 }} />,
+                      subtitle: 'Tra cứu HĐLĐ & Tính lương',
+                      icon: <SalaryIcon sx={{ fontSize: 28 }} />,
                       gradient: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
                       activeColor: '#059669',
                       badge: 'Lương & HĐ'
+                    },
+                    {
+                      id: 4,
+                      title: '5. Quản Lý Lịch Trực',
+                      subtitle: 'Chi tiết & Sửa lịch trực 31 ngày',
+                      icon: <CalendarMonthIcon sx={{ fontSize: 28 }} />,
+                      gradient: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                      activeColor: '#0284c7',
+                      badge: 'Sửa Lịch Trực'
                     }
                   ].map((topic) => {
                     const isSelected = adminSubTab === topic.id;
 
                     return (
-                      <Grid item xs={12} sm={6} md={3} key={topic.id}>
-                        <Paper
-                          elevation={0}
-                          onClick={() => {
-                            setAdminSubTab(topic.id);
-                            if (topic.id === 0) fetchAdminHrList();
-                            if (topic.id === 1) fetchAdminUsers();
-                            if (topic.id === 3) fetchLuongList();
-                          }}
-                          sx={{
-                            p: 2.5,
-                            borderRadius: 3.5,
-                            cursor: 'pointer',
-                            transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                      <Paper
+                        key={topic.id}
+                        elevation={0}
+                        onClick={() => {
+                          setAdminSubTab(topic.id);
+                          if (topic.id === 0) fetchAdminHrList();
+                          if (topic.id === 1) fetchAdminUsers();
+                          if (topic.id === 3) fetchLuongList();
+                          if (topic.id === 4) fetchLichTrucChiTiet();
+                        }}
+                        sx={{
+                          p: 2,
+                          borderRadius: 3.5,
+                          cursor: 'pointer',
+                          transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
                             backgroundColor: isSelected ? '#ffffff' : '#f8fafc',
                             border: isSelected ? `2px solid ${topic.activeColor}` : '1px solid #e2e8f0',
                             boxShadow: isSelected ? `0 8px 24px ${topic.activeColor}25` : '0 2px 6px rgba(0,0,0,0.02)',
@@ -3832,10 +3861,9 @@ export default function App() {
                             {topic.subtitle}
                           </Typography>
                         </Paper>
-                      </Grid>
                     );
                   })}
-                </Grid>
+                </Box>
 
                 {/* CONTENT AREA FOR SELECTED TOPIC */}
                 <Paper elevation={0} sx={{ p: 3, borderRadius: 3.5, border: '1px solid #e0e0e0', backgroundColor: '#ffffff', boxShadow: '0 2px 10px rgba(0,0,0,0.03)' }}>
@@ -4312,6 +4340,24 @@ export default function App() {
                           </Table>
                         </TableContainer>
                       )}
+                    </Box>
+                  )}
+
+                  {/* TOPIC 4: QUẢN LÝ LỊCH TRỰC (FULL EDITABLE & IMPORT) */}
+                  {adminSubTab === 4 && (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                        <Box>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#0284c7' }}>
+                            📅 Quản Lý & Chỉnh Sửa Lịch Trực Kỹ Thuật (Admin Control)
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#64748b' }}>
+                            Dành riêng cho Quản trị viên: Cho phép Thêm, Sửa, Xóa, Import CSV lịch trực 31 ngày của kỹ thuật viên.
+                          </Typography>
+                        </Box>
+                      </Box>
+
+                      {renderLichTrucChiTiet(true)}
                     </Box>
                   )}
 
