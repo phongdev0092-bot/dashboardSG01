@@ -161,19 +161,33 @@ class KPIEngine:
             res_bt = requests.get(self._get_sheet_url(GIDS['BT']), timeout=60)
             df_bt = pd.read_csv(io.BytesIO(res_bt.content), encoding='utf-8', low_memory=False)
 
-            # Fetch Tồn Triển Khai & Tồn Bảo Trì from Sheet 1XIkHDecRAsL5fq4ZtRDkyQiiDh0vDXz6mk607P_T1Qo
-            ton_sid = '1XIkHDecRAsL5fq4ZtRDkyQiiDh0vDXz6mk607P_T1Qo'
-            print("Fetching live Tồn Triển Khai (GID 334356138) data...", flush=True)
-            url_ton_tk = f'https://docs.google.com/spreadsheets/d/{ton_sid}/export?format=csv&gid=334356138'
-            res_ton_tk = requests.get(url_ton_tk, timeout=40)
-            df_ton_tk = pd.read_csv(io.BytesIO(res_ton_tk.content), encoding='utf-8', dtype=str, low_memory=False)
-            df_ton_tk.to_pickle(CACHE_DIR / "ton_tk.pkl.gz")
+            # Fetch Tồn Triển Khai & Tồn Bảo Trì from Sheet 1Hihsf3_R3Z9aaqqj9vskIyveNX4UO2Ej3d26jF5-S2w
+            ton_sid = '1Hihsf3_R3Z9aaqqj9vskIyveNX4UO2Ej3d26jF5-S2w'
+            print("Fetching live Tồn Triển Khai (GID 0) data...", flush=True)
+            url_ton_tk = f'https://docs.google.com/spreadsheets/d/{ton_sid}/export?format=csv&gid=0'
+            try:
+                res_ton_tk = requests.get(url_ton_tk, timeout=40)
+                if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_tk = pd.read_csv(io.BytesIO(res_ton_tk.content), encoding='utf-8', dtype=str, low_memory=False)
+                    df_ton_tk.to_pickle(CACHE_DIR / "ton_tk.pkl.gz")
+                    print(f"Loaded live Tồn Triển Khai CSV! {len(df_ton_tk)} rows", flush=True)
+                else:
+                    print("Tồn Triển Khai sheet requires permissions or returned HTML. (Keep existing cache or import manually)", flush=True)
+            except Exception as e_ton_tk:
+                print(f"Warning: Failed to fetch live Tồn Triển Khai: {e_ton_tk}", flush=True)
 
-            print("Fetching live Tồn Bảo Trì (GID 1224453787) data...", flush=True)
-            url_ton_bt = f'https://docs.google.com/spreadsheets/d/{ton_sid}/export?format=csv&gid=1224453787'
-            res_ton_bt = requests.get(url_ton_bt, timeout=40)
-            df_ton_bt = pd.read_csv(io.BytesIO(res_ton_bt.content), encoding='utf-8', dtype=str, low_memory=False)
-            df_ton_bt.to_pickle(CACHE_DIR / "ton_bt.pkl.gz")
+            print("Fetching live Tồn Bảo Trì (GID 440862556) data...", flush=True)
+            url_ton_bt = f'https://docs.google.com/spreadsheets/d/{ton_sid}/export?format=csv&gid=440862556'
+            try:
+                res_ton_bt = requests.get(url_ton_bt, timeout=40)
+                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_bt = pd.read_csv(io.BytesIO(res_ton_bt.content), encoding='utf-8', dtype=str, low_memory=False)
+                    df_ton_bt.to_pickle(CACHE_DIR / "ton_bt.pkl.gz")
+                    print(f"Loaded live Tồn Bảo Trì CSV! {len(df_ton_bt)} rows", flush=True)
+                else:
+                    print("Tồn Bảo Trì sheet requires permissions or returned HTML. (Keep existing cache or import manually)", flush=True)
+            except Exception as e_ton_bt:
+                print(f"Warning: Failed to fetch live Tồn Bảo Trì: {e_ton_bt}", flush=True)
 
             print("Fetching live Lich Truc (LT) data...", flush=True)
             df_lt = pd.DataFrame()
@@ -1547,6 +1561,50 @@ class KPIEngine:
             'summaryTable': summary_table,
             'tkList': tk_list,
             'btList': bt_list
+        }
+
+    def import_ton_tk_bt(self, file_bytes: bytes, filename: str, mode: str = "AUTO"):
+        filename_lower = filename.lower()
+        try:
+            if filename_lower.endswith('.csv'):
+                df = pd.read_csv(io.BytesIO(file_bytes), encoding='utf-8', dtype=str, low_memory=False, on_bad_lines='skip')
+            elif filename_lower.endswith(('.xlsx', '.xls')):
+                df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+            else:
+                return {"ok": False, "error": "Định dạng file không hỗ trợ. Vui lòng sử dụng file CSV hoặc Excel (.xlsx, .xls)"}
+        except Exception as e:
+            return {"ok": False, "error": f"Lỗi đọc file: {str(e)}"}
+
+        if df is None or df.empty:
+            return {"ok": False, "error": "File rỗng, không có dữ liệu."}
+
+        cols_str = " ".join([str(c).strip().upper() for c in df.columns])
+        
+        detected_mode = mode
+        if mode == "AUTO":
+            if any(k in cols_str for k in ['TG TẠO PTC', 'LOẠI TRIỂN KHAI', 'TIN/PNC', 'PTC']):
+                detected_mode = "TK"
+            elif any(k in cols_str for k in ['TTSCBĐ', 'TỒN GIỜ', 'KTV GẦN NHẤT', 'BẢO TRÌ']):
+                detected_mode = "BT"
+            else:
+                detected_mode = "TK"
+
+        imported_count = len(df)
+
+        if detected_mode == "TK":
+            self.ton_tk_df = df
+            df.to_pickle(CACHE_DIR / "ton_tk.pkl.gz")
+            label = "Tồn Triển Khai (TK)"
+        else:
+            self.ton_bt_df = df
+            df.to_pickle(CACHE_DIR / "ton_bt.pkl.gz")
+            label = "Tồn Bảo Trì (BT)"
+
+        return {
+            "ok": True,
+            "mode": detected_mode,
+            "count": imported_count,
+            "message": f"Đã cập nhật thành công {imported_count} dòng cho {label}!"
         }
 
 

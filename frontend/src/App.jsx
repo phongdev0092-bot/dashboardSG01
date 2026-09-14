@@ -38,6 +38,8 @@ import {
   ListItemIcon,
   ListItemText,
   Badge,
+  LinearProgress,
+  Alert,
   useMediaQuery,
   useTheme
 } from '@mui/material';
@@ -47,6 +49,7 @@ import {
   Search as SearchIcon,
   FilterAlt as FilterIcon,
   Download as DownloadIcon,
+  FileUpload as FileUploadIcon,
   Speed as SpeedIcon,
   CheckCircle as CheckCircleIcon,
   Warning as WarningIcon,
@@ -204,6 +207,43 @@ export default function App() {
   const [over24hModalOpen, setOver24hModalOpen] = useState(false);
   const [noteDetailModalOpen, setNoteDetailModalOpen] = useState(false);
   const [selectedNoteItem, setSelectedNoteItem] = useState(null);
+
+  // Import Tồn TK-BT States
+  const [importTonModalOpen, setImportTonModalOpen] = useState(false);
+  const [importTonMode, setImportTonMode] = useState('AUTO'); // 'AUTO' | 'TK' | 'BT'
+  const [importingTon, setImportingTon] = useState(false);
+  const [importTonResult, setImportTonResult] = useState(null);
+  const tonImportInputRef = useRef(null);
+
+  const handleImportTonFileSelect = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    setImportingTon(true);
+    setImportTonResult(null);
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('mode', importTonMode);
+
+    try {
+      const res = await axios.post('/api/kpi/ton-tk-bt/import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if (res.data && res.data.ok) {
+        setImportTonResult({ ok: true, msg: res.data.message });
+        fetchTonTkBtDashboard();
+      } else {
+        setImportTonResult({ ok: false, msg: res.data.error || 'Có lỗi xảy ra khi xử lý file!' });
+      }
+    } catch (err) {
+      console.error("Import Tồn TK-BT error:", err);
+      setImportTonResult({ ok: false, msg: "Lỗi gửi dữ liệu tới máy chủ!" });
+    } finally {
+      setImportingTon(false);
+      e.target.value = '';
+    }
+  };
 
   // CRUD & Import States
   const [addRowOpen, setAddRowOpen] = useState(false);
@@ -2874,14 +2914,27 @@ export default function App() {
                           />
                         </Grid>
 
-                        <Grid item xs={12} sm={3} md={1.5}>
+                        <Grid item xs={12} sm={6} md={3} sx={{ display: 'flex', gap: 1, mt: 2.5 }}>
+                          <Button
+                            variant="contained"
+                            color="primary"
+                            fullWidth
+                            startIcon={<FileUploadIcon />}
+                            onClick={() => {
+                              setImportTonResult(null);
+                              setImportTonModalOpen(true);
+                            }}
+                            sx={{ borderRadius: 2, height: 40, fontWeight: 700 }}
+                          >
+                            Import Data
+                          </Button>
                           <Button
                             variant="contained"
                             color="success"
                             fullWidth
                             startIcon={<DownloadIcon />}
                             onClick={handleExportBacklogCSV}
-                            sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5, backgroundColor: '#1e8e3e' }}
+                            sx={{ borderRadius: 2, height: 40, fontWeight: 700, backgroundColor: '#1e8e3e' }}
                           >
                             Xuất CSV
                           </Button>
@@ -3010,6 +3063,7 @@ export default function App() {
                             <TableCell sx={{ fontWeight: 800 }}>Loại Giao Dịch</TableCell>
                             <TableCell align="center" sx={{ fontWeight: 800 }}>Thời Gian Tồn</TableCell>
                             <TableCell sx={{ fontWeight: 800 }}>Đội Trưởng</TableCell>
+                            <TableCell sx={{ fontWeight: 800 }}>Nhân Viên (KTV)</TableCell>
                             <TableCell align="center" sx={{ fontWeight: 800 }}>Ghi Chú TIN/PNC</TableCell>
                           </TableRow>
                         </TableHead>
@@ -3026,6 +3080,7 @@ export default function App() {
                                   <Chip label={`${row.tonHrs}h`} size="small" color="error" sx={{ fontWeight: 800 }} />
                                 </TableCell>
                                 <TableCell sx={{ fontSize: '12px' }}>{row.doiTruong}</TableCell>
+                                <TableCell sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043' }}>{row.nhanSu || '(chưa phân công)'}</TableCell>
                                 <TableCell align="center">
                                   <Button
                                     size="small"
@@ -3068,6 +3123,7 @@ export default function App() {
                             <TableCell sx={{ fontWeight: 800 }}>Tình Trạng</TableCell>
                             <TableCell align="center" sx={{ fontWeight: 800 }}>Thời Gian Tồn</TableCell>
                             <TableCell sx={{ fontWeight: 800 }}>Đội Trưởng</TableCell>
+                            <TableCell sx={{ fontWeight: 800 }}>Nhân Viên (KTV)</TableCell>
                             <TableCell align="center" sx={{ fontWeight: 800 }}>Thông Tin Note</TableCell>
                           </TableRow>
                         </TableHead>
@@ -3084,6 +3140,7 @@ export default function App() {
                                   <Chip label={`${row.tonHrs}h`} size="small" sx={{ fontWeight: 800, backgroundColor: '#fff3e0', color: '#e65100' }} />
                                 </TableCell>
                                 <TableCell sx={{ fontSize: '12px' }}>{row.doiTruong}</TableCell>
+                                <TableCell sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043' }}>{row.nhanSu || '(chưa phân công)'}</TableCell>
                                 <TableCell align="center">
                                   <Button
                                     size="small"
@@ -3122,6 +3179,7 @@ export default function App() {
                           <Typography variant="body2"><b>Khách Hàng:</b> {selectedNoteItem.tenKh}</Typography>
                           <Typography variant="body2"><b>Phân Loại:</b> {selectedNoteItem.typeLabel} ({selectedNoteItem.loaiGd})</Typography>
                           <Typography variant="body2"><b>Block:</b> {selectedNoteItem.block} (Đội trưởng: {selectedNoteItem.doiTruong})</Typography>
+                          <Typography variant="body2"><b>Nhân Viên (KTV):</b> {selectedNoteItem.nhanSu || '(Chưa phân công)'}</Typography>
                           <Typography variant="body2"><b>TG Tạo / Tồn:</b> {selectedNoteItem.createdAt} ({selectedNoteItem.tonHrs} Giờ)</Typography>
                         </Box>
 
@@ -3145,6 +3203,79 @@ export default function App() {
                   </DialogContent>
                   <DialogActions sx={{ p: 2 }}>
                     <Button onClick={() => setNoteDetailModalOpen(false)} variant="contained">Đóng</Button>
+                  </DialogActions>
+                </Dialog>
+
+                {/* MODAL 4: IMPORT DATA TỒN TK-BT */}
+                <Dialog open={importTonModalOpen} onClose={() => !importingTon && setImportTonModalOpen(false)} maxWidth="sm" fullWidth>
+                  <DialogTitle sx={{ fontWeight: 800, color: '#1a73e8', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>📥 IMPORT DỮ LIỆU TỒN TRIỂN KHAI & BẢO TRÌ</span>
+                    <IconButton size="small" onClick={() => setImportTonModalOpen(false)} disabled={importingTon}><CloseIcon /></IconButton>
+                  </DialogTitle>
+                  <DialogContent dividers sx={{ pt: 3, pb: 3 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                      <Typography variant="body2" sx={{ color: '#5f6368' }}>
+                        Tải file CSV hoặc Excel (.xlsx, .xls) chứa danh sách phiếu Tồn mới nhất để tính toán lại toàn bộ Dashboard. Dữ liệu cũ sẽ được ghi đè bằng file mới.
+                      </Typography>
+
+                      <Box>
+                        <FormLabel sx={{ fontSize: '13px', fontWeight: 700, color: '#202124', display: 'block', mb: 1 }}>
+                          Phân Loại Dataset File Import:
+                        </FormLabel>
+                        <TextField
+                          select
+                          fullWidth
+                          size="small"
+                          value={importTonMode}
+                          onChange={(e) => setImportTonMode(e.target.value)}
+                          disabled={importingTon}
+                        >
+                          <MenuItem value="AUTO">✨ Tự động nhận diện (Triển khai / Bảo trì)</MenuItem>
+                          <MenuItem value="TK">📂 File Tồn Triển Khai (TK)</MenuItem>
+                          <MenuItem value="BT">🛠️ File Tồn Bảo Trì (BT)</MenuItem>
+                        </TextField>
+                      </Box>
+
+                      {importingTon && (
+                        <Box sx={{ py: 2 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 700, color: '#1a73e8', mb: 1 }}>
+                            ⏳ Đang tải file, ghi đè dữ liệu cache & tính toán lại chỉ số...
+                          </Typography>
+                          <LinearProgress sx={{ borderRadius: 1, height: 8 }} />
+                        </Box>
+                      )}
+
+                      {importTonResult && (
+                        <Alert severity={importTonResult.ok ? 'success' : 'error'} sx={{ borderRadius: 2 }}>
+                          {importTonResult.msg}
+                        </Alert>
+                      )}
+
+                      <input
+                        type="file"
+                        ref={tonImportInputRef}
+                        style={{ display: 'none' }}
+                        accept=".csv, .xlsx, .xls"
+                        onChange={handleImportTonFileSelect}
+                      />
+
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        size="large"
+                        startIcon={<FileUploadIcon />}
+                        onClick={() => tonImportInputRef.current?.click()}
+                        disabled={importingTon}
+                        sx={{ borderRadius: 2, height: 48, fontWeight: 800, fontSize: '15px' }}
+                      >
+                        {importingTon ? 'Đang Xử Lý File...' : 'Chọn File CSV / Excel Để Import'}
+                      </Button>
+                    </Box>
+                  </DialogContent>
+                  <DialogActions sx={{ p: 2 }}>
+                    <Button onClick={() => setImportTonModalOpen(false)} disabled={importingTon} variant="outlined">
+                      Đóng
+                    </Button>
                   </DialogActions>
                 </Dialog>
 

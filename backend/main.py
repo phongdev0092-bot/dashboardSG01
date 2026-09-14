@@ -1,6 +1,6 @@
 import os
 from typing import Optional
-from fastapi import FastAPI, Query, BackgroundTasks
+from fastapi import FastAPI, Query, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -63,6 +63,12 @@ def get_employee_details(
 @app.get("/api/kpi/ton-tk-bt/dashboard")
 def get_ton_tk_bt_dashboard():
     return engine.get_ton_tk_bt_dashboard()
+
+@app.post("/api/kpi/ton-tk-bt/import")
+async def import_ton_tk_bt(file: UploadFile = File(...), mode: Optional[str] = Form("AUTO")):
+    contents = await file.read()
+    res = engine.import_ton_tk_bt(contents, file.filename, mode=mode)
+    return res
 
 @app.post("/api/kpi/sync")
 def trigger_sync(background_tasks: BackgroundTasks):
