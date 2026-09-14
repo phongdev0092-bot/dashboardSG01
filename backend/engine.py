@@ -1358,10 +1358,13 @@ class KPIEngine:
 
     def get_ton_tk_bt_dashboard(self):
         ns_by_block, hr_map = self._get_nhan_su_by_block()
+        import unicodedata
         df_tk = getattr(self, 'ton_tk_df', pd.DataFrame())
         if df_tk.empty:
             df_tk = self.tk_df
         df_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
+        if df_bt.empty:
+            df_bt = self.bt_df
 
         now = datetime.datetime.now()
 
@@ -1567,7 +1570,13 @@ class KPIEngine:
         filename_lower = filename.lower()
         try:
             if filename_lower.endswith('.csv'):
-                df = pd.read_csv(io.BytesIO(file_bytes), encoding='utf-8', dtype=str, low_memory=False, on_bad_lines='skip')
+                try:
+                    df = pd.read_csv(io.BytesIO(file_bytes), encoding='utf-8', dtype=str, low_memory=False, on_bad_lines='skip')
+                except Exception:
+                    try:
+                        df = pd.read_csv(io.BytesIO(file_bytes), encoding='utf-8-sig', dtype=str, low_memory=False, on_bad_lines='skip')
+                    except Exception:
+                        df = pd.read_csv(io.BytesIO(file_bytes), encoding='cp1252', dtype=str, low_memory=False, on_bad_lines='skip')
             elif filename_lower.endswith(('.xlsx', '.xls')):
                 df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
             else:

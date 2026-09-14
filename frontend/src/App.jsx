@@ -612,8 +612,10 @@ export default function App() {
     const tkList = tonTkBtData.tkList || [];
     const btList = tonTkBtData.btList || [];
 
+    const norm = (s) => (s || '').toString().normalize('NFC').trim();
+
     const filterItem = (item) => {
-      if (tonTkBtDoiTruong !== '__ALL__' && item.doiTruong !== tonTkBtDoiTruong) return false;
+      if (tonTkBtDoiTruong !== '__ALL__' && norm(item.doiTruong) !== norm(tonTkBtDoiTruong)) return false;
       if (tonTkBtBlockFilter !== '__ALL__' && item.block !== tonTkBtBlockFilter) return false;
       return true;
     };
@@ -660,12 +662,13 @@ export default function App() {
     }
 
     const searchKw = tonTkBtSearch.trim().toUpperCase();
+    const norm = (s) => (s || '').toString().normalize('NFC').trim();
 
     return combined.filter(item => {
       if (tonTkBtTypeFilter === 'TK' && item.type !== 'TK') return false;
       if (tonTkBtTypeFilter === 'BT' && item.type !== 'BT') return false;
 
-      if (tonTkBtDoiTruong !== '__ALL__' && item.doiTruong !== tonTkBtDoiTruong) return false;
+      if (tonTkBtDoiTruong !== '__ALL__' && norm(item.doiTruong) !== norm(tonTkBtDoiTruong)) return false;
       if (tonTkBtBlockFilter !== '__ALL__' && item.block !== tonTkBtBlockFilter) return false;
 
       if (tonTkBtCondFilter === 'TK_72H') {
@@ -2893,8 +2896,8 @@ export default function App() {
                             }}
                           >
                             <MenuItem value="ALL">Tất cả thời gian</MenuItem>
-                            <MenuItem value="TK_72H">Tồn Triển Khai &gt;72H</MenuItem>
-                            <MenuItem value="BT_24H">Tồn Bảo Trì &gt;24H</MenuItem>
+                            {tonTkBtTypeFilter !== 'BT' && <MenuItem value="TK_72H">Tồn Triển Khai &gt;72H</MenuItem>}
+                            {tonTkBtTypeFilter !== 'TK' && <MenuItem value="BT_24H">Tồn Bảo Trì &gt;24H</MenuItem>}
                           </TextField>
                         </Grid>
 
