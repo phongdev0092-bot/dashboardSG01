@@ -179,9 +179,58 @@ def start_lt_milestone_scheduler():
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
 
-@app.on_event("startup")
-def on_startup():
-    start_lt_milestone_scheduler()
+# =========================================================================
+# ADMIN & AUTHENTICATION API ENDPOINTS
+# =========================================================================
+@app.post("/api/admin/login")
+def admin_login(payload: dict):
+    login_id = payload.get('login_id', '')
+    password = payload.get('password', '')
+    return engine.authenticate_user(login_id, password)
+
+@app.post("/api/admin/setup-initial-password")
+def setup_initial_password(payload: dict):
+    login_id = payload.get('login_id', '')
+    password = payload.get('password', '')
+    return engine.setup_initial_admin_password(login_id, password)
+
+@app.post("/api/admin/check-hr-email")
+def check_hr_email(payload: dict):
+    email = payload.get('email', '')
+    return engine.check_hr_email(email)
+
+@app.post("/api/admin/register")
+def register_user(payload: dict):
+    mail = payload.get('mail', '')
+    user_alias = payload.get('user', '')
+    password = payload.get('password', '')
+    return engine.register_user(mail, user_alias, password)
+
+@app.get("/api/admin/users")
+def get_admin_users():
+    return engine.get_admin_users()
+
+@app.post("/api/admin/users/add")
+def add_admin_user(payload: dict):
+    return engine.add_admin_user(payload)
+
+@app.post("/api/admin/users/update")
+def update_admin_user(payload: dict):
+    user_id = payload.get('user_id', 0)
+    return engine.update_admin_user(user_id, payload)
+
+@app.post("/api/admin/users/delete")
+def delete_admin_user(payload: dict):
+    user_id = payload.get('user_id', 0)
+    return engine.delete_admin_user(user_id)
+
+@app.get("/api/admin/hr-list")
+def get_admin_hr_list(
+    search: Optional[str] = Query(""),
+    block: Optional[str] = Query("__ALL__"),
+    team_lead: Optional[str] = Query("__ALL__")
+):
+    return engine.get_hr_list(search=search, block=block, team_lead=team_lead)
 
 # Serve frontend build if dist directory exists
 frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")

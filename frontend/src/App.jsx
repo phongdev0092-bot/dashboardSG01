@@ -79,7 +79,18 @@ import {
   Person as PersonIcon,
   AssignmentLate as AssignmentLateIcon,
   Settings as SettingsIcon,
-  Add as AddIcon
+  Add as AddIcon,
+  AdminPanelSettings as AdminPanelSettingsIcon,
+  Lock as LockIcon,
+  PersonAdd as PersonAddIcon,
+  Login as LoginIcon,
+  Logout as LogoutIcon,
+  Badge as BadgeIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  People as PeopleIcon,
+  Storage as StorageIcon,
+  VpnKey as VpnKeyIcon
 } from '@mui/icons-material';
 
 import axios from 'axios';
@@ -214,6 +225,240 @@ export default function App() {
   const [importingTon, setImportingTon] = useState(false);
   const [importTonResult, setImportTonResult] = useState(null);
   const tonImportInputRef = useRef(null);
+
+  // ================= ADMIN & AUTH SYSTEM STATES =================
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const stored = localStorage.getItem('kpi_current_user');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authTab, setAuthTab] = useState(0); // 0: Login, 1: Register, 2: Setup Pass
+  const [loginId, setLoginId] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+
+  const [regMail, setRegMail] = useState('');
+  const [regUser, setRegUser] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [hrCheckResult, setHrCheckResult] = useState(null);
+
+  const [setupPassword, setSetupPassword] = useState('');
+  const [setupConfirmPassword, setSetupConfirmPassword] = useState('');
+
+  const [authError, setAuthError] = useState(null);
+  const [authLoading, setAuthLoading] = useState(false);
+
+  // Admin Page States
+  const [adminSubTab, setAdminSubTab] = useState(0); // 0: HR List, 1: Admin Users Table, 2: Import DB
+
+  // Topic 1: HR List States
+  const [hrList, setHrList] = useState([]);
+  const [hrLoading, setHrLoading] = useState(false);
+  const [hrSearch, setHrSearch] = useState('');
+  const [hrBlockFilter, setHrBlockFilter] = useState('__ALL__');
+  const [hrTlFilter, setHrTlFilter] = useState('__ALL__');
+
+  // Topic 2: Admin Users Table States
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminUsersLoading, setAdminUsersLoading] = useState(false);
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState(null); // null for Add, user object for Edit
+  const [userForm, setUserForm] = useState({
+    msnv: '', name: '', mail: '', user: '', password: '', role: 'user'
+  });
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState(null);
+
+  const handleLogin = async (e) => {
+    if (e) e.preventDefault();
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      const res = await axios.post('/api/admin/login', { login_id: loginId, password: loginPassword });
+      if (res.data && res.data.ok) {
+        const u = res.data.user;
+        localStorage.setItem('kpi_current_user', JSON.stringify(u));
+        setCurrentUser(u);
+        setAuthModalOpen(false);
+        setCurrentNav('admin');
+        fetchAdminUsers();
+      } else {
+        setAuthError(res.data?.error || 'Đăng nhập thất bại!');
+      }
+    } catch (err) {
+      setAuthError(err.response?.data?.detail || err.message || 'Lỗi kết nối tới máy chủ!');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSetupInitialAdminPassword = async (e) => {
+    if (e) e.preventDefault();
+    if (!setupPassword || setupPassword.length < 4) {
+      setAuthError('Mật khẩu mới phải có ít nhất 4 ký tự!');
+      return;
+    }
+    if (setupPassword !== setupConfirmPassword) {
+      setAuthError('Xác nhận mật khẩu không khớp!');
+      return;
+    }
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      const res = await axios.post('/api/admin/setup-initial-password', {
+        login_id: 'phuongnam.phongnh5@fpt.net',
+        password: setupPassword
+      });
+      if (res.data && res.data.ok) {
+        alert("Đã cài đặt mật khẩu admin thành công! Vui lòng đăng nhập với mật khẩu mới.");
+        setLoginId('phuongnam.phongnh5@fpt.net');
+        setLoginPassword(setupPassword);
+        setAuthTab(0);
+      } else {
+        setAuthError(res.data?.error || 'Cài đặt mật khẩu thất bại!');
+      }
+    } catch (err) {
+      setAuthError(err.response?.data?.detail || err.message || 'Lỗi kết nối!');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleCheckHrEmail = async (email) => {
+    if (!email || !email.includes('@')) return;
+    try {
+      const res = await axios.post('/api/admin/check-hr-email', { email });
+      if (res.data && res.data.ok && res.data.found) {
+        setHrCheckResult(res.data);
+      } else {
+        setHrCheckResult(null);
+      }
+    } catch {
+      setHrCheckResult(null);
+    }
+  };
+
+  const handleRegister = async (e) => {
+    if (e) e.preventDefault();
+    if (!regMail || !regPassword) {
+      setAuthError('Vui lòng nhập Email và Mật khẩu!');
+      return;
+    }
+    if (regPassword !== regConfirmPassword) {
+      setAuthError('Xác nhận mật khẩu không khớp!');
+      return;
+    }
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      const res = await axios.post('/api/admin/register', {
+        mail: regMail,
+        user: regUser,
+        password: regPassword
+      });
+      if (res.data && res.data.ok) {
+        const u = res.data.user;
+        alert(res.data.message || 'Đăng ký tài khoản thành công!');
+        localStorage.setItem('kpi_current_user', JSON.stringify(u));
+        setCurrentUser(u);
+        setAuthModalOpen(false);
+        setCurrentNav('admin');
+        fetchAdminUsers();
+      } else {
+        setAuthError(res.data?.error || 'Đăng ký tài khoản thất bại!');
+      }
+    } catch (err) {
+      setAuthError(err.response?.data?.detail || err.message || 'Lỗi kết nối!');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('kpi_current_user');
+    setCurrentUser(null);
+    setCurrentNav('kpis');
+  };
+
+  const fetchAdminUsers = async () => {
+    setAdminUsersLoading(true);
+    try {
+      const res = await axios.get('/api/admin/users');
+      if (res.data) setAdminUsers(res.data);
+    } catch (err) {
+      console.error("Fetch admin users error:", err);
+    } finally {
+      setAdminUsersLoading(false);
+    }
+  };
+
+  const fetchAdminHrList = async () => {
+    setHrLoading(true);
+    try {
+      const res = await axios.get('/api/admin/hr-list', {
+        params: { search: hrSearch, block: hrBlockFilter, team_lead: hrTlFilter }
+      });
+      if (res.data) setHrList(res.data);
+    } catch (err) {
+      console.error("Fetch HR list error:", err);
+    } finally {
+      setHrLoading(false);
+    }
+  };
+
+  const handleSaveUser = async () => {
+    if (!userForm.mail || (!editingUser && !userForm.password)) {
+      alert("Vui lòng điền đầy đủ Email và Mật khẩu!");
+      return;
+    }
+    try {
+      if (editingUser) {
+        const res = await axios.post('/api/admin/users/update', {
+          user_id: editingUser.id,
+          msnv: userForm.msnv,
+          name: userForm.name,
+          mail: userForm.mail,
+          user: userForm.user,
+          password: userForm.password,
+          role: userForm.role
+        });
+        if (res.data && res.data.ok) {
+          alert(res.data.message);
+          setUserModalOpen(false);
+          fetchAdminUsers();
+        } else alert(res.data?.error || "Lỗi cập nhật!");
+      } else {
+        const res = await axios.post('/api/admin/users/add', userForm);
+        if (res.data && res.data.ok) {
+          alert(res.data.message);
+          setUserModalOpen(false);
+          fetchAdminUsers();
+        } else alert(res.data?.error || "Lỗi thêm user!");
+      }
+    } catch (err) {
+      alert("Lỗi khi lưu tài khoản!");
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    try {
+      const res = await axios.post('/api/admin/users/delete', { user_id: userToDelete.id });
+      if (res.data && res.data.ok) {
+        alert(res.data.message);
+        setDeleteConfirmOpen(false);
+        setUserToDelete(null);
+        fetchAdminUsers();
+      } else alert(res.data?.error || "Lỗi xóa user!");
+    } catch {
+      alert("Lỗi kết nối khi xóa!");
+    }
+  };
 
   const handleImportTonFileSelect = async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -359,8 +604,17 @@ export default function App() {
       }
     } else if (currentNav === 'ton_tk_bt') {
       fetchTonTkBtDashboard();
+    } else if (currentNav === 'admin') {
+      fetchAdminUsers();
+      fetchAdminHrList();
     }
-  }, [currentNav, ltTab]);
+  }, [currentNav, ltTab, adminSubTab]);
+
+  useEffect(() => {
+    if (currentNav === 'admin' && adminSubTab === 0) {
+      fetchAdminHrList();
+    }
+  }, [hrSearch, hrBlockFilter, hrTlFilter, currentNav, adminSubTab]);
 
   // Date Preset Buttons Handler
   const handleDatePreset = (presetKey) => {
@@ -991,7 +1245,12 @@ export default function App() {
               <ListItemButton
                 selected={isActive}
                 onClick={() => {
-                  setCurrentNav(item.id);
+                  if (item.id === 'admin' && !currentUser) {
+                    setAuthError(null);
+                    setAuthModalOpen(true);
+                  } else {
+                    setCurrentNav(item.id);
+                  }
                   if (isMobile) setMobileOpen(false);
                 }}
                 sx={{
@@ -3289,6 +3548,328 @@ export default function App() {
               </Box>
             )}
 
+            {/* ========================================================================= */}
+            {/* MAIN NAVIGATION TAB 4: TRANG QUẢN TRỊ (ADMIN PAGE) */}
+            {/* ========================================================================= */}
+            {currentNav === 'admin' && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {/* HEADER USER BAR */}
+                <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, backgroundColor: '#ffffff', border: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Box sx={{ width: 48, height: 48, borderRadius: '50%', backgroundColor: '#e8f0fe', color: '#1a73e8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <AdminPanelSettingsIcon sx={{ fontSize: 28 }} />
+                    </Box>
+                    <Box>
+                      <Typography variant="h6" sx={{ fontWeight: 800, color: '#202124', lineHeight: 1.2 }}>
+                        Trang Quản Trị Hệ Thống (Admin Panel)
+                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                        <Typography variant="body2" sx={{ color: '#5f6368', fontWeight: 600 }}>
+                          Đang đăng nhập: <b>{currentUser?.name || currentUser?.mail}</b> ({currentUser?.mail})
+                        </Typography>
+                        <Chip
+                          label={currentUser?.role === 'admin' ? 'Quản trị viên (Admin)' : 'Người dùng (User)'}
+                          size="small"
+                          color={currentUser?.role === 'admin' ? 'secondary' : 'primary'}
+                          sx={{ fontWeight: 800, height: 22 }}
+                        />
+                      </Box>
+                    </Box>
+                  </Box>
+
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    startIcon={<LogoutIcon />}
+                    onClick={handleLogout}
+                    sx={{ borderRadius: 2, fontWeight: 700 }}
+                  >
+                    Đăng Xuất
+                  </Button>
+                </Paper>
+
+                {/* SUB-TABS TOPIC SELECTION */}
+                <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid #e0e0e0', overflow: 'hidden', backgroundColor: '#ffffff' }}>
+                  <Tabs
+                    value={adminSubTab}
+                    onChange={(e, val) => setAdminSubTab(val)}
+                    variant="scrollable"
+                    scrollButtons="auto"
+                    sx={{
+                      borderBottom: '1px solid #e0e0e0',
+                      backgroundColor: '#f8fafc',
+                      '& .MuiTab-root': { fontWeight: 700, minHeight: 52 }
+                    }}
+                  >
+                    <Tab icon={<PeopleIcon />} iconPosition="start" label="1. HR Nhân Sự" />
+                    <Tab icon={<AdminPanelSettingsIcon />} iconPosition="start" label="2. Trang Quản Trị User (Sheet Admin)" />
+                    <Tab icon={<StorageIcon />} iconPosition="start" label="3. Import Data Base" />
+                  </Tabs>
+
+                  <Box sx={{ p: 3 }}>
+                    {/* TOPIC 1: HR NHÂN SỰ */}
+                    {adminSubTab === 0 && (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#1e293b' }}>
+                          👥 Danh Sách Thông Tin Nhân Sự (HR Database)
+                        </Typography>
+
+                        {/* FILTER BAR */}
+                        <Grid container spacing={2} alignItems="center">
+                          <Grid item xs={12} sm={4} md={4}>
+                            <TextField
+                              fullWidth
+                              size="small"
+                              placeholder="Tìm kiếm Mã NV, Họ Tên, Email, Account, Phone..."
+                              value={hrSearch}
+                              onChange={(e) => setHrSearch(e.target.value)}
+                              InputProps={{ startAdornment: <SearchIcon sx={{ color: '#94a3b8', mr: 1 }} /> }}
+                            />
+                          </Grid>
+                          <Grid item xs={12} sm={4} md={3}>
+                            <TextField select fullWidth size="small" value={hrBlockFilter} onChange={(e) => setHrBlockFilter(e.target.value)} label="Lọc Block">
+                              <MenuItem value="__ALL__">-- Tất cả Block --</MenuItem>
+                              {options.blocks?.map(b => <MenuItem key={b} value={b}>{b}</MenuItem>)}
+                            </TextField>
+                          </Grid>
+                          <Grid item xs={12} sm={4} md={3}>
+                            <TextField select fullWidth size="small" value={hrTlFilter} onChange={(e) => setHrTlFilter(e.target.value)} label="Lọc Đội Trưởng">
+                              <MenuItem value="__ALL__">-- Tất cả Đội Trưởng --</MenuItem>
+                              {options.team_leads?.map(tl => <MenuItem key={tl} value={tl}>{tl}</MenuItem>)}
+                            </TextField>
+                          </Grid>
+                          <Grid item xs={12} sm={12} md={2}>
+                            <Button variant="contained" fullWidth onClick={fetchAdminHrList} startIcon={<RefreshIcon />} sx={{ borderRadius: 2, height: 40, fontWeight: 700 }}>
+                              Tải Lại
+                            </Button>
+                          </Grid>
+                        </Grid>
+
+                        {/* HR TABLE */}
+                        {hrLoading ? (
+                          <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress /></Box>
+                        ) : (
+                          <TableContainer sx={{ maxHeight: 600 }}>
+                            <Table stickyHeader size="small">
+                              <TableHead sx={{ backgroundColor: '#f1f5f9' }}>
+                                <TableRow>
+                                  <TableCell align="center" sx={{ fontWeight: 800, width: 50 }}>STT</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>Mã NV</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>Họ và Tên</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>Inside Account</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>Email</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>Số Điện Thoại</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>Block</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>Đội Trưởng</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>Chức Danh</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>Loại HĐ</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {hrList.length === 0 ? (
+                                  <TableRow>
+                                    <TableCell colSpan={10} align="center" sx={{ py: 4, color: '#64748b' }}>Không tìm thấy nhân sự phù hợp.</TableCell>
+                                  </TableRow>
+                                ) : (
+                                  hrList.map((row) => (
+                                    <TableRow key={row.stt} hover>
+                                      <TableCell align="center">{row.stt}</TableCell>
+                                      <TableCell sx={{ fontWeight: 800, color: '#1a73e8' }}>{row.code}</TableCell>
+                                      <TableCell sx={{ fontWeight: 700 }}>{row.name}</TableCell>
+                                      <TableCell sx={{ fontWeight: 600, color: '#334155' }}>{row.account}</TableCell>
+                                      <TableCell sx={{ fontSize: '12px' }}>{row.mail}</TableCell>
+                                      <TableCell sx={{ fontSize: '12px' }}>{row.phone}</TableCell>
+                                      <TableCell sx={{ fontWeight: 600 }}>{row.block}</TableCell>
+                                      <TableCell sx={{ fontSize: '12px' }}>{row.team_lead}</TableCell>
+                                      <TableCell sx={{ fontSize: '12px' }}>{row.title}</TableCell>
+                                      <TableCell>
+                                        <Chip label={row.status || 'Chính thức'} size="small" color={row.status?.includes('Chính thức') ? 'success' : 'default'} sx={{ height: 20, fontSize: '10px', fontWeight: 700 }} />
+                                      </TableCell>
+                                    </TableRow>
+                                  ))
+                                )}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        )}
+                      </Box>
+                    )}
+
+                    {/* TOPIC 2: QỦAN TRỊ USER (SHEET ADMIN) */}
+                    {adminSubTab === 1 && (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                          <Box>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#1e293b' }}>
+                              🔑 Quản Lý Tài Khoản Người Dùng (Sheet Admin Users)
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#64748b' }}>
+                              Sheet ID: <code>10Y5WBM9PDng_AsiyNxgFbEUac8XFBviRc21G0ar6erY</code> | GID: 0 (Cấu trúc: ID, MSNV, Họ và Tên, Mail, User, Mật Khẩu, Quyền)
+                            </Typography>
+                          </Box>
+
+                          <Button
+                            variant="contained"
+                            color="primary"
+                            startIcon={<AddIcon />}
+                            onClick={() => {
+                              setEditingUser(null);
+                              setUserForm({ msnv: '', name: '', mail: '', user: '', password: '', role: 'user' });
+                              setUserModalOpen(true);
+                            }}
+                            sx={{ borderRadius: 2, fontWeight: 700 }}
+                          >
+                            Thêm User Mới
+                          </Button>
+                        </Box>
+
+                        {adminUsersLoading ? (
+                          <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress /></Box>
+                        ) : (
+                          <TableContainer sx={{ maxHeight: 600 }}>
+                            <Table stickyHeader size="small">
+                              <TableHead sx={{ backgroundColor: '#f1f5f9' }}>
+                                <TableRow>
+                                  <TableCell align="center" sx={{ fontWeight: 800, width: 60 }}>ID</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>MSNV</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>Họ và Tên</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>Mail</TableCell>
+                                  <TableCell sx={{ fontWeight: 800 }}>User (Mật danh)</TableCell>
+                                  <TableCell align="center" sx={{ fontWeight: 800 }}>Quyền</TableCell>
+                                  <TableCell align="center" sx={{ fontWeight: 800, width: 120 }}>Thao Tác</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {adminUsers.length === 0 ? (
+                                  <TableRow>
+                                    <TableCell colSpan={7} align="center" sx={{ py: 4, color: '#64748b' }}>Chưa có tài khoản người dùng nào.</TableCell>
+                                  </TableRow>
+                                ) : (
+                                  adminUsers.map((row) => (
+                                    <TableRow key={row.id} hover>
+                                      <TableCell align="center" sx={{ fontWeight: 800, color: '#475569' }}>{row.id}</TableCell>
+                                      <TableCell sx={{ fontWeight: 700, color: '#1a73e8' }}>{row.msnv || '-'}</TableCell>
+                                      <TableCell sx={{ fontWeight: 700, color: '#1e293b' }}>{row.name}</TableCell>
+                                      <TableCell sx={{ fontSize: '13px' }}>{row.mail}</TableCell>
+                                      <TableCell sx={{ fontWeight: 600, color: '#475569' }}>{row.user}</TableCell>
+                                      <TableCell align="center">
+                                        <Chip
+                                          label={row.role === 'admin' ? 'ADMIN' : 'USER'}
+                                          color={row.role === 'admin' ? 'secondary' : 'default'}
+                                          size="small"
+                                          sx={{ fontWeight: 800, height: 22 }}
+                                        />
+                                      </TableCell>
+                                      <TableCell align="center">
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', gap: 0.5 }}>
+                                          <IconButton
+                                            size="small"
+                                            color="primary"
+                                            onClick={() => {
+                                              setEditingUser(row);
+                                              setUserForm({
+                                                msnv: row.msnv,
+                                                name: row.name,
+                                                mail: row.mail,
+                                                user: row.user,
+                                                password: '',
+                                                role: row.role
+                                              });
+                                              setUserModalOpen(true);
+                                            }}
+                                          >
+                                            <EditIcon fontSize="small" />
+                                          </IconButton>
+                                          <IconButton
+                                            size="small"
+                                            color="error"
+                                            disabled={row.mail === 'phuongnam.phongnh5@fpt.net'}
+                                            onClick={() => {
+                                              setUserToDelete(row);
+                                              setDeleteConfirmOpen(true);
+                                            }}
+                                          >
+                                            <DeleteIcon fontSize="small" />
+                                          </IconButton>
+                                        </Box>
+                                      </TableCell>
+                                    </TableRow>
+                                  ))
+                                )}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        )}
+                      </Box>
+                    )}
+
+                    {/* TOPIC 3: IMPORT DATA BASE */}
+                    {adminSubTab === 2 && (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#1e293b' }}>
+                          📦 Trung Tâm Import Dữ Liệu Hệ Thống (Central Data Hub)
+                        </Typography>
+
+                        <Grid container spacing={3}>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 4px 12px rgba(0,0,0,0.05)' } }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#1a73e8' }}>
+                                <PendingActionsIcon />
+                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Tồn TK-BT</Typography>
+                              </Box>
+                              <Typography variant="caption" sx={{ color: '#64748b' }}>Import file CSV/Excel danh sách phiếu tồn Triển Khai và Bảo Trì mới nhất.</Typography>
+                              <Button variant="contained" size="small" startIcon={<FileUploadIcon />} onClick={() => setImportTonModalOpen(true)} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
+                                Import Tồn TK-BT
+                              </Button>
+                            </Paper>
+                          </Grid>
+
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 4px 12px rgba(0,0,0,0.05)' } }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#2e7d32' }}>
+                                <CalendarMonthIcon />
+                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Lịch Trực Ca</Typography>
+                              </Box>
+                              <Typography variant="caption" sx={{ color: '#64748b' }}>Import file CSV lịch phân ca kỹ thuật tháng hiện tại để tính toán tỉ lệ trực.</Typography>
+                              <Button variant="contained" color="success" size="small" startIcon={<FileUploadIcon />} onClick={() => importInputRef.current && importInputRef.current.click()} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
+                                Import Lịch Trực
+                              </Button>
+                            </Paper>
+                          </Grid>
+
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 4px 12px rgba(0,0,0,0.05)' } }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#9c27b0' }}>
+                                <BarChartIcon />
+                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>KPIs Tổng Hợp</Typography>
+                              </Box>
+                              <Typography variant="caption" sx={{ color: '#64748b' }}>Đồng bộ dữ liệu live từ Google Sheet KPI Triển Khai & Bảo Trì chính.</Typography>
+                              <Button variant="contained" color="secondary" size="small" startIcon={<RefreshIcon />} onClick={triggerSync} disabled={syncing} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
+                                {syncing ? 'Đang Đồng Bộ...' : 'Đồng Bộ Live KPI'}
+                              </Button>
+                            </Paper>
+                          </Grid>
+
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 4px 12px rgba(0,0,0,0.05)' } }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#ea580c' }}>
+                                <PeopleIcon />
+                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>HR Nhân Sự</Typography>
+                              </Box>
+                              <Typography variant="caption" sx={{ color: '#64748b' }}>Nạp lại bảng danh mục nhân sự và danh sách Đội trưởng / Block.</Typography>
+                              <Button variant="outlined" color="warning" size="small" startIcon={<RefreshIcon />} onClick={fetchAdminHrList} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
+                                Nạp Lại HR Data
+                              </Button>
+                            </Paper>
+                          </Grid>
+                        </Grid>
+                      </Box>
+                    )}
+                  </Box>
+                </Paper>
+              </Box>
+            )}
+
           </Box>
         </Box>
 
@@ -3587,6 +4168,195 @@ export default function App() {
             </Box>
           )}
         </Drawer>
+
+        {/* AUTHENTICATION DIALOG MODAL */}
+        <Dialog open={authModalOpen} onClose={() => setAuthModalOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle sx={{ fontWeight: 800, textAlign: 'center', pt: 3, color: '#1e293b' }}>
+            🔒 ĐĂNG NHẬP / ĐĂNG KÝ HỆ THỐNG
+          </DialogTitle>
+          <DialogContent dividers sx={{ p: 3 }}>
+            <Tabs value={authTab} onChange={(e, val) => { setAuthTab(val); setAuthError(null); }} centered sx={{ mb: 2.5, borderBottom: '1px solid #e2e8f0' }}>
+              <Tab icon={<LoginIcon />} label="Đăng Nhập" />
+              <Tab icon={<PersonAddIcon />} label="Đăng Ký" />
+            </Tabs>
+
+            {authError && (
+              <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>{authError}</Alert>
+            )}
+
+            {/* TAB 0: LOGIN */}
+            {authTab === 0 && (
+              <Box component="form" onSubmit={handleLogin} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Mail hoặc User (mật danh)"
+                  placeholder="Nhập Mail hoặc User..."
+                  value={loginId}
+                  onChange={(e) => setLoginId(e.target.value)}
+                  required
+                />
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="password"
+                  label="Mật khẩu"
+                  placeholder="Nhập mật khẩu..."
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  required
+                />
+
+                <Button type="submit" variant="contained" color="primary" fullWidth disabled={authLoading} sx={{ borderRadius: 2, height: 42, fontWeight: 800, mt: 1 }}>
+                  {authLoading ? <CircularProgress size={24} /> : 'ĐĂNG NHẬP'}
+                </Button>
+
+                <Divider sx={{ my: 1 }}>hoặc</Divider>
+
+                <Button variant="text" color="secondary" size="small" onClick={() => { setAuthTab(2); setAuthError(null); }}>
+                  🔑 Cài đặt mật khẩu lần đầu cho admin phuongnam.phongnh5@fpt.net
+                </Button>
+              </Box>
+            )}
+
+            {/* TAB 1: REGISTER */}
+            {authTab === 1 && (
+              <Box component="form" onSubmit={handleRegister} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Email nhân sự (FPT/PNC)"
+                  placeholder="VD: namnp@fpt.net..."
+                  value={regMail}
+                  onChange={(e) => {
+                    setRegMail(e.target.value);
+                    handleCheckHrEmail(e.target.value);
+                  }}
+                  required
+                />
+
+                {hrCheckResult && (
+                  <Alert severity="success" sx={{ borderRadius: 2, py: 0.5 }}>
+                    <Typography variant="caption" sx={{ fontWeight: 700, display: 'block' }}>
+                      ✓ Khớp nhân sự HR: {hrCheckResult.name} (MSNV: {hrCheckResult.msnv})
+                    </Typography>
+                  </Alert>
+                )}
+
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="User (Mật danh tự chọn tùy thích)"
+                  placeholder="VD: phongnh5_admin..."
+                  value={regUser}
+                  onChange={(e) => setRegUser(e.target.value)}
+                />
+
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="password"
+                  label="Mật khẩu"
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  required
+                />
+
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="password"
+                  label="Xác nhận mật khẩu"
+                  value={regConfirmPassword}
+                  onChange={(e) => setRegConfirmPassword(e.target.value)}
+                  required
+                />
+
+                <Button type="submit" variant="contained" color="success" fullWidth disabled={authLoading} sx={{ borderRadius: 2, height: 42, fontWeight: 800, mt: 1 }}>
+                  {authLoading ? <CircularProgress size={24} /> : 'ĐĂNG KÝ TÀI KHOẢN'}
+                </Button>
+              </Box>
+            )}
+
+            {/* TAB 2: SETUP INITIAL ADMIN PASSWORD */}
+            {authTab === 2 && (
+              <Box component="form" onSubmit={handleSetupInitialAdminPassword} sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Typography variant="body2" sx={{ color: '#475569', fontWeight: 600 }}>
+                  Thiết lập mật khẩu lần đầu cho tài khoản quản trị mặc định: <b>phuongnam.phongnh5@fpt.net</b>
+                </Typography>
+
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="password"
+                  label="Mật khẩu mới"
+                  value={setupPassword}
+                  onChange={(e) => setSetupPassword(e.target.value)}
+                  required
+                />
+
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="password"
+                  label="Xác nhận mật khẩu mới"
+                  value={setupConfirmPassword}
+                  onChange={(e) => setSetupConfirmPassword(e.target.value)}
+                  required
+                />
+
+                <Button type="submit" variant="contained" color="secondary" fullWidth disabled={authLoading} sx={{ borderRadius: 2, height: 42, fontWeight: 800, mt: 1 }}>
+                  {authLoading ? <CircularProgress size={24} /> : 'LƯU MẬT KHẨU & ĐĂNG NHẬP'}
+                </Button>
+
+                <Button variant="text" color="inherit" size="small" onClick={() => setAuthTab(0)}>
+                  Quay lại Đăng nhập
+                </Button>
+              </Box>
+            )}
+          </DialogContent>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setAuthModalOpen(false)} color="inherit">Đóng</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* EDIT / ADD USER DIALOG MODAL */}
+        <Dialog open={userModalOpen} onClose={() => setUserModalOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle sx={{ fontWeight: 800, color: '#1a73e8' }}>
+            {editingUser ? '✏️ SỬA TÀI KHOẢN NGƯỜI DÙNG' : '➕ THÊM USER MỚI (SHEET ADMIN)'}
+          </DialogTitle>
+          <DialogContent dividers>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+              <TextField fullWidth size="small" label="MSNV" value={userForm.msnv} onChange={(e) => setUserForm({ ...userForm, msnv: e.target.value })} />
+              <TextField fullWidth size="small" label="Họ và Tên" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} />
+              <TextField fullWidth size="small" label="Mail" value={userForm.mail} onChange={(e) => setUserForm({ ...userForm, mail: e.target.value })} required />
+              <TextField fullWidth size="small" label="User (Mật danh)" value={userForm.user} onChange={(e) => setUserForm({ ...userForm, user: e.target.value })} />
+              <TextField fullWidth size="small" type="password" label={editingUser ? "Mật khẩu mới (Để trống nếu không đổi)" : "Mật khẩu"} value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} />
+              <TextField select fullWidth size="small" label="Quyền Hạn" value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
+                <MenuItem value="user">User (Người dùng thường)</MenuItem>
+                <MenuItem value="admin">Admin (Quản trị viên)</MenuItem>
+              </TextField>
+            </Box>
+          </DialogContent>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setUserModalOpen(false)} variant="outlined">Hủy</Button>
+            <Button onClick={handleSaveUser} variant="contained" color="primary">Lưu Thay Đổi</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* DELETE USER CONFIRM DIALOG */}
+        <Dialog open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle sx={{ fontWeight: 800, color: '#d93025' }}>⚠️ XÁC NHẬN XÓA TÀI KHOẢN</DialogTitle>
+          <DialogContent dividers>
+            <Typography variant="body2">
+              Bạn có chắc chắn muốn xóa tài khoản <b>{userToDelete?.name}</b> ({userToDelete?.mail}) khỏi hệ thống?
+            </Typography>
+          </DialogContent>
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setDeleteConfirmOpen(false)} variant="outlined">Hủy</Button>
+            <Button onClick={handleDeleteUser} variant="contained" color="error">Xóa Tài Khoản</Button>
+          </DialogActions>
+        </Dialog>
 
       </Box>
     </ThemeProvider>

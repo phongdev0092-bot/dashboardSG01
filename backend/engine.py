@@ -42,12 +42,14 @@ class KPIEngine:
         self.sync_error = None
         self.lt_history = []
         self.lt_snapshot_map = {}
+        self.admin_users_df = pd.DataFrame()
         try:
             CACHE_DIR.mkdir(exist_ok=True, parents=True)
         except Exception:
             pass
         self._load_lt_history_and_snapshot()
         self.load_cache_or_fetch()
+        self._load_admin_users()
 
     def _save_pickle(self, df_or_obj, filename: str):
         try:
@@ -1649,5 +1651,320 @@ class KPIEngine:
             "count": imported_count,
             "message": f"Đã cập nhật thành công {imported_count} dòng cho {label}!"
         }
+
+    # =========================================================================
+    # ADMIN USERS & AUTHENTICATION SYSTEM
+    # =========================================================================
+    def _load_admin_users(self):
+        def _get_path(name):
+            tmp_dir = Path("/tmp/data_cache")
+            tmp_gz = tmp_dir / f"{name}.pkl.gz"
+            if tmp_gz.exists():
+                return tmp_gz
+            tmp_pkl = tmp_dir / f"{name}.pkl"
+            if tmp_pkl.exists():
+                return tmp_pkl
+            gz = CACHE_DIR / f"{name}.pkl.gz"
+            if gz.exists():
+                return gz
+            return CACHE_DIR / f"{name}.pkl"
+
+        admin_cache = _get_path("admin_users")
+        if admin_cache.exists():
+            try:
+                self.admin_users_df = pd.read_pickle(admin_cache)
+                print(f"Loaded {len(self.admin_users_df)} admin users from cache.", flush=True)
+                return
+            except Exception as e:
+                print(f"Failed to read admin users cache: {e}", flush=True)
+
+        # Initialize default seed admin dataset
+        default_data = [{
+            "ID": 1,
+            "MSNV": "PNC01.PHONGNH5",
+            "Họ và Tên": "Nguyễn Hồng Phong",
+            "Mail": "phuongnam.phongnh5@fpt.net",
+            "User": "phuongnam.phongnh5",
+            "Mật Khẩu": "Benngo@@2026",
+            "Quyền": "admin",
+            "is_password_set": True
+        }]
+        self.admin_users_df = pd.DataFrame(default_data)
+        self._save_admin_users()
+
+    def _save_admin_users(self):
+        self._save_pickle(self.admin_users_df, "admin_users.pkl.gz")
+
+    def check_hr_email(self, email: str):
+        if not email or not isinstance(email, str):
+            return {"ok": False, "found": False, "msg": "Vui lòng nhập Email hợp lệ!"}
+
+        target_mail = email.strip().lower()
+        if self.hr_df.empty:
+            return {"ok": False, "found": False, "msg": "Dữ liệu Nhân sự HR chưa sẵn sàng!"}
+
+        # Check Column K ('Email') or Inside Account
+        cols = list(self.hr_df.columns)
+        col_email = cols[10] if len(cols) > 10 else 'Email'
+        col_code = cols[5] if len(cols) > 5 else 'Mã NV'
+        col_name = cols[4] if len(cols) > 4 else 'Họ Tên NV'
+        col_acc = cols[6] if len(cols) > 6 else 'Inside Account'
+
+        for _, r in self.hr_df.iterrows():
+            r_mail = str(r.get(col_email, '')).strip().lower()
+            r_acc = str(r.get(col_acc, '')).strip().lower()
+            if target_mail == r_mail or target_mail == r_acc or (r_acc and target_mail.startswith(r_acc)):
+                msnv = str(r.get(col_code, '')).strip()
+                name = str(r.get(col_name, '')).strip()
+                full_mail = str(r.get(col_email, '')).strip() or email.strip()
+                return {
+                    "ok": True,
+                    "found": True,
+                    "msnv": msnv,
+                    "name": name,
+                    "mail": full_mail
+                }
+
+        return {"ok": True, "found": False, "msg": "Không tìm thấy thông tin nhân sự khớp với Email này trong hệ thống HR."}
+
+    def authenticate_user(self, login_id: str, password: str):
+        if not login_id or not password:
+            return {"ok": False, "error": "Vui lòng nhập đầy đủ Tên đăng nhập (Mail/User) và Mật khẩu!"}
+
+        target = login_id.strip().lower()
+        pwd = str(password).strip()
+
+        if self.admin_users_df.empty:
+            self._load_admin_users()
+
+        df = self.admin_users_df
+        for _, r in df.iterrows():
+            r_mail = str(r.get('Mail', '')).strip().lower()
+            r_user = str(r.get('User', '')).strip().lower()
+            r_pass = str(r.get('Mật Khẩu', '')).strip()
+
+            if (target == r_mail or target == r_user) and pwd == r_pass:
+                return {
+                    "ok": True,
+                    "user": {
+                        "id": int(r.get('ID', 1)),
+                        "msnv": str(r.get('MSNV', '')).strip(),
+                        "name": str(r.get('Họ và Tên', '')).strip(),
+                        "mail": str(r.get('Mail', '')).strip(),
+                        "user": str(r.get('User', '')).strip(),
+                        "role": str(r.get('Quyền', 'user')).strip().lower(),
+                        "is_password_set": bool(r.get('is_password_set', True))
+                    }
+                }
+
+        return {"ok": False, "error": "Tên đăng nhập (Mail/User) hoặc Mật khẩu không chính xác!"}
+
+    def setup_initial_admin_password(self, mail_or_user: str, new_password: str):
+        if not new_password or len(new_password) < 4:
+            return {"ok": False, "error": "Mật khẩu mới phải có ít nhất 4 ký tự!"}
+
+        target = mail_or_user.strip().lower()
+        matched = False
+        for i, r in self.admin_users_df.iterrows():
+            r_mail = str(r.get('Mail', '')).strip().lower()
+            r_user = str(r.get('User', '')).strip().lower()
+            if target == r_mail or target == r_user or r_mail == 'phuongnam.phongnh5@fpt.net':
+                self.admin_users_df.at[i, 'Mật Khẩu'] = new_password.strip()
+                self.admin_users_df.at[i, 'is_password_set'] = True
+                matched = True
+                break
+
+        if matched:
+            self._save_admin_users()
+            return {"ok": True, "message": "Đã cài đặt mật khẩu thành công!"}
+
+        return {"ok": False, "error": "Không tìm thấy tài khoản admin tương ứng để cài mật khẩu!"}
+
+    def register_user(self, mail: str, user_alias: str, password: str):
+        if not mail or not password:
+            return {"ok": False, "error": "Vui lòng nhập đầy đủ Email và Mật khẩu!"}
+
+        clean_mail = mail.strip().lower()
+        clean_user = (user_alias.strip() if user_alias else clean_mail.split('@')[0]).lower()
+
+        # Check existing
+        for _, r in self.admin_users_df.iterrows():
+            if str(r.get('Mail', '')).strip().lower() == clean_mail:
+                return {"ok": False, "error": f"Email '{mail}' đã được đăng ký tài khoản trước đó!"}
+            if str(r.get('User', '')).strip().lower() == clean_user:
+                return {"ok": False, "error": f"User (mật danh) '{user_alias}' đã tồn tại! Vui lòng chọn mật danh khác."}
+
+        # Check HR email info
+        hr_info = self.check_hr_email(clean_mail)
+        msnv = hr_info.get('msnv', '') if hr_info.get('ok') and hr_info.get('found') else ''
+        name = hr_info.get('name', '') if hr_info.get('ok') and hr_info.get('found') else clean_user
+
+        # Auto MAX(ID) + 1
+        existing_ids = [int(x) for x in self.admin_users_df['ID'].dropna() if str(x).isdigit()]
+        new_id = (max(existing_ids) + 1) if existing_ids else 1
+
+        new_row = {
+            "ID": new_id,
+            "MSNV": msnv,
+            "Họ và Tên": name,
+            "Mail": clean_mail,
+            "User": clean_user,
+            "Mật Khẩu": password.strip(),
+            "Quyền": "user",
+            "is_password_set": True
+        }
+
+        self.admin_users_df = pd.concat([self.admin_users_df, pd.DataFrame([new_row])], ignore_index=True)
+        self._save_admin_users()
+
+        return {
+            "ok": True,
+            "message": f"Đăng ký tài khoản thành công cho {name} ({clean_mail})!",
+            "user": {
+                "id": new_id,
+                "msnv": msnv,
+                "name": name,
+                "mail": clean_mail,
+                "user": clean_user,
+                "role": "user"
+            }
+        }
+
+    def get_admin_users(self):
+        if self.admin_users_df.empty:
+            self._load_admin_users()
+
+        res = []
+        for _, r in self.admin_users_df.iterrows():
+            res.append({
+                "id": int(r.get('ID', 0)),
+                "msnv": str(r.get('MSNV', '')).strip(),
+                "name": str(r.get('Họ và Tên', '')).strip(),
+                "mail": str(r.get('Mail', '')).strip(),
+                "user": str(r.get('User', '')).strip(),
+                "password": str(r.get('Mật Khẩu', '')).strip(),
+                "role": str(r.get('Quyền', 'user')).strip().lower()
+            })
+        return res
+
+    def add_admin_user(self, payload: dict):
+        mail = str(payload.get('mail', '')).strip().lower()
+        user_alias = str(payload.get('user', '')).strip().lower() or mail.split('@')[0]
+        password = str(payload.get('password', '')).strip()
+        role = str(payload.get('role', 'user')).strip().lower()
+        msnv = str(payload.get('msnv', '')).strip()
+        name = str(payload.get('name', '')).strip()
+
+        if not mail or not password:
+            return {"ok": False, "error": "Vui lòng nhập Mail và Mật khẩu!"}
+
+        existing_ids = [int(x) for x in self.admin_users_df['ID'].dropna() if str(x).isdigit()]
+        new_id = (max(existing_ids) + 1) if existing_ids else 1
+
+        new_row = {
+            "ID": new_id,
+            "MSNV": msnv,
+            "Họ và Tên": name,
+            "Mail": mail,
+            "User": user_alias,
+            "Mật Khẩu": password,
+            "Quyền": role,
+            "is_password_set": True
+        }
+
+        self.admin_users_df = pd.concat([self.admin_users_df, pd.DataFrame([new_row])], ignore_index=True)
+        self._save_admin_users()
+        return {"ok": True, "message": f"Đã thêm tài khoản {name} ({mail}) thành công!"}
+
+    def update_admin_user(self, user_id: int, payload: dict):
+        if self.admin_users_df.empty:
+            self._load_admin_users()
+
+        idx_to_update = None
+        for i, r in self.admin_users_df.iterrows():
+            if int(r.get('ID', 0)) == user_id:
+                idx_to_update = i
+                break
+
+        if idx_to_update is None:
+            return {"ok": False, "error": f"Không tìm thấy tài khoản với ID {user_id}!"}
+
+        if 'msnv' in payload:
+            self.admin_users_df.at[idx_to_update, 'MSNV'] = str(payload['msnv']).strip()
+        if 'name' in payload:
+            self.admin_users_df.at[idx_to_update, 'Họ và Tên'] = str(payload['name']).strip()
+        if 'mail' in payload:
+            self.admin_users_df.at[idx_to_update, 'Mail'] = str(payload['mail']).strip().lower()
+        if 'user' in payload:
+            self.admin_users_df.at[idx_to_update, 'User'] = str(payload['user']).strip().lower()
+        if 'password' in payload and payload['password']:
+            self.admin_users_df.at[idx_to_update, 'Mật Khẩu'] = str(payload['password']).strip()
+        if 'role' in payload:
+            self.admin_users_df.at[idx_to_update, 'Quyền'] = str(payload['role']).strip().lower()
+
+        self._save_admin_users()
+        return {"ok": True, "message": "Đã cập nhật thông tin tài khoản thành công!"}
+
+    def delete_admin_user(self, user_id: int):
+        if self.admin_users_df.empty:
+            self._load_admin_users()
+
+        self.admin_users_df = self.admin_users_df[self.admin_users_df['ID'].astype(int) != user_id]
+        self._save_admin_users()
+        return {"ok": True, "message": f"Đã xóa tài khoản ID {user_id} thành công!"}
+
+    def get_hr_list(self, search: str = "", block: str = "__ALL__", team_lead: str = "__ALL__"):
+        if self.hr_df.empty:
+            return []
+
+        cols = list(self.hr_df.columns)
+        col_code = cols[5] if len(cols) > 5 else 'Mã NV'
+        col_name = cols[4] if len(cols) > 4 else 'Họ Tên NV'
+        col_acc = cols[6] if len(cols) > 6 else 'Inside Account'
+        col_mail = cols[10] if len(cols) > 10 else 'Email'
+        col_phone = cols[11] if len(cols) > 11 else 'Số điện thoại'
+        col_block = cols[3] if len(cols) > 3 else 'Block'
+        col_tl = cols[24] if len(cols) > 24 else 'Họ tên Đội trưởng'
+        col_title = cols[14] if len(cols) > 14 else 'Chức danh'
+        col_status = cols[13] if len(cols) > 13 else 'Tình trạng Hợp đồng'
+
+        kw = search.strip().upper()
+        res = []
+
+        for idx, r in self.hr_df.iterrows():
+            c_code = str(r.get(col_code, '')).strip()
+            c_name = str(r.get(col_name, '')).strip()
+            c_acc = str(r.get(col_acc, '')).strip()
+            c_mail = str(r.get(col_mail, '')).strip()
+            c_block = str(r.get(col_block, '')).strip()
+            c_tl = str(r.get(col_tl, '')).strip()
+            c_title = str(r.get(col_title, '')).strip()
+            c_status = str(r.get(col_status, '')).strip()
+
+            if block != "__ALL__" and c_block != block:
+                continue
+            if team_lead != "__ALL__" and c_tl != team_lead:
+                continue
+
+            if kw:
+                text = f"{c_code} {c_name} {c_acc} {c_mail} {c_block} {c_tl}".upper()
+                if kw not in text:
+                    continue
+
+            res.append({
+                "stt": idx + 1,
+                "code": c_code,
+                "name": c_name,
+                "account": c_acc,
+                "mail": c_mail,
+                "phone": str(r.get(col_phone, '')).strip(),
+                "block": c_block,
+                "team_lead": c_tl,
+                "title": c_title,
+                "status": c_status
+            })
+
+        return res
+
 
 
