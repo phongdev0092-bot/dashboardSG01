@@ -552,6 +552,57 @@ export default function App() {
     }
   }, [currentNav]);
 
+  // Dynamic Top Stat Cards Metrics based on Active Filters (Đội Trưởng & Block)
+  const dynamicTonTkBtMetrics = useMemo(() => {
+    if (!tonTkBtData) {
+      return {
+        totalAll: 0,
+        totalTK: 0,
+        totalBT: 0,
+        countTK72h: 0,
+        countBT24h: 0,
+        hasNoteCount: 0,
+        notePct: 0,
+        filteredTkList: [],
+        filteredBtList: []
+      };
+    }
+
+    const tkList = tonTkBtData.tkList || [];
+    const btList = tonTkBtData.btList || [];
+
+    const filterItem = (item) => {
+      if (tonTkBtDoiTruong !== '__ALL__' && item.doiTruong !== tonTkBtDoiTruong) return false;
+      if (tonTkBtBlockFilter !== '__ALL__' && item.block !== tonTkBtBlockFilter) return false;
+      return true;
+    };
+
+    const filteredTk = tkList.filter(filterItem);
+    const filteredBt = btList.filter(filterItem);
+
+    const totalTK = filteredTk.length;
+    const totalBT = filteredBt.length;
+    const totalAll = totalTK + totalBT;
+
+    const countTK72h = filteredTk.filter(r => r.isOver72h).length;
+    const countBT24h = filteredBt.filter(r => r.isOver24h).length;
+
+    const hasNoteCount = filteredTk.filter(r => r.hasNote).length + filteredBt.filter(r => r.hasNote).length;
+    const notePct = totalAll > 0 ? Math.round((hasNoteCount / totalAll) * 1000) / 10 : 0;
+
+    return {
+      totalAll,
+      totalTK,
+      totalBT,
+      countTK72h,
+      countBT24h,
+      hasNoteCount,
+      notePct,
+      filteredTkList: filteredTk,
+      filteredBtList: filteredBt
+    };
+  }, [tonTkBtData, tonTkBtDoiTruong, tonTkBtBlockFilter]);
+
   // Combined Backlog Tickets & Filtering
   const filteredBacklogDetails = useMemo(() => {
     if (!tonTkBtData) return [];
@@ -2543,17 +2594,17 @@ export default function App() {
                 {/* TỒN TK-BT METRICS SUMMARY - FULL WIDTH GRID */}
                 <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', lg: 'repeat(4, 1fr)' }, gap: 2, width: '100%' }}>
                   
-                  {/* CARD 1: TỔNG TỒN SG01 */}
+                  {/* CARD 1: TỔNG TỒN */}
                   <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #d2e3fc', borderLeft: '6px solid #1a73e8', backgroundColor: '#ffffff', height: '100%' }}>
                     <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                       <Typography variant="overline" sx={{ color: '#1a73e8', fontWeight: 800 }}>
-                        TỔNG TỒN CHI NHÁNH SG01
+                        {tonTkBtDoiTruong !== '__ALL__' ? `TỔNG TỒN (${tonTkBtDoiTruong})` : 'TỔNG TỒN CHI NHÁNH SG01'}
                       </Typography>
                       <Typography variant="h3" sx={{ fontWeight: 800, color: '#1a73e8', mt: 0.5 }}>
-                        {tonTkBtData?.totalAll || 0} Phiếu
+                        {dynamicTonTkBtMetrics.totalAll} Phiếu
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                        Gồm {tonTkBtData?.totalTK || 0} Triển Khai & {tonTkBtData?.totalBT || 0} Bảo Trì
+                        Gồm {dynamicTonTkBtMetrics.totalTK} Triển Khai & {dynamicTonTkBtMetrics.totalBT} Bảo Trì
                       </Typography>
                     </CardContent>
                   </Card>
@@ -2565,10 +2616,9 @@ export default function App() {
                         <Typography variant="overline" sx={{ color: '#00897b', fontWeight: 800 }}>
                           TỒN TRIỂN KHAI (&gt;72H)
                         </Typography>
-                        <Chip label="Cột L >72h" size="small" color="error" sx={{ fontWeight: 700, height: 20, fontSize: '10px' }} />
                       </Box>
-                      <Typography variant="h3" sx={{ fontWeight: 800, color: tonTkBtData?.countTK72h > 0 ? '#d93025' : '#00897b', mt: 0.5 }}>
-                        {tonTkBtData?.countTK72h || 0} Phiếu
+                      <Typography variant="h3" sx={{ fontWeight: 800, color: dynamicTonTkBtMetrics.countTK72h > 0 ? '#d93025' : '#00897b', mt: 0.5 }}>
+                        {dynamicTonTkBtMetrics.countTK72h} Phiếu
                       </Typography>
                       <Button
                         size="small"
@@ -2589,10 +2639,9 @@ export default function App() {
                         <Typography variant="overline" sx={{ color: '#e65100', fontWeight: 800 }}>
                           TỒN BẢO TRÌ (&gt;24H)
                         </Typography>
-                        <Chip label="Cột H >24h" size="small" color="error" sx={{ fontWeight: 700, height: 20, fontSize: '10px' }} />
                       </Box>
-                      <Typography variant="h3" sx={{ fontWeight: 800, color: tonTkBtData?.countBT24h > 0 ? '#d93025' : '#e65100', mt: 0.5 }}>
-                        {tonTkBtData?.countBT24h || 0} Phiếu
+                      <Typography variant="h3" sx={{ fontWeight: 800, color: dynamicTonTkBtMetrics.countBT24h > 0 ? '#d93025' : '#e65100', mt: 0.5 }}>
+                        {dynamicTonTkBtMetrics.countBT24h} Phiếu
                       </Typography>
                       <Button
                         size="small"
@@ -2613,10 +2662,10 @@ export default function App() {
                         TỶ LỆ CÓ GHI CHÚ / THÔNG TIN
                       </Typography>
                       <Typography variant="h3" sx={{ fontWeight: 800, color: '#7b1fa2', mt: 0.5 }}>
-                        {tonTkBtData?.notePct || 0}%
+                        {dynamicTonTkBtMetrics.notePct}%
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                        Đã có Note TIN/PNC hoặc Note KTV: {tonTkBtData?.hasNoteCount || 0} / {tonTkBtData?.totalAll || 0} ca
+                        Đã có Note: {dynamicTonTkBtMetrics.hasNoteCount} / {dynamicTonTkBtMetrics.totalAll} ca
                       </Typography>
                     </CardContent>
                   </Card>
@@ -2677,8 +2726,8 @@ export default function App() {
                               <TableCell align="center" sx={{ fontWeight: 800, width: 60 }}>STT</TableCell>
                               <TableCell sx={{ fontWeight: 800, minWidth: 160 }}>Block</TableCell>
                               <TableCell sx={{ fontWeight: 800, minWidth: 160 }}>Đội Trưởng Quản Lý</TableCell>
-                              <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#fde8e8', color: '#d93025' }}>Tồn TK &gt;72H (Cột L)</TableCell>
-                              <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#fff3e0', color: '#e65100' }}>Tồn BT &gt;24H (Cột H)</TableCell>
+                              <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#fde8e8', color: '#d93025' }}>Tồn TK &gt;72H</TableCell>
+                              <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#fff3e0', color: '#e65100' }}>Tồn BT &gt;24H</TableCell>
                               <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#e8f0fe', color: '#1a73e8' }}>Tổng Tồn TK</TableCell>
                               <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#e8f0fe', color: '#1a73e8' }}>Tổng Tồn BT</TableCell>
                               <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#ffe0b2', color: '#d84315' }}>Tổng Tồn (TK + BT)</TableCell>
@@ -2761,7 +2810,21 @@ export default function App() {
 
                         <Grid item xs={12} sm={3} md={2}>
                           <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Phân Loại Tồn</FormLabel>
-                          <TextField select fullWidth size="small" value={tonTkBtTypeFilter} onChange={(e) => setTonTkBtTypeFilter(e.target.value)}>
+                          <TextField
+                            select
+                            fullWidth
+                            size="small"
+                            value={tonTkBtTypeFilter}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTonTkBtTypeFilter(val);
+                              if (val === 'TK' && tonTkBtCondFilter === 'BT_24H') {
+                                setTonTkBtCondFilter('ALL');
+                              } else if (val === 'BT' && tonTkBtCondFilter === 'TK_72H') {
+                                setTonTkBtCondFilter('ALL');
+                              }
+                            }}
+                          >
                             <MenuItem value="ALL">Tất cả (TK + BT)</MenuItem>
                             <MenuItem value="TK">Triển Khai (TK)</MenuItem>
                             <MenuItem value="BT">Bảo Trì (BT)</MenuItem>
@@ -2770,7 +2833,21 @@ export default function App() {
 
                         <Grid item xs={12} sm={3} md={2}>
                           <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Điều Kiện Tồn</FormLabel>
-                          <TextField select fullWidth size="small" value={tonTkBtCondFilter} onChange={(e) => setTonTkBtCondFilter(e.target.value)}>
+                          <TextField
+                            select
+                            fullWidth
+                            size="small"
+                            value={tonTkBtCondFilter}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTonTkBtCondFilter(val);
+                              if (val === 'TK_72H') {
+                                setTonTkBtTypeFilter('TK');
+                              } else if (val === 'BT_24H') {
+                                setTonTkBtTypeFilter('BT');
+                              }
+                            }}
+                          >
                             <MenuItem value="ALL">Tất cả thời gian</MenuItem>
                             <MenuItem value="TK_72H">Tồn Triển Khai &gt;72H</MenuItem>
                             <MenuItem value="BT_24H">Tồn Bảo Trì &gt;24H</MenuItem>
@@ -2840,7 +2917,7 @@ export default function App() {
                               const isDanger = (row.type === 'TK' && row.isOver72h) || (row.type === 'BT' && row.isOver24h);
 
                               return (
-                                <TableRow key={row.id || idx} hover sx={{ '&:nth-of-type(even)': { backgroundColor: '#fafafa' } }}>
+                                <TableRow key={row.id || `${row.type}_${row.soHd}_${idx}`} hover sx={{ '&:nth-of-type(even)': { backgroundColor: '#fafafa' } }}>
                                   <TableCell align="center" sx={{ color: '#5f6368' }}>{idx + 1}</TableCell>
                                   <TableCell align="center">
                                     <Chip
@@ -2919,8 +2996,8 @@ export default function App() {
                 {/* MODAL 1: SHOW CHI TIẾT TỒN TRIỂN KHAI >72H */}
                 <Dialog open={over72hModalOpen} onClose={() => setOver72hModalOpen(false)} maxWidth="md" fullWidth>
                   <DialogTitle sx={{ fontWeight: 800, color: '#d93025', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>🚨 CHI TIẾT PHIẾU TỒN TRIỂN KHAI &gt;72H (CỘT L)</span>
-                    <Chip label={`${tonTkBtData?.countTK72h || 0} Ca vi phạm`} color="error" size="small" sx={{ fontWeight: 700 }} />
+                    <span>🚨 CHI TIẾT PHIẾU TỒN TRIỂN KHAI &gt;72H</span>
+                    <Chip label={`${dynamicTonTkBtMetrics.countTK72h} Ca vi phạm`} color="error" size="small" sx={{ fontWeight: 700 }} />
                   </DialogTitle>
                   <DialogContent dividers>
                     <TableContainer sx={{ maxHeight: 500 }}>
@@ -2937,7 +3014,7 @@ export default function App() {
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {tonTkBtData?.tkList
+                          {dynamicTonTkBtMetrics.filteredTkList
                             ?.filter(r => r.isOver72h)
                             .map((row, idx) => (
                               <TableRow key={row.id || idx} hover>
@@ -2977,8 +3054,8 @@ export default function App() {
                 {/* MODAL 2: SHOW CHI TIẾT TỒN BẢO TRÌ >24H */}
                 <Dialog open={over24hModalOpen} onClose={() => setOver24hModalOpen(false)} maxWidth="md" fullWidth>
                   <DialogTitle sx={{ fontWeight: 800, color: '#e65100', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>⚠️ CHI TIẾT PHIẾU TỒN BẢO TRÌ &gt;24H (CỘT H)</span>
-                    <Chip label={`${tonTkBtData?.countBT24h || 0} Ca quá hạn`} color="warning" size="small" sx={{ fontWeight: 700, backgroundColor: '#e65100', color: '#fff' }} />
+                    <span>⚠️ CHI TIẾT PHIẾU TỒN BẢO TRÌ &gt;24H</span>
+                    <Chip label={`${dynamicTonTkBtMetrics.countBT24h} Ca quá hạn`} color="warning" size="small" sx={{ fontWeight: 700, backgroundColor: '#e65100', color: '#fff' }} />
                   </DialogTitle>
                   <DialogContent dividers>
                     <TableContainer sx={{ maxHeight: 500 }}>
@@ -2988,14 +3065,14 @@ export default function App() {
                             <TableCell align="center" sx={{ fontWeight: 800, width: 50 }}>STT</TableCell>
                             <TableCell sx={{ fontWeight: 800 }}>Số HĐ (SHD)</TableCell>
                             <TableCell sx={{ fontWeight: 800 }}>Tên Khách Hàng</TableCell>
-                            <TableCell sx={{ fontWeight: 800 }}>Tình Trạng (Cột AC)</TableCell>
+                            <TableCell sx={{ fontWeight: 800 }}>Tình Trạng</TableCell>
                             <TableCell align="center" sx={{ fontWeight: 800 }}>Thời Gian Tồn</TableCell>
                             <TableCell sx={{ fontWeight: 800 }}>Đội Trưởng</TableCell>
-                            <TableCell align="center" sx={{ fontWeight: 800 }}>Thông Tin Note (Cột X)</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 800 }}>Thông Tin Note</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {tonTkBtData?.btList
+                          {dynamicTonTkBtMetrics.filteredBtList
                             ?.filter(r => r.isOver24h)
                             .map((row, idx) => (
                               <TableRow key={row.id || idx} hover>

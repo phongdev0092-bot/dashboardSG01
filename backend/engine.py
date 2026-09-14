@@ -1390,7 +1390,7 @@ class KPIEngine:
                 has_note = bool(note_raw and note_raw.upper() not in ('NAN', 'NONE', '-', 'NULL', ''))
 
                 tk_list.append({
-                    'id': len(tk_list) + 1,
+                    'id': f"TK_{len(tk_list) + 1}",
                     'type': 'TK',
                     'typeLabel': 'Triển Khai',
                     'soHd': str(r.get(hd_col, '')).strip(),
@@ -1462,7 +1462,7 @@ class KPIEngine:
                 has_note = len(parts) > 0
 
                 bt_list.append({
-                    'id': len(bt_list) + 1,
+                    'id': f"BT_{len(bt_list) + 1}",
                     'type': 'BT',
                     'typeLabel': 'Bảo Trì',
                     'soHd': str(r.get(hd_col, '')).strip(),
