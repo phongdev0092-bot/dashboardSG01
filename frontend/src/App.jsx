@@ -177,6 +177,17 @@ export default function App() {
   const [ltCtData, setLtCtData] = useState(null);
   const [sortBlockEnabled, setSortBlockEnabled] = useState(true);
 
+  // Lịch Sử Thay Đổi Tab States
+  const [ltHistMonth, setLtHistMonth] = useState(new Date().getMonth() + 1);
+  const [ltHistYear, setLtHistYear] = useState(new Date().getFullYear());
+  const [ltHistDoiTruong, setLtHistDoiTruong] = useState('__ALL__');
+  const [ltHistSearch, setLtHistSearch] = useState('');
+  const [ltHistLimit2Only, setLtHistLimit2Only] = useState(false);
+  const [ltHistData, setLtHistData] = useState(null);
+  const [ltHistLoading, setLtHistLoading] = useState(false);
+  const [timelineModalOpen, setTimelineModalOpen] = useState(false);
+  const [selectedStaffTimeline, setSelectedStaffTimeline] = useState(null);
+
   // CRUD & Import States
   const [addRowOpen, setAddRowOpen] = useState(false);
   const [addRowData, setAddRowData] = useState({
@@ -445,6 +456,59 @@ export default function App() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+  };
+
+  // Fetch Lịch Trực History
+  const fetchLichTrucHistory = async () => {
+    setLtHistLoading(true);
+    try {
+      const res = await axios.get('/api/lich-truc/history', {
+        params: {
+          month: ltHistMonth,
+          year: ltHistYear,
+          doi_truong: ltHistDoiTruong,
+          search: ltHistSearch,
+          limit_latest: ltHistLimit2Only
+        }
+      });
+      setLtHistData(res.data);
+    } catch (err) {
+      console.error("Failed to fetch Lịch Trực history:", err);
+    } finally {
+      setLtHistLoading(false);
+    }
+  };
+
+  const handleExportHistoryCSV = () => {
+    if (!ltHistData || !ltHistData.data || ltHistData.data.length === 0) {
+      alert("Không có dữ liệu lịch sử để xuất!");
+      return;
+    }
+    const headers = ["STT", "Thời Gian Ghi Nhận", "Mốc Quét", "Mã NV", "Họ Tên", "Email", "Block", "Đội Trưởng", "Ngày Đổi", "Trạng Thái Cũ", "Trạng Thái Mới", "Biến Động"];
+    const rows = ltHistData.data.map((r, i) => [
+      i + 1,
+      r.timeDisplay || r.timestamp,
+      r.milestone || 'Tự động',
+      r.codeStaff,
+      r.name,
+      r.mail,
+      r.block,
+      r.doiTruong,
+      r.dateStr,
+      r.oldVal,
+      r.newVal,
+      r.changeType
+    ]);
+
+    const csvContent = "\uFEFF" + [headers.join(','), ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Lich_Su_Thay_Doi_Lich_Truc_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // CRUD Handlers for Lịch Trực Chi Tiết
@@ -1472,6 +1536,14 @@ export default function App() {
                   >
                     📑 Chi Tiết Lịch Trực (31 Ngày)
                   </Button>
+                  <Button
+                    variant={ltTab === 'history' ? 'contained' : 'text'}
+                    color="primary"
+                    onClick={() => { setLtTab('history'); fetchLichTrucHistory(); }}
+                    sx={{ borderRadius: '12px', fontWeight: 700, px: 3, py: 1 }}
+                  >
+                    📜 Lịch Sử Thay Đổi & Timeline Đối Soát
+                  </Button>
                 </Paper>
 
                 {/* ==================== SUB-TAB 1: DASHBOARD TRA CỨU THEO NGÀY ==================== */}
@@ -2052,6 +2124,256 @@ export default function App() {
                       <DialogActions sx={{ p: 2 }}>
                         <Button onClick={() => setAddRowOpen(false)} variant="outlined">Hủy</Button>
                         <Button onClick={handleAddRowSubmit} variant="contained" color="primary">Thêm Dòng</Button>
+                      </DialogActions>
+                    </Dialog>
+
+                  </Box>
+                )}
+
+                {/* ==================== SUB-TAB 3: LỊCH SỬ THAY ĐỔI & ĐỐI SOÁT ==================== */}
+                {ltTab === 'history' && (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    
+                    {/* ANNOUNCEMENT BANNER */}
+                    <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, backgroundColor: '#f0f7ff', border: '1px solid #bae0ff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <Box sx={{ width: 44, height: 44, borderRadius: '50%', backgroundColor: '#e6f4ff', color: '#1677ff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>
+                          📜
+                        </Box>
+                        <Box>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#002c8c' }}>
+                            Nhật Ký Thay Đổi & Timeline Đối Soát Ca Trực (Full Audit Log)
+                          </Typography>
+                          <Typography variant="body2" sx={{ color: '#003eb3' }}>
+                            Tự động lưu vết lịch sử tại 4 mốc giờ <b>08:00 - 14:00 - 19:00 - 23:00</b> hàng ngày và mọi thao tác chỉnh sửa. Lưu vết 100% minh bạch phục vụ đối soát khi có tranh chấp ca làm việc.
+                          </Typography>
+                        </Box>
+                      </Box>
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        startIcon={<DownloadIcon />}
+                        onClick={handleExportHistoryCSV}
+                        sx={{ borderRadius: 2, height: 40, fontWeight: 700, whiteSpace: 'nowrap' }}
+                      >
+                        Xuất File Đối Soát (CSV)
+                      </Button>
+                    </Paper>
+
+                    {/* TOOLBAR SEARCH & FILTER */}
+                    <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, backgroundColor: '#ffffff', border: '1px solid #e0e0e0' }}>
+                      <Grid container spacing={2} alignItems="center">
+                        <Grid item xs={12} sm={3} md={1.5}>
+                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Tháng</FormLabel>
+                          <TextField select fullWidth size="small" value={ltHistMonth} onChange={(e) => setLtHistMonth(Number(e.target.value))}>
+                            <MenuItem value={0}>Tất cả</MenuItem>
+                            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                              <MenuItem key={m} value={m}>Tháng {m}</MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+
+                        <Grid item xs={12} sm={3} md={1.5}>
+                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Năm</FormLabel>
+                          <TextField select fullWidth size="small" value={ltHistYear} onChange={(e) => setLtHistYear(Number(e.target.value))}>
+                            <MenuItem value={0}>Tất cả</MenuItem>
+                            {[2024, 2025, 2026, 2027].map((y) => (
+                              <MenuItem key={y} value={y}>{y}</MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+
+                        <Grid item xs={12} sm={6} md={2.5}>
+                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Đội Trưởng</FormLabel>
+                          <TextField select fullWidth size="small" value={ltHistDoiTruong} onChange={(e) => setLtHistDoiTruong(e.target.value)}>
+                            <MenuItem value="__ALL__">-- Tất cả Đội Trưởng --</MenuItem>
+                            {options.team_leads.map((tl) => (
+                              <MenuItem key={tl} value={tl}>{tl}</MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+
+                        <Grid item xs={12} sm={6} md={3}>
+                          <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Tìm Nhân Viên / Block</FormLabel>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            placeholder="Nhập tên, mã NV, email hoặc block..."
+                            value={ltHistSearch}
+                            onChange={(e) => setLtHistSearch(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && fetchLichTrucHistory()}
+                          />
+                        </Grid>
+
+                        <Grid item xs={12} sm={3} md={1.5}>
+                          <Button variant="contained" color="primary" fullWidth onClick={fetchLichTrucHistory} sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5 }}>
+                            🔍 Lọc
+                          </Button>
+                        </Grid>
+
+                        <Grid item xs={12} sm={3} md={2}>
+                          <Button
+                            variant={ltHistLimit2Only ? 'contained' : 'outlined'}
+                            color={ltHistLimit2Only ? 'warning' : 'secondary'}
+                            fullWidth
+                            onClick={() => setLtHistLimit2Only(!ltHistLimit2Only)}
+                            sx={{ borderRadius: 2, height: 40, fontWeight: 700, mt: 2.5, fontSize: '12px' }}
+                          >
+                            ⚡ {ltHistLimit2Only ? 'Chỉ 2 lần gần nhất' : 'Xem Full Nhật Ký'}
+                          </Button>
+                        </Grid>
+                      </Grid>
+                    </Paper>
+
+                    {/* HISTORY LOG DATA TABLE */}
+                    <Paper elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', backgroundColor: '#ffffff', border: '1px solid #e0e0e0' }}>
+                      <Box sx={{ p: 2, backgroundColor: '#fafafa', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Typography variant="h6" sx={{ fontWeight: 800, color: '#202124', display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <span>DANH SÁCH LỊCH SỬ BIẾN ĐỘNG CA TRỰC</span>
+                          <Chip label={`${ltHistData?.totalCount || 0} Bản ghi`} size="small" color="primary" sx={{ fontWeight: 700 }} />
+                        </Typography>
+
+                        <Typography variant="caption" sx={{ color: '#5f6368' }}>
+                          Chế độ xem: <b>{ltHistLimit2Only ? 'Lọc 2 thay đổi gần nhất / nhân sự' : 'Tất cả nhật ký làm sở cứ'}</b>
+                        </Typography>
+                      </Box>
+
+                      {ltHistLoading ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}><CircularProgress /></Box>
+                      ) : (!ltHistData || !ltHistData.data || ltHistData.data.length === 0) ? (
+                        <Box sx={{ p: 6, textAlign: 'center', color: '#5f6368' }}>
+                          <Typography variant="body1" sx={{ fontWeight: 600 }}>Chưa có biến động ca trực nào được ghi nhận.</Typography>
+                          <Typography variant="caption" sx={{ display: 'block', mt: 1 }}>
+                            Hệ thống tự động so sánh tại các mốc giờ (08:00, 14:00, 19:00, 23:00) hoặc khi có thao tác chỉnh sửa Lịch Trực.
+                          </Typography>
+                        </Box>
+                      ) : (
+                        <TableContainer sx={{ maxHeight: 680 }}>
+                          <Table stickyHeader size="small">
+                            <TableHead sx={{ backgroundColor: '#f1f5f9' }}>
+                              <TableRow>
+                                <TableCell align="center" sx={{ fontWeight: 800, width: 60 }}>STT</TableCell>
+                                <TableCell sx={{ fontWeight: 800, minWidth: 160 }}>Thời Gian Ghi Nhận</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800, minWidth: 120 }}>Mốc Quét / Nguồn</TableCell>
+                                <TableCell sx={{ fontWeight: 800, minWidth: 220 }}>Nhân Viên (Code / Name / Mail)</TableCell>
+                                <TableCell sx={{ fontWeight: 800, minWidth: 180 }}>Block / Đội Trưởng</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800, minWidth: 120 }}>Ngày Lịch Trực</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800, minWidth: 160 }}>Biến Động Trạng Thái</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800, minWidth: 120 }}>Thao Tác</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {ltHistData.data.map((row, idx) => {
+                                const isCa1ToOff = row.changeType === 'CA1 ➔ OFF';
+                                return (
+                                  <TableRow key={row.id || idx} hover sx={{ '&:nth-of-type(even)': { backgroundColor: '#fafafa' } }}>
+                                    <TableCell align="center" sx={{ color: '#5f6368' }}>{idx + 1}</TableCell>
+                                    <TableCell sx={{ fontWeight: 700, color: '#202124' }}>
+                                      {row.timeDisplay || row.timestamp}
+                                    </TableCell>
+                                    <TableCell align="center">
+                                      <Chip
+                                        label={row.milestone || 'Tự động'}
+                                        size="small"
+                                        sx={{
+                                          fontWeight: 700,
+                                          backgroundColor: row.milestone?.includes(':') ? '#e8f0fe' : '#f3e5f5',
+                                          color: row.milestone?.includes(':') ? '#1a73e8' : '#7b1fa2'
+                                        }}
+                                      />
+                                    </TableCell>
+                                    <TableCell>
+                                      <Typography variant="body2" sx={{ fontWeight: 700, color: '#202124' }}>{row.name}</Typography>
+                                      <Typography variant="caption" sx={{ color: '#1a73e8', fontWeight: 600, display: 'block' }}>
+                                        {row.mail} ({row.codeStaff})
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Typography variant="body2" sx={{ fontWeight: 600, color: '#3c4043' }}>{row.block}</Typography>
+                                      <Typography variant="caption" sx={{ color: '#5f6368', display: 'block' }}>
+                                        Đội trưởng: {row.doiTruong || 'Chưa rõ'}
+                                      </Typography>
+                                    </TableCell>
+                                    <TableCell align="center" sx={{ fontWeight: 800, color: '#d84315' }}>
+                                      {row.dateStr}
+                                    </TableCell>
+                                    <TableCell align="center">
+                                      <Chip
+                                        label={`${row.oldVal || 'O'} ➔ ${row.newVal || 'O'}`}
+                                        size="small"
+                                        sx={{
+                                          fontWeight: 800,
+                                          fontSize: '12px',
+                                          px: 1,
+                                          backgroundColor: isCa1ToOff ? '#fff3e0' : '#e8f5e9',
+                                          color: isCa1ToOff ? '#e65100' : '#2e7d32',
+                                          border: isCa1ToOff ? '1px solid #ffe0b2' : '1px solid #c8e6c9'
+                                        }}
+                                      />
+                                    </TableCell>
+                                    <TableCell align="center">
+                                      <Button
+                                        size="small"
+                                        variant="outlined"
+                                        color="primary"
+                                        onClick={() => {
+                                          setSelectedStaffTimeline(row);
+                                          setTimelineModalOpen(true);
+                                        }}
+                                        sx={{ fontSize: '11px', fontWeight: 700, borderRadius: '8px' }}
+                                      >
+                                        ⏱ Timeline
+                                      </Button>
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      )}
+                    </Paper>
+
+                    {/* TIMELINE MODAL DIALOG */}
+                    <Dialog open={timelineModalOpen} onClose={() => setTimelineModalOpen(false)} maxWidth="sm" fullWidth>
+                      <DialogTitle sx={{ fontWeight: 800, color: '#1a73e8', borderBottom: '1px solid #e0e0e0' }}>
+                        ⏱ Timeline Diễn Biến Ca Trực — {selectedStaffTimeline?.name}
+                      </DialogTitle>
+                      <DialogContent dividers>
+                        {selectedStaffTimeline && (
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+                            <Box sx={{ p: 2, borderRadius: 2, backgroundColor: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                              <Typography variant="body2"><b>Mã NV / Email:</b> {selectedStaffTimeline.codeStaff} - {selectedStaffTimeline.mail}</Typography>
+                              <Typography variant="body2"><b>Block:</b> {selectedStaffTimeline.block} ({selectedStaffTimeline.doiTruong})</Typography>
+                              <Typography variant="body2"><b>Ngày bị ảnh hưởng:</b> {selectedStaffTimeline.dateStr}</Typography>
+                            </Box>
+
+                            <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#334155', mt: 1 }}>
+                              Lịch Sử Chi Tiết Biến Động
+                            </Typography>
+
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                              {ltHistData?.data
+                                ?.filter(r => r.mail === selectedStaffTimeline.mail && r.day === selectedStaffTimeline.day && r.month === selectedStaffTimeline.month && r.year === selectedStaffTimeline.year)
+                                .map((ev, idx) => (
+                                  <Box key={ev.id || idx} sx={{ p: 2, borderRadius: 2, border: '1px solid #cbd5e1', backgroundColor: '#ffffff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Box>
+                                      <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 600, display: 'block' }}>
+                                        {ev.timeDisplay || ev.timestamp} ({ev.milestone || 'Tự động'})
+                                      </Typography>
+                                      <Typography variant="body2" sx={{ fontWeight: 700, mt: 0.5 }}>
+                                        Biến động: <span style={{ color: ev.changeType === 'CA1 ➔ OFF' ? '#e65100' : '#2e7d32' }}>{ev.oldVal} ➔ {ev.newVal}</span>
+                                      </Typography>
+                                    </Box>
+                                    <Chip label={`Lần ${idx + 1}`} size="small" color="primary" variant="outlined" />
+                                  </Box>
+                                ))}
+                            </Box>
+                          </Box>
+                        )}
+                      </DialogContent>
+                      <DialogActions sx={{ p: 2 }}>
+                        <Button onClick={() => setTimelineModalOpen(false)} variant="contained">Đóng</Button>
                       </DialogActions>
                     </Dialog>
 

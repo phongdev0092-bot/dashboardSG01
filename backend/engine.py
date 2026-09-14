@@ -40,7 +40,10 @@ class KPIEngine:
         self.last_sync_time = None
         self.is_syncing = False
         self.sync_error = None
+        self.lt_history = []
+        self.lt_snapshot_map = {}
         CACHE_DIR.mkdir(exist_ok=True, parents=True)
+        self._load_lt_history_and_snapshot()
         self.load_cache_or_fetch()
 
     def _get_sheet_url(self, gid: str) -> str:
@@ -1107,6 +1110,7 @@ class KPIEngine:
             self.lt_df = pd.concat([self.lt_df, new_df], ignore_index=True)
         
         self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
+        self._snapshot_and_detect_lt_changes(source_label="Thêm mới")
         return {"ok": True}
 
     def update_lich_truc_row(self, row_number: int, values_b_to_al: list):
@@ -1120,6 +1124,7 @@ class KPIEngine:
                 if col_target < self.lt_df.shape[1]:
                     self.lt_df.iloc[df_idx, col_target] = str(val)
             self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
+            self._snapshot_and_detect_lt_changes(source_label="Chỉnh sửa")
             return {"ok": True}
         return {"ok": False, "error": "Invalid row index"}
 
@@ -1131,6 +1136,7 @@ class KPIEngine:
         if 0 <= df_idx < len(self.lt_df):
             self.lt_df = self.lt_df.drop(self.lt_df.index[df_idx]).reset_index(drop=True)
             self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
+            self._snapshot_and_detect_lt_changes(source_label="Xóa dòng")
             return {"ok": True}
         return {"ok": False, "error": "Invalid row index"}
 
@@ -1153,6 +1159,185 @@ class KPIEngine:
             else:
                 self.lt_df = pd.concat([self.lt_df, new_df], ignore_index=True)
             self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
+            self._snapshot_and_detect_lt_changes(source_label="Import")
             return {"ok": True, "count": len(new_rows)}
         return {"ok": False, "error": "No valid rows to import"}
+
+    def _load_lt_history_and_snapshot(self):
+        lt_hist_cache = CACHE_DIR / "lt_history.pkl.gz"
+        lt_snap_cache = CACHE_DIR / "lt_snapshot.pkl.gz"
+        if lt_hist_cache.exists():
+            try:
+                self.lt_history = pd.read_pickle(lt_hist_cache)
+                if not isinstance(self.lt_history, list):
+                    self.lt_history = []
+            except Exception:
+                self.lt_history = []
+        else:
+            self.lt_history = []
+
+        if lt_snap_cache.exists():
+            try:
+                self.lt_snapshot_map = pd.read_pickle(lt_snap_cache)
+                if not isinstance(self.lt_snapshot_map, dict):
+                    self.lt_snapshot_map = {}
+            except Exception:
+                self.lt_snapshot_map = {}
+
+    def _save_lt_history_and_snapshot(self):
+        try:
+            pd.to_pickle(self.lt_history, CACHE_DIR / "lt_history.pkl.gz")
+            pd.to_pickle(self.lt_snapshot_map, CACHE_DIR / "lt_snapshot.pkl.gz")
+        except Exception as e:
+            print(f"Warning: Failed to save lt history/snapshot: {e}", flush=True)
+
+    def _snapshot_and_detect_lt_changes(self, source_label="Auto-Sync"):
+        if not hasattr(self, 'lt_df') or self.lt_df.empty:
+            return
+
+        if not hasattr(self, 'lt_history') or self.lt_history is None:
+            self._load_lt_history_and_snapshot()
+
+        _, hr_map = self._get_nhan_su_by_block()
+        current_matrix = {}
+        row_info_map = {}
+
+        for idx, r in self.lt_df.iterrows():
+            vals = list(r.values)
+            if len(vals) < 38:
+                continue
+
+            m_raw = str(vals[36] or '').strip()
+            y_raw = str(vals[37] or '').strip()
+
+            m_match = re.search(r'\d+', m_raw)
+            y_match = re.search(r'\d+', y_raw)
+            if not m_match or not y_match:
+                continue
+
+            row_month = int(m_match.group(0))
+            row_year = int(y_match.group(0))
+            mail = str(vals[0] or '').strip().upper()
+            code = str(vals[1] or '').strip()
+            name = str(vals[2] or '').strip()
+            partner = str(vals[3] or '').strip()
+            block = str(vals[4] or '').strip()
+
+            info = hr_map.get(mail, {})
+            doi_truong = info.get('truong') or ''
+            if not block and info.get('block'):
+                block = info.get('block')
+
+            staff_key = (mail, row_month, row_year)
+            row_info_map[staff_key] = {
+                'mail': mail, 'code': code, 'name': name,
+                'partner': partner, 'block': block, 'doiTruong': doi_truong,
+                'month': row_month, 'year': row_year
+            }
+
+            for day_idx in range(1, 32):
+                col_idx = 4 + day_idx
+                if col_idx < len(vals):
+                    shift_val = str(vals[col_idx] or '').strip()
+                else:
+                    shift_val = ''
+                current_matrix[(mail, row_month, row_year, day_idx)] = shift_val
+
+        # If previous snapshot exists, compare
+        if self.lt_snapshot_map:
+            now_dt = datetime.datetime.now()
+            time_str = now_dt.strftime('%Y-%m-%d %H:%M:%S')
+            time_display = now_dt.strftime('%d/%m/%Y %H:%M')
+
+            def is_ca1(v):
+                return str(v or '').strip().upper() == 'CA1'
+
+            for key, new_val in current_matrix.items():
+                mail, row_month, row_year, day_idx = key
+                old_val = self.lt_snapshot_map.get(key, '')
+                
+                # Skip if key was not present in snapshot
+                if key not in self.lt_snapshot_map:
+                    continue
+
+                old_ca1 = is_ca1(old_val)
+                new_ca1 = is_ca1(new_val)
+
+                if old_ca1 != new_ca1:
+                    info = row_info_map.get((mail, row_month, row_year), {})
+                    change_type = 'CA1 ➔ OFF' if old_ca1 else 'OFF ➔ CA1'
+                    
+                    rec = {
+                        'id': len(self.lt_history) + 1,
+                        'timestamp': time_str,
+                        'timeDisplay': time_display,
+                        'milestone': source_label,
+                        'mail': mail,
+                        'codeStaff': info.get('code', ''),
+                        'name': info.get('name', ''),
+                        'partner': info.get('partner', ''),
+                        'block': info.get('block', ''),
+                        'doiTruong': info.get('doiTruong', ''),
+                        'month': row_month,
+                        'year': row_year,
+                        'day': day_idx,
+                        'dateStr': f"{day_idx:02d}/{row_month:02d}/{row_year}",
+                        'oldVal': old_val if old_val else 'O',
+                        'newVal': new_val if new_val else 'O',
+                        'changeType': change_type
+                    }
+                    self.lt_history.append(rec)
+
+        self.lt_snapshot_map = current_matrix
+        self._save_lt_history_and_snapshot()
+
+    def get_lich_truc_history(self, month=0, year=0, doi_truong="__ALL__", search="", limit_latest=False):
+        if not hasattr(self, 'lt_history') or self.lt_history is None:
+            self._load_lt_history_and_snapshot()
+
+        res = []
+        target_month = int(month) if month and int(month) > 0 else 0
+        target_year = int(year) if year and int(year) > 0 else 0
+        search_kw = str(search or '').strip().upper()
+
+        for rec in self.lt_history:
+            if target_month > 0 and rec.get('month') != target_month:
+                continue
+            if target_year > 0 and rec.get('year') != target_year:
+                continue
+            if doi_truong and doi_truong != "__ALL__" and rec.get('doiTruong') != doi_truong:
+                continue
+
+            if search_kw:
+                combined = f"{rec.get('mail','')} {rec.get('codeStaff','')} {rec.get('name','')} {rec.get('block','')}".upper()
+                if search_kw not in combined:
+                    continue
+
+            res.append(rec)
+
+        # Sort descending by timestamp / id
+        res.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+
+        if limit_latest:
+            grouped = {}
+            filtered = []
+            for r in res:
+                key = (r.get('mail'), r.get('year'), r.get('month'), r.get('day'))
+                if key not in grouped:
+                    grouped[key] = []
+                if len(grouped[key]) < 2:
+                    grouped[key].append(r)
+                    filtered.append(r)
+            res = filtered
+
+        return {
+            'totalCount': len(res),
+            'data': res
+        }
+
+    def clear_lich_truc_history(self):
+        self.lt_history = []
+        self._save_lt_history_and_snapshot()
+        return {"ok": True}
+
 
