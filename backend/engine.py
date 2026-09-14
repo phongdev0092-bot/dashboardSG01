@@ -831,17 +831,13 @@ class KPIEngine:
             hen_raw = s if (s and s != 'nan') else (t if (t and t != 'nan') else 'Chưa có lịch hẹn')
             dt_hen = self._parse_date_str(hen_raw)
 
-            block = None
-            if ns:
-                info = hr_map.get(ns, {})
-                block = info.get('block')
-
-            if not block or str(block).strip().upper() in ('NAN', 'NONE', '-', 'NULL'):
-                block_f = str(r.get(col_f_block, '')).strip()
-                if block_f and block_f.upper() not in ('NAN', 'NONE', '-', 'NULL'):
-                    block = block_f
-                else:
-                    block = '(Không xác định)'
+            block_f = str(r.get(col_f_block, '')).strip()
+            if block_f and block_f.upper() not in ('NAN', 'NONE', '-', 'NULL'):
+                block = block_f
+            elif ns and hr_map.get(ns, {}).get('block'):
+                block = hr_map.get(ns, {}).get('block')
+            else:
+                block = '(Không xác định)'
 
             tk_rows.append({
                 'ns': ns,
@@ -872,17 +868,13 @@ class KPIEngine:
             hen_raw = k if (k and k != 'nan') else (l if (l and l != 'nan') else 'Chưa có lịch hẹn')
             dt_hen = self._parse_date_str(hen_raw)
 
-            block = None
-            if ns:
-                info = hr_map.get(ns, {})
-                block = info.get('block')
-
-            if not block or str(block).strip().upper() in ('NAN', 'NONE', '-', 'NULL'):
-                block_e = str(r.get(col_e_block, '')).strip()
-                if block_e and block_e.upper() not in ('NAN', 'NONE', '-', 'NULL'):
-                    block = block_e
-                else:
-                    block = '(Không xác định)'
+            block_e = str(r.get(col_e_block, '')).strip()
+            if block_e and block_e.upper() not in ('NAN', 'NONE', '-', 'NULL'):
+                block = block_e
+            elif ns and hr_map.get(ns, {}).get('block'):
+                block = hr_map.get(ns, {}).get('block')
+            else:
+                block = '(Không xác định)'
 
             bt_rows.append({
                 'ns': ns,
