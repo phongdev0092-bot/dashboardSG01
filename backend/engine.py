@@ -52,6 +52,7 @@ class KPIEngine:
         self.TON_TK_GID = os.environ.get("TON_TK_GID", "0").strip()
         self.TON_BT_SHEET_ID = os.environ.get("TON_BT_SHEET_ID", "1Hihsf3_R3Z9aaqqj9vskIyveNX4UO2Ej3d26jF5-S2w").strip()
         self.TON_BT_GID = os.environ.get("TON_BT_GID", "440862556").strip()
+        self.DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip()
         try:
             CACHE_DIR.mkdir(exist_ok=True, parents=True)
             cfg_file = CACHE_DIR / "webapp_config.json"
@@ -64,10 +65,80 @@ class KPIEngine:
                         self.LT_SHEET_ID = cfg['LT_SHEET_ID']
                     if cfg.get('LT_GID'):
                         self.LT_GID = str(cfg['LT_GID'])
+                    if cfg.get('DATABASE_URL'):
+                        self.DATABASE_URL = str(cfg['DATABASE_URL']).strip()
         except Exception:
             pass
         self._load_lt_history_and_snapshot()
         self.load_cache_or_fetch()
+
+    def get_db_engine(self):
+        db_url = getattr(self, 'DATABASE_URL', '') or os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip()
+        if not db_url or '[YOUR-PASSWORD]' in db_url:
+            return None
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        try:
+            from sqlalchemy import create_engine
+            return create_engine(db_url, pool_pre_ping=True, connect_args={"connect_timeout": 10})
+        except Exception as e:
+            print(f"Warning: Failed to create SQLAlchemy DB engine: {e}", flush=True)
+            return None
+
+    def _save_df_to_supabase(self, df: pd.DataFrame, table_name: str) -> bool:
+        if df is None or df.empty:
+            return False
+        engine = self.get_db_engine()
+        if engine is None:
+            return False
+        try:
+            df_to_save = df.copy()
+            df_to_save.columns = [str(c).strip().replace(".", "_").replace(" ", "_") for c in df_to_save.columns]
+            for c in df_to_save.columns:
+                df_to_save[c] = df_to_save[c].astype(str)
+            df_to_save.to_sql(table_name, engine, if_exists='replace', index=False, chunksize=1000)
+            print(f"Successfully saved {len(df_to_save)} rows to Supabase table '{table_name}'", flush=True)
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to save to Supabase table '{table_name}': {e}", flush=True)
+            return False
+
+    def _load_df_from_supabase(self, table_name: str) -> pd.DataFrame:
+        engine = self.get_db_engine()
+        if engine is None:
+            return pd.DataFrame()
+        try:
+            df = pd.read_sql(f'SELECT * FROM "{table_name}"', engine)
+            if df is not None and not df.empty:
+                print(f"Successfully loaded {len(df)} rows from Supabase table '{table_name}'", flush=True)
+                return df
+        except Exception as e:
+            print(f"Info: Could not load table '{table_name}' from Supabase: {e}", flush=True)
+        return pd.DataFrame()
+
+    def set_database_url(self, url: str):
+        url = (url or '').strip()
+        self.DATABASE_URL = url
+        try:
+            CACHE_DIR.mkdir(exist_ok=True, parents=True)
+            cfg_file = CACHE_DIR / "webapp_config.json"
+            cfg = {}
+            if cfg_file.exists():
+                try:
+                    with open(cfg_file, 'r', encoding='utf-8') as f:
+                        cfg = json.load(f)
+                except Exception:
+                    cfg = {}
+            cfg['DATABASE_URL'] = url
+            with open(cfg_file, 'w', encoding='utf-8') as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            print(f"Saved DATABASE_URL configuration to {cfg_file}", flush=True)
+        except Exception as e:
+            print(f"Warning saving DATABASE_URL config: {e}", flush=True)
+        return {"ok": True, "url": self.DATABASE_URL, "msg": "Đã lưu Supabase Database Connection String!"}
+
+    def get_database_url(self):
+        return {"ok": True, "url": getattr(self, 'DATABASE_URL', '')}
 
     def _find_col(self, df, candidate_names, default_idx=None):
         if df is None or df.empty:
@@ -382,6 +453,10 @@ class KPIEngine:
         ton_bt_path, ton_bt_df = _get_df("ton_bt")
         cll30n_path, cll30n_df = _get_df("cll30n")
         kh_cls_path, kh_cls_df = _get_df("kh_cls")
+
+        sp_ton_tk = self._load_df_from_supabase("ton_tk")
+        if not sp_ton_tk.empty:
+            ton_tk_df = sp_ton_tk
 
         if not hr_df.empty and not tk_df.empty and not bt_df.empty:
             try:
@@ -1944,6 +2019,10 @@ class KPIEngine:
             except Exception as e:
                 print(f"Warning saving ton_tk cache: {e}", flush=True)
             try:
+                self._save_df_to_supabase(df, "ton_tk")
+            except Exception as e_sp:
+                print(f"Warning saving ton_tk to Supabase: {e_sp}", flush=True)
+            try:
                 self._sync_ton_dataset_to_webapp("ton_tk", df)
             except Exception as e_w:
                 print(f"Warning: WebApp background sync error: {e_w}", flush=True)
@@ -2399,6 +2478,15 @@ class KPIEngine:
             self._set_custom_ton_imported("ton_tk")
             _safe_remove_cache("ton_tk.pkl.gz")
             self._sync_ton_dataset_to_webapp("ton_tk", None)
+            try:
+                engine = self.get_db_engine()
+                if engine:
+                    from sqlalchemy import text
+                    with engine.connect() as conn:
+                        conn.execute(text('DROP TABLE IF EXISTS "ton_tk"'))
+                        conn.commit()
+            except Exception as e_sp:
+                print(f"Warning clearing ton_tk on Supabase: {e_sp}", flush=True)
             label = "Tồn Triển Khai"
         elif target_clean == "ton_bt":
             self.ton_bt_df = pd.DataFrame()

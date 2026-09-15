@@ -262,6 +262,15 @@ def set_webapp_config(payload: dict):
     url = payload.get('url', '')
     return engine.set_permissions_webapp_url(url)
 
+@app.get("/api/admin/config-database")
+def get_database_config():
+    return engine.get_database_url()
+
+@app.post("/api/admin/config-database")
+def set_database_config(payload: dict):
+    url = payload.get('url', '')
+    return engine.set_database_url(url)
+
 @app.post("/api/admin/users/sync-sheet")
 def sync_users_sheet():
     return engine.sync_admin_users_to_sheet()
