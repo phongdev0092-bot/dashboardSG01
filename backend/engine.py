@@ -797,6 +797,8 @@ class KPIEngine:
         tk_tot = tk_1 + tk_0
         tk_dh_pct = round((tk_1 / tk_tot * 100), 2) if tk_tot > 0 else 0.0
         rt_tk_avg = float(tk_valid['rt_hours'].mean()) if len(tk_valid) > 0 else None
+        tk_gt_24h = int((tk_valid['rt_hours'] > 24.0).sum()) if len(tk_valid) > 0 else 0
+        tk_gt_72h = int((tk_valid['rt_hours'] > 72.0).sum()) if len(tk_valid) > 0 else 0
 
         # BT Valid
         bt_1 = int((bt['dung_hen'] == 1).sum())
@@ -804,6 +806,8 @@ class KPIEngine:
         bt_tot = bt_1 + bt_0
         bt_dh_pct = round((bt_1 / bt_tot * 100), 2) if bt_tot > 0 else 0.0
         rt_bt_avg = float(bt['rt_hours'].mean()) if len(bt) > 0 else None
+        bt_gt_24h = int((bt['rt_hours'] > 24.0).sum()) if len(bt) > 0 else 0
+        bt_gt_72h = int((bt['rt_hours'] > 72.0).sum()) if len(bt) > 0 else 0
 
         # Total Đúng Hẹn %
         tot_1 = tk_1 + bt_1
@@ -858,6 +862,8 @@ class KPIEngine:
                 'c1': (group['dung_hen'] == 1).sum(),
                 'c0': (group['dung_hen'] == 0).sum(),
                 'rt_avg': group['rt_hours'].mean(),
+                'gt_24h': int((group['rt_hours'] > 24.0).sum()),
+                'gt_72h': int((group['rt_hours'] > 72.0).sum()),
                 'total': len(group)
             } for acc, group in tk_valid_grp
         }
@@ -876,6 +882,8 @@ class KPIEngine:
                 'c1': (group['dung_hen'] == 1).sum(),
                 'c0': (group['dung_hen'] == 0).sum(),
                 'rt_avg': group['rt_hours'].mean(),
+                'gt_24h': int((group['rt_hours'] > 24.0).sum()),
+                'gt_72h': int((group['rt_hours'] > 72.0).sum()),
                 'total': len(group)
             } for acc, group in bt_grp
         }
@@ -932,6 +940,11 @@ class KPIEngine:
             e_cll30n_status = 'PASS' if e_cll30n_pct <= 7.0 else 'FAIL'
             e_clps7n_status = 'PASS' if e_clps7n_pct <= 3.0 else 'FAIL'
 
+            e_tk_gt_24h = int(e_tk_v.get('gt_24h', 0))
+            e_tk_gt_72h = int(e_tk_v.get('gt_72h', 0))
+            e_bt_gt_24h = int(e_bt.get('gt_24h', 0))
+            e_bt_gt_72h = int(e_bt.get('gt_72h', 0))
+
             emp_rows.append({
                 'account': acc,
                 'name': meta['name'],
@@ -946,6 +959,8 @@ class KPIEngine:
                 'tk_dung_hen_1': e_tk_1,
                 'tk_dung_hen_0': e_tk_0,
                 'tk_dung_hen_pct': e_tk_dh,
+                'tk_gt_24h': e_tk_gt_24h,
+                'tk_gt_72h': e_tk_gt_72h,
                 'rt_tk_hours': round(float(rt_tk_val), 2) if pd.notna(rt_tk_val) else None,
                 'rt_tk_fmt': self.format_rt(rt_tk_val),
                 'rt_tk_status': e_rt_tk_status,
@@ -961,6 +976,8 @@ class KPIEngine:
                 'bt_dung_hen_1': e_bt_1,
                 'bt_dung_hen_0': e_bt_0,
                 'bt_dung_hen_pct': e_bt_dh,
+                'bt_gt_24h': e_bt_gt_24h,
+                'bt_gt_72h': e_bt_gt_72h,
                 'rt_bt_hours': round(float(rt_bt_val), 2) if pd.notna(rt_bt_val) else None,
                 'rt_bt_fmt': self.format_rt(rt_bt_val),
                 'rt_bt_status': e_rt_bt_status,
@@ -977,6 +994,8 @@ class KPIEngine:
                 # Overall Total
                 'total_dung_hen_pct': e_tot_dh,
                 'dung_hen_status': e_dh_status,
+                'total_gt_24h': e_tk_gt_24h + e_bt_gt_24h,
+                'total_gt_72h': e_tk_gt_72h + e_bt_gt_72h,
                 'total_completed_work': e_tk_tot + e_tk_s['total'] + e_bt_tot
             })
 
@@ -1013,6 +1032,8 @@ class KPIEngine:
                 'tk_dung_hen_pct': tk_dh_pct,
                 'tk_dung_hen_1': tk_1,
                 'tk_dung_hen_0': tk_0,
+                'tk_gt_24h': tk_gt_24h,
+                'tk_gt_72h': tk_gt_72h,
                 'rt_tk_hours': round(float(rt_tk_avg), 2) if rt_tk_avg and pd.notna(rt_tk_avg) else None,
                 'rt_tk_fmt': self.format_rt(rt_tk_avg),
                 'rt_tk_status': rt_tk_status,
@@ -1029,6 +1050,8 @@ class KPIEngine:
                 'bt_dung_hen_pct': bt_dh_pct,
                 'bt_dung_hen_1': bt_1,
                 'bt_dung_hen_0': bt_0,
+                'bt_gt_24h': bt_gt_24h,
+                'bt_gt_72h': bt_gt_72h,
                 'rt_bt_hours': round(float(rt_bt_avg), 2) if rt_bt_avg and pd.notna(rt_bt_avg) else None,
                 'rt_bt_fmt': self.format_rt(rt_bt_avg),
                 'rt_bt_status': rt_bt_status,
@@ -1046,6 +1069,8 @@ class KPIEngine:
                 # Total
                 'total_dung_hen_pct': total_dh_pct,
                 'dung_hen_status': dung_hen_status,
+                'total_gt_24h': tk_gt_24h + bt_gt_24h,
+                'total_gt_72h': tk_gt_72h + bt_gt_72h,
                 'total_work_volume': len(tk) + len(bt)
             },
             'employees': emp_rows

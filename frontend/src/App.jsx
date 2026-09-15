@@ -2744,6 +2744,19 @@ export default function App() {
                       <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.5 }}>
                         ✅ Đúng: <strong>{summary.tk_dung_hen_1 || 0}</strong> | ❌ Trễ: <strong>{summary.tk_dung_hen_0 || 0}</strong>
                       </Typography>
+                      <Box sx={{ mt: 0.5 }}>
+                        <Chip
+                          label={`🔥 >72H: ${summary.tk_gt_72h || 0} phiếu`}
+                          size="small"
+                          sx={{
+                            fontWeight: 800,
+                            fontSize: '11px',
+                            height: 22,
+                            backgroundColor: (summary.tk_gt_72h || 0) > 0 ? '#d32f2f' : '#f5f5f5',
+                            color: (summary.tk_gt_72h || 0) > 0 ? '#ffffff' : '#616161'
+                          }}
+                        />
+                      </Box>
 
                       <Button
                         size="small"
@@ -2779,7 +2792,20 @@ export default function App() {
                       <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.5 }}>
                         ✅ Đúng: <strong>{summary.bt_dung_hen_1 || 0}</strong> | ❌ Trễ: <strong>{summary.bt_dung_hen_0 || 0}</strong>
                       </Typography>
-                      <Typography variant="caption" sx={{ color: '#00897b', fontWeight: 700, display: 'block', mt: 1 }}>
+                      <Box sx={{ mt: 0.5 }}>
+                        <Chip
+                          label={`⚠️ >24H: ${summary.bt_gt_24h || 0} phiếu`}
+                          size="small"
+                          sx={{
+                            fontWeight: 800,
+                            fontSize: '11px',
+                            height: 22,
+                            backgroundColor: (summary.bt_gt_24h || 0) > 0 ? '#d32f2f' : '#f5f5f5',
+                            color: (summary.bt_gt_24h || 0) > 0 ? '#ffffff' : '#616161'
+                          }}
+                        />
+                      </Box>
+                      <Typography variant="caption" sx={{ color: '#00897b', fontWeight: 700, display: 'block', mt: 0.8 }}>
                         Đúng hẹn BT: {summary.bt_dung_hen_pct || 0}%
                       </Typography>
 
@@ -2929,6 +2955,9 @@ export default function App() {
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.2 }}>
                         Tổng Khối Lượng: {summary.total_work_volume || 0} Phiếu
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 600, display: 'block', mt: 0.2 }}>
+                        🔥 TK &gt;72H: <strong style={{ color: (summary.tk_gt_72h || 0) > 0 ? '#d32f2f' : 'inherit' }}>{summary.tk_gt_72h || 0}</strong> | ⚠️ BT &gt;24H: <strong style={{ color: (summary.bt_gt_24h || 0) > 0 ? '#d32f2f' : 'inherit' }}>{summary.bt_gt_24h || 0}</strong>
                       </Typography>
                       <Box sx={{ mt: 0.8 }}>
                         <Chip
@@ -3249,31 +3278,87 @@ export default function App() {
                               </TableCell>
 
                               {/* Volume Columns */}
-                              <TableCell align="center" sx={{ fontWeight: 700, color: '#1a73e8' }}>{emp.tk_kpi_volume || 0}</TableCell>
-                              <TableCell align="center" sx={{ fontWeight: 700, color: '#00897b' }}>{emp.bt_volume || 0}</TableCell>
-                              <TableCell align="center" sx={{ fontWeight: 600, color: '#5f6368', borderRight: '1px solid #d2e3fc' }}>{emp.tk_swap_volume || 0}</TableCell>
-
-                              {/* Progress RT Columns */}
                               <TableCell align="center">
-                                <Typography variant="body2" sx={{
-                                  fontWeight: 800,
-                                  color: (emp.rt_tk_hours !== null && emp.rt_tk_hours !== undefined && !isNaN(emp.rt_tk_hours))
-                                    ? (emp.rt_tk_hours <= 18.0 ? '#2e7d32' : '#d32f2f')
-                                    : '#5f6368'
-                                }}>
-                                  {emp.rt_tk_fmt || '-'}
+                                <Typography variant="body2" sx={{ fontWeight: 800, color: '#1a73e8' }}>
+                                  {emp.tk_kpi_volume || 0}
+                                </Typography>
+                                {(emp.tk_gt_72h || 0) > 0 ? (
+                                  <Box sx={{ mt: 0.3 }}>
+                                    <Chip
+                                      label={`>72H: ${emp.tk_gt_72h}`}
+                                      size="small"
+                                      sx={{ height: 18, fontSize: '10px', fontWeight: 800, backgroundColor: '#d32f2f', color: '#ffffff' }}
+                                    />
+                                  </Box>
+                                ) : (
+                                  <Typography variant="caption" sx={{ display: 'block', fontSize: '10.5px', color: '#9e9e9e', fontWeight: 500, mt: 0.2 }}>
+                                    {`>72H: 0`}
+                                  </Typography>
+                                )}
+                              </TableCell>
+
+                              <TableCell align="center">
+                                <Typography variant="body2" sx={{ fontWeight: 800, color: '#00897b' }}>
+                                  {emp.bt_volume || 0}
+                                </Typography>
+                                {(emp.bt_gt_24h || 0) > 0 ? (
+                                  <Box sx={{ mt: 0.3 }}>
+                                    <Chip
+                                      label={`>24H: ${emp.bt_gt_24h}`}
+                                      size="small"
+                                      sx={{ height: 18, fontSize: '10px', fontWeight: 800, backgroundColor: '#d32f2f', color: '#ffffff' }}
+                                    />
+                                  </Box>
+                                ) : (
+                                  <Typography variant="caption" sx={{ display: 'block', fontSize: '10.5px', color: '#9e9e9e', fontWeight: 500, mt: 0.2 }}>
+                                    {`>24H: 0`}
+                                  </Typography>
+                                )}
+                              </TableCell>
+
+                              <TableCell align="center" sx={{ borderRight: '1px solid #d2e3fc' }}>
+                                <Typography variant="body2" sx={{ fontWeight: 600, color: '#5f6368' }}>
+                                  {emp.tk_swap_volume || 0}
                                 </Typography>
                               </TableCell>
 
+                              {/* Progress RT Columns */}
+                              <TableCell align="center">
+                                {emp.rt_tk_hours !== null && emp.rt_tk_hours !== undefined && !isNaN(emp.rt_tk_hours) && emp.rt_tk_hours > 72.0 ? (
+                                  <Chip
+                                    label={emp.rt_tk_fmt || '-'}
+                                    size="small"
+                                    sx={{ height: 22, fontSize: '11px', fontWeight: 900, backgroundColor: '#d32f2f', color: '#ffffff', boxShadow: '0 2px 4px rgba(211,47,47,0.4)' }}
+                                  />
+                                ) : (
+                                  <Typography variant="body2" sx={{
+                                    fontWeight: 800,
+                                    color: (emp.rt_tk_hours !== null && emp.rt_tk_hours !== undefined && !isNaN(emp.rt_tk_hours))
+                                      ? (emp.rt_tk_hours <= 18.0 ? '#2e7d32' : '#d32f2f')
+                                      : '#5f6368'
+                                  }}>
+                                    {emp.rt_tk_fmt || '-'}
+                                  </Typography>
+                                )}
+                              </TableCell>
+
                               <TableCell align="center" sx={{ borderRight: '1px solid #ffe0b2' }}>
-                                <Typography variant="body2" sx={{
-                                  fontWeight: 800,
-                                  color: (emp.rt_bt_hours !== null && emp.rt_bt_hours !== undefined && !isNaN(emp.rt_bt_hours))
-                                    ? (emp.rt_bt_hours <= 8.0 ? '#2e7d32' : '#d32f2f')
-                                    : '#5f6368'
-                                }}>
-                                  {emp.rt_bt_fmt || '-'}
-                                </Typography>
+                                {emp.rt_bt_hours !== null && emp.rt_bt_hours !== undefined && !isNaN(emp.rt_bt_hours) && emp.rt_bt_hours > 24.0 ? (
+                                  <Chip
+                                    label={emp.rt_bt_fmt || '-'}
+                                    size="small"
+                                    sx={{ height: 22, fontSize: '11px', fontWeight: 900, backgroundColor: '#d32f2f', color: '#ffffff', boxShadow: '0 2px 4px rgba(211,47,47,0.4)' }}
+                                  />
+                                ) : (
+                                  <Typography variant="body2" sx={{
+                                    fontWeight: 800,
+                                    color: (emp.rt_bt_hours !== null && emp.rt_bt_hours !== undefined && !isNaN(emp.rt_bt_hours))
+                                      ? (emp.rt_bt_hours <= 8.0 ? '#2e7d32' : '#d32f2f')
+                                      : '#5f6368'
+                                  }}>
+                                    {emp.rt_bt_fmt || '-'}
+                                  </Typography>
+                                )}
                               </TableCell>
 
                               {/* CLL30N Column */}
