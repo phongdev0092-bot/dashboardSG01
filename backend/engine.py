@@ -44,8 +44,8 @@ class KPIEngine:
         self.lt_history = []
         self.lt_snapshot_map = {}
         self.admin_users_df = pd.DataFrame()
-        self.DEFAULT_PERMISSIONS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbxoVMX_hW1hTH82gyyRgKACTAo4TpPf_cmAK7gRZJxP5v2ZX-VmSS4u4J-YIoBWlFKJ/exec"
-        self.PERMISSIONS_WEBAPP_URL = os.environ.get("PERMISSIONS_WEBAPP_URL", "") or self.DEFAULT_PERMISSIONS_WEBAPP_URL
+        self.DEFAULT_PERMISSIONS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycby-1nRM3wwMbYwbLWxc-VxiIRsMGglhnd8J2KXSNkFICAZpqVvyC1It2lbJiJxtLBNw/exec"
+        self.PERMISSIONS_WEBAPP_URL = os.environ.get("PERMISSIONS_WEBAPP_URL", "").strip() or self.DEFAULT_PERMISSIONS_WEBAPP_URL
         self.LT_SHEET_ID = os.environ.get("LT_SHEET_ID", "1qd8O1bqbtHmbPUO_HhZv07YS9c27bo1QMWh4yvmQr2U").strip()
         self.LT_GID = os.environ.get("LT_GID", "0").strip()
         self.TON_TK_SHEET_ID = os.environ.get("TON_TK_SHEET_ID", "1Hihsf3_R3Z9aaqqj9vskIyveNX4UO2Ej3d26jF5-S2w").strip()
@@ -328,6 +328,36 @@ class KPIEngine:
 
     def _get_ton_bt_sheet_url(self) -> str:
         return f'https://docs.google.com/spreadsheets/d/{self.TON_BT_SHEET_ID}/export?format=csv&gid={self.TON_BT_GID}'
+
+    def _is_custom_ton_imported(self, name: str) -> bool:
+        tmp_dir = Path("/tmp/data_cache")
+        for p in [CACHE_DIR / f"{name}_imported.json", tmp_dir / f"{name}_imported.json"]:
+            try:
+                if p.exists():
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _set_custom_ton_imported(self, name: str):
+        tmp_dir = Path("/tmp/data_cache")
+        data = json.dumps({"imported": True, "time": time.time()})
+        for d in [CACHE_DIR, tmp_dir]:
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+                with open(d / f"{name}_imported.json", "w", encoding="utf-8") as f:
+                    f.write(data)
+            except Exception:
+                pass
+
+    def _clear_custom_ton_imported(self, name: str):
+        tmp_dir = Path("/tmp/data_cache")
+        for p in [CACHE_DIR / f"{name}_imported.json", tmp_dir / f"{name}_imported.json"]:
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                pass
 
     def load_cache_or_fetch(self):
         def _get_df(name):
@@ -1210,6 +1240,10 @@ class KPIEngine:
         return res
 
     def _refresh_lt_from_sheet(self, force=False):
+        if force:
+            self._clear_custom_ton_imported("ton_tk")
+            self._clear_custom_ton_imported("ton_bt")
+
         now = time.time()
         last_fetch = getattr(self, '_last_lt_fetch_time', 0)
         need_fetch = force or (now - last_fetch > 60) or not hasattr(self, 'lt_df') or self.lt_df.empty
@@ -1229,25 +1263,29 @@ class KPIEngine:
             except Exception as e:
                 print(f"Auto-refresh Lịch Trực error: {e}", flush=True)
 
-            # 2. Fetch Tồn TK live from Google Sheet
-            try:
-                res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
-                if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
-                    df_ton_tk_fetched = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
-                    self.ton_tk_df = df_ton_tk_fetched if not df_ton_tk_fetched.empty else pd.DataFrame()
-                    self._save_pickle(self.ton_tk_df, "ton_tk.pkl.gz")
-            except Exception as e_ton_tk:
-                print(f"Auto-refresh Tồn TK error: {e_ton_tk}", flush=True)
+            # 2. Fetch Tồn TK live from Google Sheet (only if user hasn't imported custom file or force=True)
+            if force or not self._is_custom_ton_imported("ton_tk"):
+                try:
+                    res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
+                    if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
+                        df_ton_tk_fetched = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
+                        if not df_ton_tk_fetched.empty:
+                            self.ton_tk_df = df_ton_tk_fetched
+                            self._save_pickle(self.ton_tk_df, "ton_tk.pkl.gz")
+                except Exception as e_ton_tk:
+                    print(f"Auto-refresh Tồn TK error: {e_ton_tk}", flush=True)
 
-            # 3. Fetch Tồn BT live from Google Sheet
-            try:
-                res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
-                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
-                    df_ton_bt_fetched = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
-                    self.ton_bt_df = df_ton_bt_fetched if not df_ton_bt_fetched.empty else pd.DataFrame()
-                    self._save_pickle(self.ton_bt_df, "ton_bt.pkl.gz")
-            except Exception as e_ton_bt:
-                print(f"Auto-refresh Tồn BT error: {e_ton_bt}", flush=True)
+            # 3. Fetch Tồn BT live from Google Sheet (only if user hasn't imported custom file or force=True)
+            if force or not self._is_custom_ton_imported("ton_bt"):
+                try:
+                    res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
+                    if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
+                        df_ton_bt_fetched = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
+                        if not df_ton_bt_fetched.empty:
+                            self.ton_bt_df = df_ton_bt_fetched
+                            self._save_pickle(self.ton_bt_df, "ton_bt.pkl.gz")
+                except Exception as e_ton_bt:
+                    print(f"Auto-refresh Tồn BT error: {e_ton_bt}", flush=True)
 
             self._last_lt_fetch_time = now
 
@@ -1900,17 +1938,21 @@ class KPIEngine:
 
         if detected_mode == "TK":
             self.ton_tk_df = df
+            self._set_custom_ton_imported("ton_tk")
             try:
                 df.to_pickle(CACHE_DIR / "ton_tk.pkl.gz")
             except Exception as e:
                 print(f"Warning saving ton_tk cache: {e}", flush=True)
+            self._sync_ton_dataset_to_webapp("ton_tk", df)
             label = "Tồn Triển Khai (TK)"
         else:
             self.ton_bt_df = df
+            self._set_custom_ton_imported("ton_bt")
             try:
                 df.to_pickle(CACHE_DIR / "ton_bt.pkl.gz")
             except Exception as e:
                 print(f"Warning saving ton_bt cache: {e}", flush=True)
+            self._sync_ton_dataset_to_webapp("ton_bt", df)
             label = "Tồn Bảo Trì (BT)"
 
         return {
@@ -2348,11 +2390,15 @@ class KPIEngine:
             label = "Data Bảo Trì (BT)"
         elif target_clean == "ton_tk":
             self.ton_tk_df = pd.DataFrame()
+            self._set_custom_ton_imported("ton_tk")
             _safe_remove_cache("ton_tk.pkl.gz")
+            self._sync_ton_dataset_to_webapp("ton_tk", None)
             label = "Tồn Triển Khai"
         elif target_clean == "ton_bt":
             self.ton_bt_df = pd.DataFrame()
+            self._set_custom_ton_imported("ton_bt")
             _safe_remove_cache("ton_bt.pkl.gz")
+            self._sync_ton_dataset_to_webapp("ton_bt", None)
             label = "Tồn Bảo Trì"
         elif target_clean == "all":
             self.kh_cls_df = pd.DataFrame()
@@ -2361,6 +2407,10 @@ class KPIEngine:
             self.bt_df = pd.DataFrame()
             self.ton_tk_df = pd.DataFrame()
             self.ton_bt_df = pd.DataFrame()
+            self._set_custom_ton_imported("ton_tk")
+            self._set_custom_ton_imported("ton_bt")
+            self._sync_ton_dataset_to_webapp("ton_tk", None)
+            self._sync_ton_dataset_to_webapp("ton_bt", None)
             for fname in ["kh_cls.pkl.gz", "cll30n.pkl.gz", "tk.pkl.gz", "bt.pkl.gz", "ton_tk.pkl.gz", "ton_bt.pkl.gz"]:
                 _safe_remove_cache(fname)
             label = "TẤT CẢ DỮ LIỆU DATA BASE"
