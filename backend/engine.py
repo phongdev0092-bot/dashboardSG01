@@ -435,39 +435,42 @@ class KPIEngine:
                 except Exception as e_bt:
                     print(f"Warning: BT sheet fetch failed: {e_bt}", flush=True)
 
-            # Fetch live Lịch Trực, Tồn TK, Tồn BT from designated Google Sheets
-            try:
-                print("Fetching live Lịch Trực data from Sheet...", flush=True)
-                res_lt = requests.get(self._get_lt_sheet_url(), timeout=30)
-                if res_lt.status_code == 200 and not res_lt.text.strip().startswith('<!DOCTYPE'):
-                    df_lt_fetched = self._read_any_dataframe(res_lt.content, "lt.csv")
-                    if not df_lt_fetched.empty:
-                        df_lt = df_lt_fetched
-                        self._save_pickle(df_lt, "lt.pkl.gz")
-            except Exception as e_lt:
-                print(f"Warning: Lịch Trực sheet fetch failed: {e_lt}", flush=True)
+            # Fetch live Lịch Trực, Tồn TK, Tồn BT from designated Google Sheets if App DB is empty
+            if df_lt.empty:
+                try:
+                    print("App DB Lịch Trực is empty. Fetching live Lịch Trực data from Sheet...", flush=True)
+                    res_lt = requests.get(self._get_lt_sheet_url(), timeout=30)
+                    if res_lt.status_code == 200 and not res_lt.text.strip().startswith('<!DOCTYPE'):
+                        df_lt_fetched = self._read_any_dataframe(res_lt.content, "lt.csv")
+                        if not df_lt_fetched.empty:
+                            df_lt = df_lt_fetched
+                            self._save_pickle(df_lt, "lt.pkl.gz")
+                except Exception as e_lt:
+                    print(f"Warning: Lịch Trực sheet fetch failed: {e_lt}", flush=True)
 
-            try:
-                print("Fetching live Tồn TK data from Sheet...", flush=True)
-                res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=30)
-                if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
-                    df_ton_tk_fetched = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
-                    if not df_ton_tk_fetched.empty:
-                        df_ton_tk = df_ton_tk_fetched
-                        self._save_pickle(df_ton_tk, "ton_tk.pkl.gz")
-            except Exception as e_ton_tk:
-                print(f"Warning: Tồn TK sheet fetch failed: {e_ton_tk}", flush=True)
+            if df_ton_tk.empty:
+                try:
+                    print("App DB Tồn TK is empty. Fetching live Tồn TK data from Sheet...", flush=True)
+                    res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=30)
+                    if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
+                        df_ton_tk_fetched = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
+                        if not df_ton_tk_fetched.empty:
+                            df_ton_tk = df_ton_tk_fetched
+                            self._save_pickle(df_ton_tk, "ton_tk.pkl.gz")
+                except Exception as e_ton_tk:
+                    print(f"Warning: Tồn TK sheet fetch failed: {e_ton_tk}", flush=True)
 
-            try:
-                print("Fetching live Tồn BT data from Sheet...", flush=True)
-                res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=30)
-                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
-                    df_ton_bt_fetched = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
-                    if not df_ton_bt_fetched.empty:
-                        df_ton_bt = df_ton_bt_fetched
-                        self._save_pickle(df_ton_bt, "ton_bt.pkl.gz")
-            except Exception as e_ton_bt:
-                print(f"Warning: Tồn BT sheet fetch failed: {e_ton_bt}", flush=True)
+            if df_ton_bt.empty:
+                try:
+                    print("App DB Tồn BT is empty. Fetching live Tồn BT data from Sheet...", flush=True)
+                    res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=30)
+                    if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
+                        df_ton_bt_fetched = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
+                        if not df_ton_bt_fetched.empty:
+                            df_ton_bt = df_ton_bt_fetched
+                            self._save_pickle(df_ton_bt, "ton_bt.pkl.gz")
+                except Exception as e_ton_bt:
+                    print(f"Warning: Tồn BT sheet fetch failed: {e_ton_bt}", flush=True)
 
             # Process HR
             if not df_hr.empty:
