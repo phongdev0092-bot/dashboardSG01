@@ -1259,6 +1259,10 @@ class KPIEngine:
                         self.lt_df = df_lt_fetched
                         self._last_lt_fetch_time = now
                         self._save_pickle(self.lt_df, "lt.pkl.gz")
+                        try:
+                            self._snapshot_and_detect_lt_changes(source_label="Google Sheet Sync")
+                        except Exception as e_snap:
+                            print(f"Warning: snapshot detection failed: {e_snap}", flush=True)
             except Exception as e:
                 print(f"Auto-refresh Lịch Trực error: {e}", flush=True)
 
