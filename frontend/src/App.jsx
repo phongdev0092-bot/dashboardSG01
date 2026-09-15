@@ -6003,8 +6003,28 @@ export default function App() {
                             <Typography variant="caption" sx={{ display: 'block' }}>Tạo: {t.dt_created}</Typography>
                             <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>Xong: {t.dt_complete}</Typography>
                           </TableCell>
-                          <TableCell align="center" sx={{ color: '#1a73e8', fontWeight: 600 }}>
-                            {t.rt_fmt}
+                          <TableCell align="center">
+                            {(() => {
+                              const rtNum = t.rt_hours ?? (t.rt_fmt ? parseFloat(String(t.rt_fmt).replace('H', '')) : 0);
+                              const isOver72 = rtNum > 72.0;
+                              return (
+                                <Typography
+                                  variant="body2"
+                                  sx={{
+                                    fontWeight: 800,
+                                    color: isOver72 ? '#ffffff' : (rtNum > 18.0 ? '#d32f2f' : '#1a73e8'),
+                                    backgroundColor: isOver72 ? '#d32f2f' : 'transparent',
+                                    px: isOver72 ? 1 : 0,
+                                    py: isOver72 ? 0.3 : 0,
+                                    borderRadius: isOver72 ? '6px' : 0,
+                                    display: 'inline-block',
+                                    boxShadow: isOver72 ? '0 2px 4px rgba(211,47,47,0.3)' : 'none'
+                                  }}
+                                >
+                                  {t.rt_fmt || '-'}
+                                </Typography>
+                              );
+                            })()}
                           </TableCell>
                           <TableCell align="center">
                             {t.dung_hen === 1 ? (
@@ -6042,8 +6062,28 @@ export default function App() {
                             <Typography variant="caption" sx={{ display: 'block' }}>Tạo: {t.dt_created}</Typography>
                             <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>Xong: {t.dt_complete}</Typography>
                           </TableCell>
-                          <TableCell align="center" sx={{ color: '#00897b', fontWeight: 600 }}>
-                            {t.rt_fmt}
+                          <TableCell align="center">
+                            {(() => {
+                              const rtNum = t.rt_hours ?? (t.rt_fmt ? parseFloat(String(t.rt_fmt).replace('H', '')) : 0);
+                              const isOver24 = rtNum > 24.0;
+                              return (
+                                <Typography
+                                  variant="body2"
+                                  sx={{
+                                    fontWeight: 800,
+                                    color: isOver24 ? '#ffffff' : (rtNum > 8.0 ? '#d32f2f' : '#00897b'),
+                                    backgroundColor: isOver24 ? '#d32f2f' : 'transparent',
+                                    px: isOver24 ? 1 : 0,
+                                    py: isOver24 ? 0.3 : 0,
+                                    borderRadius: isOver24 ? '6px' : 0,
+                                    display: 'inline-block',
+                                    boxShadow: isOver24 ? '0 2px 4px rgba(211,47,47,0.3)' : 'none'
+                                  }}
+                                >
+                                  {t.rt_fmt || '-'}
+                                </Typography>
+                              );
+                            })()}
                           </TableCell>
                           <TableCell align="center">
                             {t.dung_hen === 1 ? (

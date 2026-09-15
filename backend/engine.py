@@ -778,13 +778,37 @@ class KPIEngine:
                 tk['dung_hen'] = 0
             else:
                 tk['dung_hen'] = pd.to_numeric(tk['dung_hen'], errors='coerce').fillna(0).astype(int)
-            if 'rt_hours' not in tk.columns:
-                tk['rt_hours'] = np.nan
+            if 'rt_hours' not in tk.columns or tk['rt_hours'].dropna().empty:
+                col_c = self._find_col(tk, ['Ngày hoàn tất PTC', 'TG hoàn tất PTC', 'TG hoàn tất', 'Ngày online'])
+                col_t = self._find_col(tk, ['TG tạo PTC', 'TG tạo', 'Ngày tạo'])
+                if col_c and col_t:
+                    dt_c = pd.to_datetime(tk[col_c], dayfirst=True, errors='coerce')
+                    dt_t = pd.to_datetime(tk[col_t], dayfirst=True, errors='coerce')
+                    rt_s = (dt_c - dt_t).dt.total_seconds()
+                    tk['rt_hours'] = np.where(rt_s >= 0, rt_s / 3600.0, np.nan)
+                else:
+                    tk['rt_hours'] = np.nan
         else:
             tk['is_gsafe'] = []
             tk['is_swap'] = []
             tk['dung_hen'] = []
             tk['rt_hours'] = []
+
+        if not bt.empty:
+            if 'dung_hen' not in bt.columns:
+                bt['dung_hen'] = 0
+            else:
+                bt['dung_hen'] = pd.to_numeric(bt['dung_hen'], errors='coerce').fillna(0).astype(int)
+            if 'rt_hours' not in bt.columns or bt['rt_hours'].dropna().empty:
+                col_c = self._find_col(bt, ['TG Hoàn Tất', 'Ngày hoàn tất', 'TG hoàn tất'])
+                col_t = self._find_col(bt, ['TG Tạo', 'Ngày tạo', 'TG tạo'])
+                if col_c and col_t:
+                    dt_c = pd.to_datetime(bt[col_c], dayfirst=True, errors='coerce')
+                    dt_t = pd.to_datetime(bt[col_t], dayfirst=True, errors='coerce')
+                    rt_s = (dt_c - dt_t).dt.total_seconds()
+                    bt['rt_hours'] = np.where(rt_s >= 0, rt_s / 3600.0, np.nan)
+                else:
+                    bt['rt_hours'] = np.nan
 
         # 2. Overall Aggregations
         # TK Valid (Excluding Gsafe and Swap for KPIs)
@@ -796,18 +820,22 @@ class KPIEngine:
         tk_0 = int((tk_valid['dung_hen'] == 0).sum())
         tk_tot = tk_1 + tk_0
         tk_dh_pct = round((tk_1 / tk_tot * 100), 2) if tk_tot > 0 else 0.0
-        rt_tk_avg = float(tk_valid['rt_hours'].mean()) if len(tk_valid) > 0 else None
-        tk_gt_24h = int((tk_valid['rt_hours'] > 24.0).sum()) if len(tk_valid) > 0 else 0
-        tk_gt_72h = int((tk_valid['rt_hours'] > 72.0).sum()) if len(tk_valid) > 0 else 0
+        
+        rt_tk_ser = pd.to_numeric(tk_valid['rt_hours'], errors='coerce')
+        rt_tk_avg = float(rt_tk_ser.mean()) if len(tk_valid) > 0 and not rt_tk_ser.dropna().empty else None
+        tk_gt_24h = int((rt_tk_ser > 24.0).sum()) if len(tk_valid) > 0 else 0
+        tk_gt_72h = int((rt_tk_ser > 72.0).sum()) if len(tk_valid) > 0 else 0
 
         # BT Valid
         bt_1 = int((bt['dung_hen'] == 1).sum())
         bt_0 = int((bt['dung_hen'] == 0).sum())
         bt_tot = bt_1 + bt_0
         bt_dh_pct = round((bt_1 / bt_tot * 100), 2) if bt_tot > 0 else 0.0
-        rt_bt_avg = float(bt['rt_hours'].mean()) if len(bt) > 0 else None
-        bt_gt_24h = int((bt['rt_hours'] > 24.0).sum()) if len(bt) > 0 else 0
-        bt_gt_72h = int((bt['rt_hours'] > 72.0).sum()) if len(bt) > 0 else 0
+        
+        rt_bt_ser = pd.to_numeric(bt['rt_hours'], errors='coerce')
+        rt_bt_avg = float(rt_bt_ser.mean()) if len(bt) > 0 and not rt_bt_ser.dropna().empty else None
+        bt_gt_24h = int((rt_bt_ser > 24.0).sum()) if len(bt) > 0 else 0
+        bt_gt_72h = int((rt_bt_ser > 72.0).sum()) if len(bt) > 0 else 0
 
         # Total Đúng Hẹn %
         tot_1 = tk_1 + bt_1
@@ -857,16 +885,17 @@ class KPIEngine:
         cll_grp = cll.groupby('Nhân viên') if not cll.empty and 'Nhân viên' in cll.columns else {}
 
         # Cache pre-aggregated dicts
-        tk_v_dict = {
-            acc: {
+        tk_v_dict = {}
+        for acc, group in tk_valid_grp:
+            rt_s = pd.to_numeric(group['rt_hours'], errors='coerce')
+            tk_v_dict[acc] = {
                 'c1': (group['dung_hen'] == 1).sum(),
                 'c0': (group['dung_hen'] == 0).sum(),
-                'rt_avg': group['rt_hours'].mean(),
-                'gt_24h': int((group['rt_hours'] > 24.0).sum()),
-                'gt_72h': int((group['rt_hours'] > 72.0).sum()),
+                'rt_avg': rt_s.mean() if not rt_s.dropna().empty else None,
+                'gt_24h': int((rt_s > 24.0).sum()),
+                'gt_72h': int((rt_s > 72.0).sum()),
                 'total': len(group)
-            } for acc, group in tk_valid_grp
-        }
+            }
 
         tk_s_dict = {
             acc: {
@@ -877,16 +906,17 @@ class KPIEngine:
 
         tk_g_dict = {acc: len(group) for acc, group in tk_gsafe_grp}
 
-        bt_v_dict = {
-            acc: {
+        bt_v_dict = {}
+        for acc, group in bt_grp:
+            rt_s = pd.to_numeric(group['rt_hours'], errors='coerce')
+            bt_v_dict[acc] = {
                 'c1': (group['dung_hen'] == 1).sum(),
                 'c0': (group['dung_hen'] == 0).sum(),
-                'rt_avg': group['rt_hours'].mean(),
-                'gt_24h': int((group['rt_hours'] > 24.0).sum()),
-                'gt_72h': int((group['rt_hours'] > 72.0).sum()),
+                'rt_avg': rt_s.mean() if not rt_s.dropna().empty else None,
+                'gt_24h': int((rt_s > 24.0).sum()),
+                'gt_72h': int((rt_s > 72.0).sum()),
                 'total': len(group)
-            } for acc, group in bt_grp
-        }
+            }
 
         cll_dict = {acc: len(group) for acc, group in cll_grp} if not isinstance(cll_grp, dict) else {}
         clps7n_dict = {acc: int((group['is_clps_7n_bt'] == True).sum()) for acc, group in cll_grp} if not isinstance(cll_grp, dict) else {}
@@ -1096,6 +1126,11 @@ class KPIEngine:
         # TK tickets list
         tk_list = []
         for _, row in tk.iterrows():
+            rt_val = row.get('rt_hours')
+            try:
+                rt_float = float(rt_val) if pd.notna(rt_val) else None
+            except Exception:
+                rt_float = None
             tk_list.append({
                 'contract_no': str(row.get('Số hợp đồng', '')),
                 'customer_name': str(row.get('Tên khách hàng', '')),
@@ -1104,7 +1139,8 @@ class KPIEngine:
                 'dt_created': str(row.get('TG tạo PTC', '')),
                 'dt_complete': str(row.get('Ngày hoàn tất PTC', '')),
                 'dung_hen': int(row.get('dung_hen', 0)),
-                'rt_fmt': self.format_rt(row.get('rt_hours')),
+                'rt_hours': round(rt_float, 2) if rt_float is not None else None,
+                'rt_fmt': self.format_rt(rt_val),
                 'is_gsafe': bool(row.get('is_gsafe', False)),
                 'is_swap': bool(row.get('is_swap', False))
             })
@@ -1115,13 +1151,19 @@ class KPIEngine:
             col_as_bt = bt.columns[44]
         bt_list = []
         for _, row in bt.iterrows():
+            rt_val = row.get('rt_hours')
+            try:
+                rt_float = float(rt_val) if pd.notna(rt_val) else None
+            except Exception:
+                rt_float = None
             bt_list.append({
                 'contract_no': str(row.get('Số HĐ', '')),
                 'customer_name': str(row.get('Khách hàng', '') or row.get('Tên khách hàng', '')),
                 'dt_created': str(row.get('TG Tạo', '')),
                 'dt_complete': str(row.get('TG Hoàn Tất', '')),
                 'dung_hen': int(row.get('dung_hen', 0)),
-                'rt_fmt': self.format_rt(row.get('rt_hours')),
+                'rt_hours': round(rt_float, 2) if rt_float is not None else None,
+                'rt_fmt': self.format_rt(rt_val),
                 'tx_type': str(row.get(col_as_bt, '-')) if col_as_bt else '-'
             })
 
