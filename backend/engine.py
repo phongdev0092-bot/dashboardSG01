@@ -1943,7 +1943,10 @@ class KPIEngine:
                 df.to_pickle(CACHE_DIR / "ton_tk.pkl.gz")
             except Exception as e:
                 print(f"Warning saving ton_tk cache: {e}", flush=True)
-            self._sync_ton_dataset_to_webapp("ton_tk", df)
+            try:
+                self._sync_ton_dataset_to_webapp("ton_tk", df)
+            except Exception as e_w:
+                print(f"Warning: WebApp background sync error: {e_w}", flush=True)
             label = "Tồn Triển Khai (TK)"
         else:
             self.ton_bt_df = df
@@ -1952,7 +1955,10 @@ class KPIEngine:
                 df.to_pickle(CACHE_DIR / "ton_bt.pkl.gz")
             except Exception as e:
                 print(f"Warning saving ton_bt cache: {e}", flush=True)
-            self._sync_ton_dataset_to_webapp("ton_bt", df)
+            try:
+                self._sync_ton_dataset_to_webapp("ton_bt", df)
+            except Exception as e_w:
+                print(f"Warning: WebApp background sync error: {e_w}", flush=True)
             label = "Tồn Bảo Trì (BT)"
 
         return {
@@ -2623,6 +2629,35 @@ class KPIEngine:
         except Exception as e:
             print(f"Error calling WebApp sync: {e}", flush=True)
             return {"ok": False, "msg": f"Lỗi kết nối WebApp API: {e}"}
+
+    def _sync_ton_dataset_to_webapp(self, target: str, df: pd.DataFrame = None):
+        url = getattr(self, 'PERMISSIONS_WEBAPP_URL', '') or os.environ.get("PERMISSIONS_WEBAPP_URL", "") or getattr(self, 'DEFAULT_PERMISSIONS_WEBAPP_URL', '')
+        if not url:
+            return
+        try:
+            if df is not None and not df.empty:
+                cols = [str(c) for c in df.columns]
+                rows = []
+                for _, r in df.iterrows():
+                    row_dict = {}
+                    for col in cols:
+                        val = r.get(col, '')
+                        row_dict[col] = '' if (pd.isna(val) or val is None) else str(val).strip()
+                    rows.append(row_dict)
+                payload = {"action": f"sync_{target}", "headers": cols, "rows": rows}
+            else:
+                payload = {"action": f"clear_{target}"}
+
+            resp = requests.post(
+                url,
+                data=json.dumps(payload),
+                headers={'Content-Type': 'application/json'},
+                allow_redirects=True,
+                timeout=15
+            )
+            print(f"Synced {target} dataset to Google Apps Script WebApp (status {resp.status_code})", flush=True)
+        except Exception as e:
+            print(f"Warning: _sync_ton_dataset_to_webapp for {target} failed: {e}", flush=True)
 
     def check_hr_email(self, email: str):
         if not email or not isinstance(email, str):
