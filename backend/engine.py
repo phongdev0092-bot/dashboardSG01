@@ -1606,12 +1606,12 @@ class KPIEngine:
                 if key not in self.lt_snapshot_map:
                     continue
 
-                old_ca1 = is_ca1(old_val)
-                new_ca1 = is_ca1(new_val)
+                old_clean = str(old_val or '').strip().upper()
+                new_clean = str(new_val or '').strip().upper()
 
-                if old_ca1 != new_ca1:
+                if old_clean != new_clean:
                     info = row_info_map.get((mail, row_month, row_year), {})
-                    change_type = 'CA1 ➔ OFF' if old_ca1 else 'OFF ➔ CA1'
+                    change_type = f"{old_clean or 'O'} ➔ {new_clean or 'O'}"
                     
                     rec = {
                         'id': len(self.lt_history) + 1,
