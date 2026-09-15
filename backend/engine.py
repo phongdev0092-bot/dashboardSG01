@@ -44,6 +44,22 @@ class KPIEngine:
         self.lt_history = []
         self.lt_snapshot_map = {}
         self.admin_users_df = pd.DataFrame()
+        # Auto-load .env file if present
+        for env_path in [Path(__file__).parent / ".env", Path(__file__).parent.parent / ".env"]:
+            if env_path.exists():
+                try:
+                    with open(env_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#') and '=' in line:
+                                k, v = line.split('=', 1)
+                                k_str = k.strip()
+                                v_str = v.strip().strip("'\"")
+                                if k_str and v_str and k_str not in os.environ:
+                                    os.environ[k_str] = v_str
+                except Exception:
+                    pass
+
         self.DEFAULT_PERMISSIONS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycby-1nRM3wwMbYwbLWxc-VxiIRsMGglhnd8J2KXSNkFICAZpqVvyC1It2lbJiJxtLBNw/exec"
         self.PERMISSIONS_WEBAPP_URL = os.environ.get("PERMISSIONS_WEBAPP_URL", "").strip() or self.DEFAULT_PERMISSIONS_WEBAPP_URL
         self.LT_SHEET_ID = os.environ.get("LT_SHEET_ID", "1qd8O1bqbtHmbPUO_HhZv07YS9c27bo1QMWh4yvmQr2U").strip()
