@@ -1616,6 +1616,12 @@ export default function App() {
       } else if (ltTab === 'history') {
         fetchLichTrucHistory();
       }
+
+      const timer = setInterval(() => {
+        if (ltTab === 'dashboard') fetchLichTrucDashboard();
+        else if (ltTab === 'chitiet') fetchLichTrucChiTiet();
+      }, 60000);
+      return () => clearInterval(timer);
     } else if (currentNav === 'ton_tk_bt') {
       fetchTonTkBtDashboard();
     } else if (currentNav === 'admin') {

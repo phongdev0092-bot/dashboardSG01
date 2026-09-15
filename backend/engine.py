@@ -1247,7 +1247,23 @@ class KPIEngine:
 
         return res
 
+    def _refresh_lt_from_sheet(self, force=False):
+        now = time.time()
+        last_fetch = getattr(self, '_last_lt_fetch_time', 0)
+        if force or (now - last_fetch > 60) or not hasattr(self, 'lt_df') or self.lt_df.empty:
+            try:
+                res_lt = requests.get(self._get_lt_sheet_url(), timeout=15)
+                if res_lt.status_code == 200 and not res_lt.text.strip().startswith('<!DOCTYPE'):
+                    df_lt_fetched = self._read_any_dataframe(res_lt.content, "lt.csv")
+                    if not df_lt_fetched.empty:
+                        self.lt_df = df_lt_fetched
+                        self._last_lt_fetch_time = now
+                        self._save_pickle(self.lt_df, "lt.pkl.gz")
+            except Exception as e:
+                print(f"Auto-refresh Lịch Trực error: {e}", flush=True)
+
     def get_lich_truc_dashboard(self, date_str=None):
+        self._refresh_lt_from_sheet()
         if not date_str:
             base_date = datetime.date.today()
         else:
@@ -1365,6 +1381,7 @@ class KPIEngine:
         }
 
     def get_lich_truc_chitiet(self, month=0, year=0, doi_truong="__ALL__"):
+        self._refresh_lt_from_sheet()
         header = ['CodeStaff', 'Name', 'Partner', 'Block'] + [f'Day{i}' for i in range(1, 32)] + ['Months', 'Years']
         data = []
 
