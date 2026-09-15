@@ -1,9 +1,15 @@
 import os
+import sys
 from typing import Optional
+from pydantic import BaseModel
 from fastapi import FastAPI, Query, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+
+# Ensure sys.path includes backend directory for internal imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from engine import KPIEngine
 
 app = FastAPI(title="Ultra-Fast HR KPI System", version="1.0.0")
@@ -68,6 +74,29 @@ def get_ton_tk_bt_dashboard():
 async def import_ton_tk_bt(file: UploadFile = File(...), mode: Optional[str] = Form("AUTO")):
     contents = await file.read()
     res = engine.import_ton_tk_bt(contents, file.filename, mode=mode)
+    return res
+
+@app.get("/api/admin/dataset-counts")
+def get_dataset_counts():
+    return engine.get_dataset_counts()
+
+@app.post("/api/admin/import-dataset")
+async def import_database_dataset(
+    file: UploadFile = File(...),
+    target: Optional[str] = Form("kh_cls"),
+    rule: Optional[str] = Form("MERGE_NO_OVERWRITE")
+):
+    contents = await file.read()
+    res = engine.import_database_dataset(contents, file.filename, target=target, rule=rule)
+    return res
+
+class ClearDatasetRequest(BaseModel):
+    target: str = "kh_cls"
+    password: str
+
+@app.post("/api/admin/clear-dataset")
+def clear_database_dataset(req: ClearDatasetRequest):
+    res = engine.clear_database_dataset(req.target, req.password)
     return res
 
 @app.post("/api/kpi/sync")

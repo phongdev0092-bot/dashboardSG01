@@ -46,6 +46,8 @@ class KPIEngine:
         self.admin_users_df = pd.DataFrame()
         self.DEFAULT_PERMISSIONS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbxoVMX_hW1hTH82gyyRgKACTAo4TpPf_cmAK7gRZJxP5v2ZX-VmSS4u4J-YIoBWlFKJ/exec"
         self.PERMISSIONS_WEBAPP_URL = os.environ.get("PERMISSIONS_WEBAPP_URL", "") or self.DEFAULT_PERMISSIONS_WEBAPP_URL
+        self.LT_SHEET_ID = os.environ.get("LT_SHEET_ID", "1qd8O1bqbtHmbPUO_HhZv07YS9c27bo1QMWh4yvmQr2U").strip()
+        self.LT_GID = os.environ.get("LT_GID", "0").strip()
         try:
             CACHE_DIR.mkdir(exist_ok=True, parents=True)
             cfg_file = CACHE_DIR / "webapp_config.json"
@@ -54,129 +56,297 @@ class KPIEngine:
                     cfg = json.load(f)
                     if cfg.get('PERMISSIONS_WEBAPP_URL'):
                         self.PERMISSIONS_WEBAPP_URL = cfg['PERMISSIONS_WEBAPP_URL']
+                    if cfg.get('LT_SHEET_ID'):
+                        self.LT_SHEET_ID = cfg['LT_SHEET_ID']
+                    if cfg.get('LT_GID'):
+                        self.LT_GID = str(cfg['LT_GID'])
         except Exception:
             pass
         self._load_lt_history_and_snapshot()
         self.load_cache_or_fetch()
-        self._load_admin_users()
+
+    def _find_col(self, df, candidate_names, default_idx=None):
+        if df is None or df.empty:
+            return None
+        cols = list(df.columns)
+        cols_clean = [str(c).strip().lower() for c in cols]
+        # Pass 1: Exact match
+        for name in candidate_names:
+            name_lower = name.strip().lower()
+            for idx, col_c in enumerate(cols_clean):
+                if name_lower == col_c:
+                    return cols[idx]
+        # Pass 2: Substring match
+        for name in candidate_names:
+            name_lower = name.strip().lower()
+            for idx, col_c in enumerate(cols_clean):
+                if name_lower in col_c:
+                    return cols[idx]
+        if default_idx is not None and 0 <= default_idx < len(cols):
+            return cols[default_idx]
+        return candidate_names[0] if candidate_names else None
+
+    def _get_required_col(self, df, candidate_names):
+        if df is None or df.empty:
+            return None
+        cols = list(df.columns)
+        cols_clean = [str(c).strip().lower() for c in cols]
+        # Pass 1: Exact match
+        for name in candidate_names:
+            name_lower = name.strip().lower()
+            for idx, col_c in enumerate(cols_clean):
+                if name_lower == col_c:
+                    return cols[idx]
+        # Pass 2: Substring match
+        for name in candidate_names:
+            name_lower = name.strip().lower()
+            for idx, col_c in enumerate(cols_clean):
+                if name_lower in col_c:
+                    return cols[idx]
+        return None
+
+    def _read_any_dataframe(self, file_bytes: bytes, filename: str) -> pd.DataFrame:
+        import re
+        filename_lower = str(filename or '').lower()
+        df = None
+
+        def _parse_html_table_bytes(b_data):
+            try:
+                text = b_data.decode('utf-8', errors='ignore')
+                table_match = re.search(r'<table[^>]*>(.*?)</table>', text, re.DOTALL | re.IGNORECASE)
+                if not table_match:
+                    return None
+                rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_match.group(1), re.DOTALL | re.IGNORECASE)
+                parsed_rows = []
+                for r in rows:
+                    cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', r, re.DOTALL | re.IGNORECASE)
+                    clean_cells = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
+                    if any(clean_cells):
+                        parsed_rows.append(clean_cells)
+                if len(parsed_rows) > 1:
+                    return pd.DataFrame(parsed_rows[1:], columns=parsed_rows[0])
+                elif len(parsed_rows) == 1:
+                    return pd.DataFrame(parsed_rows)
+            except Exception:
+                pass
+            return None
+
+        # 1. Try Excel read (openpyxl / xlrd)
+        if filename_lower.endswith(('.xlsx', '.xls', '.xlsm', '.xlsb', '.html', '.htm')):
+            try:
+                df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+            except Exception:
+                df = _parse_html_table_bytes(file_bytes)
+
+        # 2. Try CSV read with various separators and encodings
+        if df is None:
+            separators = [',', ';', '\t', '|']
+            encodings = ['utf-8', 'utf-8-sig', 'cp1252', 'utf-16', 'utf-16le', 'latin1']
+            for enc in encodings:
+                for sep in separators:
+                    try:
+                        candidate = pd.read_csv(
+                            io.BytesIO(file_bytes),
+                            sep=sep,
+                            encoding=enc,
+                            dtype=str,
+                            low_memory=False,
+                            on_bad_lines='skip'
+                        )
+                        if candidate is not None and len(candidate.columns) >= 2:
+                            df = candidate
+                            break
+                    except Exception:
+                        continue
+                if df is not None and len(df.columns) >= 2:
+                    break
+
+        # 3. Fallback attempts
+        if df is None:
+            try:
+                df = pd.read_csv(io.BytesIO(file_bytes), dtype=str, low_memory=False, on_bad_lines='skip')
+            except Exception:
+                try:
+                    df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+                except Exception:
+                    df = _parse_html_table_bytes(file_bytes)
+
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        # Clean column headers
+        df.columns = [str(c).strip() for c in df.columns]
+
+        # 4. Header Row Auto Detection:
+        keywords = ['số hđ', 'số hợp đồng', 'nhân viên', 'nhân sự', 'inside account', 'mã nv', 'tg hoàn tất', 'ngày hoàn tất', 'tght', 'khách hàng', 'block']
+        cols_clean = [str(c).strip().lower() for c in df.columns]
+        has_keyword = any(any(kw in c for kw in keywords) for c in cols_clean)
+        
+        if not has_keyword and len(df) > 1:
+            for idx in range(min(10, len(df))):
+                row_vals = [str(v).strip().lower() for v in df.iloc[idx].values]
+                if any(any(kw in v for kw in keywords) for v in row_vals):
+                    new_cols = [str(v).strip() for v in df.iloc[idx].values]
+                    df = df.iloc[idx + 1:].reset_index(drop=True)
+                    df.columns = new_cols
+                    break
+
+        df.columns = [str(c).strip() for c in df.columns]
+        return df
 
     def _save_pickle(self, df_or_obj, filename: str):
+        comp = 'gzip' if filename.endswith('.gz') else None
         try:
             CACHE_DIR.mkdir(exist_ok=True, parents=True)
             target = CACHE_DIR / filename
+            tmp_target = CACHE_DIR / f"{filename}.tmp"
             if hasattr(df_or_obj, 'to_pickle'):
-                df_or_obj.to_pickle(target)
+                df_or_obj.to_pickle(tmp_target, compression=comp)
             else:
-                pd.to_pickle(df_or_obj, target)
+                pd.to_pickle(df_or_obj, tmp_target, compression=comp)
+            if tmp_target.exists():
+                if target.exists():
+                    try: target.unlink()
+                    except Exception: pass
+                tmp_target.replace(target)
+                if filename.endswith('.pkl.gz'):
+                    uncomp = CACHE_DIR / filename[:-3]
+                    if uncomp.exists():
+                        try: uncomp.unlink()
+                        except Exception: pass
             return
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning in _save_pickle: {e}", flush=True)
 
         try:
             tmp_dir = Path("/tmp/data_cache")
             tmp_dir.mkdir(exist_ok=True, parents=True)
             target = tmp_dir / filename
             if hasattr(df_or_obj, 'to_pickle'):
-                df_or_obj.to_pickle(target)
+                df_or_obj.to_pickle(target, compression=comp)
             else:
-                pd.to_pickle(df_or_obj, target)
+                pd.to_pickle(df_or_obj, target, compression=comp)
         except Exception:
             pass
+
+    def _load_pickle_file(self, filepath: Path):
+        if not filepath or not filepath.exists():
+            return None
+        for comp in ['infer', None, 'gzip']:
+            try:
+                df = pd.read_pickle(filepath, compression=comp)
+                if df is not None:
+                    return df
+            except Exception:
+                continue
+        return None
+
+    def _process_cll30n_df(self, df_raw: pd.DataFrame) -> pd.DataFrame:
+        if df_raw is None or df_raw.empty:
+            return pd.DataFrame()
+        
+        col_hd = self._get_required_col(df_raw, [
+            'Số HĐ', 'Số hợp đồng', 'so_hd', 'so_hop_dong', 'mã hđ', 'hđ', 'hd', 'contract', 'mã hợp đồng', 'so hd'
+        ]) or (df_raw.columns[0] if len(df_raw.columns) > 0 else 'Số HĐ')
+        
+        col_kh = self._get_required_col(df_raw, [
+            'Khách Hàng', 'Tên KH', 'Tên khách hàng', 'khach_hang', 'ten_kh', 'customer'
+        ]) or (df_raw.columns[1] if len(df_raw.columns) > 1 else 'Khách Hàng')
+        
+        col_nv = self._get_required_col(df_raw, [
+            'Nhân viên', 'Nhân sự', 'nhan_vien', 'inside account', 'mã nv', 'inside', 'ktv', 'user', 'account', 'nhanvien', 'tài khoản', 'acc', 'ktv xử lý'
+        ]) or (df_raw.columns[3] if len(df_raw.columns) > 3 else 'Nhân viên')
+        
+        col_g = self._get_required_col(df_raw, [
+            'Tg hoàn tất', 'Thời gian hoàn tất', 'Ngày hoàn tất', 'tg hoàn tất', 'tght', 'ngày ht', 'ngay_hoan_tat', 'thời gian nghiệm thu', 'tg nghiệm thu', 'date_complete', 'tg_hoan_tat', 'ngày ht ptc', 'tg ht', 'hoàn tất', 'tg tạo'
+        ]) or (df_raw.columns[6] if len(df_raw.columns) > 6 else 'Tg hoàn tất')
+        
+        col_lap = self._find_col(df_raw, ['Số lần lặp', 'Số lần Lặp', 'so_lan_lap', 'số lần lặp', 'lap', 'lặp'], default_idx=24 if len(df_raw.columns) > 24 else None)
+        col_ab = self._find_col(df_raw, ['Tg tạo CLPS', 'Thời gian tạo CLPS', 'tg_tao_clps', 'tg tạo clps'], default_idx=27 if len(df_raw.columns) > 27 else None)
+        col_ac = self._find_col(df_raw, ['Tg hoàn tất CLPS', 'Thời gian hoàn tất CLPS', 'tg_hoan_tat_clps', 'tg hoàn tất clps'], default_idx=28 if len(df_raw.columns) > 28 else None)
+        col_af = self._find_col(df_raw, ['(Cấp 1)Tình trạng đầu vào', 'Tình trạng đầu vào', 'tinh_trang_dau_vao'], default_idx=31 if len(df_raw.columns) > 31 else None)
+        col_ai = self._find_col(df_raw, ['(Cấp 1)Hướng xử lý', 'Hướng xử lý', 'huong_xu_ly'], default_idx=34 if len(df_raw.columns) > 34 else None)
+
+        df = pd.DataFrame()
+        df['Số HĐ'] = df_raw[col_hd].astype(str).str.strip().str.upper()
+        df['Khách Hàng'] = df_raw[col_kh].astype(str).str.strip() if col_kh and col_kh in df_raw.columns else ''
+        df['Nhân viên'] = df_raw[col_nv].astype(str).str.strip().str.upper()
+        df['Tg hoàn tất'] = df_raw[col_g].astype(str).str.strip() if col_g and col_g in df_raw.columns else ''
+        df['Tg tạo CLPS'] = df_raw[col_ab].astype(str).str.strip() if col_ab and col_ab in df_raw.columns else ''
+        df['Tg hoàn tất CLPS'] = df_raw[col_ac].astype(str).str.strip() if col_ac and col_ac in df_raw.columns else ''
+        df['tinh_trang_dau_vao'] = df_raw[col_af].fillna('-').astype(str).str.strip() if col_af and col_af in df_raw.columns else '-'
+        df['huong_xu_ly'] = df_raw[col_ai].fillna('-').astype(str).str.strip() if col_ai and col_ai in df_raw.columns else '-'
+        df['so_lan_lap'] = pd.to_numeric(df_raw[col_lap], errors='coerce').fillna(1).astype(int) if col_lap and col_lap in df_raw.columns else 1
+
+        dt_g = pd.to_datetime(df['Tg hoàn tất'], dayfirst=True, errors='coerce')
+        dt_ab = pd.to_datetime(df['Tg tạo CLPS'], dayfirst=True, errors='coerce')
+        dt_ac = pd.to_datetime(df['Tg hoàn tất CLPS'], dayfirst=True, errors='coerce')
+
+        df['dt_created'] = dt_ab.fillna(dt_g)
+        df['dt_complete'] = dt_ac.fillna(dt_g)
+        df['date_complete'] = df['dt_complete'].dt.date
+
+        df = df[df['date_complete'].notna()].copy()
+
+        # CLPS 7N BT: Trong data CLL30N nếu cột AC (Tg hoàn tất CLPS) - cột G (Tg hoàn tất) <= 7 ngày
+        dt_clps_target = dt_ac.fillna(dt_ab)
+        gap_days_ac_g = (dt_clps_target - dt_g).dt.total_seconds() / 86400.0
+        df['is_clps_7n_bt'] = (dt_clps_target.notna()) & (dt_g.notna()) & (gap_days_ac_g >= 0) & (gap_days_ac_g <= 7.0)
+
+        # CLL30N (Tử số): repeat ticket within <= 30 days OR flagged with so_lan_lap >= 2
+        sort_dt = dt_ab.fillna(dt_g)
+        df['sort_dt'] = sort_dt
+        df = df.sort_values(['Số HĐ', 'sort_dt'])
+        prev_complete = df.groupby('Số HĐ')['dt_complete'].shift(1)
+        gap_days_30 = (df['sort_dt'] - prev_complete).dt.total_seconds() / 86400.0
+        df['is_cll30n'] = (prev_complete.notna()) & (gap_days_30 >= 0) & (gap_days_30 <= 30.0) | (df['so_lan_lap'] >= 2)
+
+        return df[['Số HĐ', 'Khách Hàng', 'Nhân viên', 'Tg hoàn tất', 'Tg tạo CLPS', 'Tg hoàn tất CLPS', 'tinh_trang_dau_vao', 'huong_xu_ly', 'date_complete', 'dt_complete', 'dt_created', 'is_clps_7n_bt', 'is_cll30n', 'so_lan_lap']]
 
     def _get_sheet_url(self, gid: str) -> str:
         return f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={gid}'
 
     def _get_lt_sheet_url(self) -> str:
-        return 'https://docs.google.com/spreadsheets/d/1qd8O1bqbtHmbPUO_HhZv07YS9c27bo1QMWh4yvmQr2U/export?format=csv&gid=0'
+        return f'https://docs.google.com/spreadsheets/d/{self.LT_SHEET_ID}/export?format=csv&gid={self.LT_GID}'
 
     def load_cache_or_fetch(self):
-        def _get_path(name):
+        def _get_df(name):
             tmp_dir = Path("/tmp/data_cache")
-            tmp_gz = tmp_dir / f"{name}.pkl.gz"
-            if tmp_gz.exists():
-                return tmp_gz
-            tmp_pkl = tmp_dir / f"{name}.pkl"
-            if tmp_pkl.exists():
-                return tmp_pkl
+            candidates = [
+                CACHE_DIR / f"{name}.pkl.gz",
+                CACHE_DIR / f"{name}.pkl",
+                tmp_dir / f"{name}.pkl.gz",
+                tmp_dir / f"{name}.pkl"
+            ]
+            for p in candidates:
+                df = self._load_pickle_file(p)
+                if df is not None and not (isinstance(df, pd.DataFrame) and df.empty):
+                    return p, df
+            return None, pd.DataFrame()
 
-            gz = CACHE_DIR / f"{name}.pkl.gz"
-            if gz.exists():
-                return gz
-            return CACHE_DIR / f"{name}.pkl"
+        hr_path, hr_df = _get_df("hr")
+        tk_path, tk_df = _get_df("tk")
+        bt_path, bt_df = _get_df("bt")
+        lt_path, lt_df = _get_df("lt")
+        ton_tk_path, ton_tk_df = _get_df("ton_tk")
+        ton_bt_path, ton_bt_df = _get_df("ton_bt")
+        cll30n_path, cll30n_df = _get_df("cll30n")
+        kh_cls_path, kh_cls_df = _get_df("kh_cls")
 
-        hr_cache = _get_path("hr")
-        tk_cache = _get_path("tk")
-        bt_cache = _get_path("bt")
-        lt_cache = _get_path("lt")
-        ton_tk_cache = _get_path("ton_tk")
-        ton_bt_cache = _get_path("ton_bt")
-        cll30n_cache = _get_path("cll30n")
-        kh_cls_cache = _get_path("kh_cls")
-
-        if hr_cache.exists() and tk_cache.exists() and bt_cache.exists():
+        if not hr_df.empty and not tk_df.empty and not bt_df.empty:
             try:
                 print("Loading data from local cache...", flush=True)
-                self.hr_df = pd.read_pickle(hr_cache)
-                self.tk_df = pd.read_pickle(tk_cache)
-                self.bt_df = pd.read_pickle(bt_cache)
-                if lt_cache.exists():
-                    self.lt_df = pd.read_pickle(lt_cache)
-                if ton_tk_cache.exists():
-                    self.ton_tk_df = pd.read_pickle(ton_tk_cache)
-                if ton_bt_cache.exists():
-                    self.ton_bt_df = pd.read_pickle(ton_bt_cache)
-                if cll30n_cache.exists():
-                    self.cll30n_df = pd.read_pickle(cll30n_cache)
-                else:
-                    try:
-                        print("Fetching live CLL30N data for cache...", flush=True)
-                        url_cll = 'https://docs.google.com/spreadsheets/d/1JtMBIXmgQ37ne9a_QYb6ZuN6mWwgJHIC-kSjKEb-56w/export?format=csv&gid=1484730732'
-                        res_cll = requests.get(url_cll, timeout=60)
-                        if res_cll.status_code == 200:
-                            df_cll = pd.read_csv(io.BytesIO(res_cll.content), encoding='utf-8', low_memory=False, dtype=str, on_bad_lines='skip')
-                            col_hd = df_cll.columns[0] if len(df_cll.columns) > 0 else 'Số HĐ'
-                            col_kh = df_cll.columns[1] if len(df_cll.columns) > 1 else 'Khách Hàng'
-                            col_nv = df_cll.columns[3] if len(df_cll.columns) > 3 else 'Nhân viên'
-                            col_tg = df_cll.columns[6] if len(df_cll.columns) > 6 else 'Tg hoàn tất'
-                            col_af = df_cll.columns[31] if len(df_cll.columns) > 31 else '(Cấp 1)Tình trạng đầu vào'
-                            col_ai = df_cll.columns[34] if len(df_cll.columns) > 34 else '(Cấp 1)Hướng xử lý'
-                            df_cll['Số HĐ'] = df_cll[col_hd].astype(str).str.strip().str.upper()
-                            df_cll['Khách Hàng'] = df_cll[col_kh].astype(str).str.strip()
-                            df_cll['Nhân viên'] = df_cll[col_nv].astype(str).str.strip().str.upper()
-                            df_cll['Tg hoàn tất'] = df_cll[col_tg].astype(str).str.strip()
-                            df_cll['tinh_trang_dau_vao'] = df_cll[col_af].fillna('-').astype(str).str.strip()
-                            df_cll['huong_xu_ly'] = df_cll[col_ai].fillna('-').astype(str).str.strip()
-                            df_cll['dt_complete'] = pd.to_datetime(df_cll[col_tg], dayfirst=True, errors='coerce')
-                            df_cll['date_complete'] = df_cll['dt_complete'].dt.date
-                            df_cll = df_cll[['Số HĐ', 'Khách Hàng', 'Nhân viên', 'Tg hoàn tất', 'tinh_trang_dau_vao', 'huong_xu_ly', 'date_complete', 'dt_complete']]
-                            df_cll.to_pickle(CACHE_DIR / "cll30n.pkl.gz")
-                            self.cll30n_df = df_cll
-                            print(f"Fetched & cached CLL30N data! {len(df_cll)} rows", flush=True)
-                    except Exception as e_cll:
-                        print(f"Warning: Failed to fetch CLL30N: {e_cll}", flush=True)
+                self.hr_df = hr_df
+                self.tk_df = tk_df
+                self.bt_df = bt_df
+                self.lt_df = lt_df
+                self.ton_tk_df = ton_tk_df
+                self.ton_bt_df = ton_bt_df
+                self.kh_cls_df = kh_cls_df
+                self.cll30n_df = cll30n_df
 
-                if kh_cls_cache.exists():
-                    self.kh_cls_df = pd.read_pickle(kh_cls_cache)
-                else:
-                    try:
-                        url_cls = 'https://docs.google.com/spreadsheets/d/1JtMBIXmgQ37ne9a_QYb6ZuN6mWwgJHIC-kSjKEb-56w/export?format=csv&gid=0'
-                        res_cls = requests.get(url_cls, timeout=60)
-                        if res_cls.status_code == 200:
-                            df_cls = pd.read_csv(io.BytesIO(res_cls.content), encoding='utf-8', low_memory=False, dtype=str, on_bad_lines='skip')
-                            col_hd = df_cls.columns[0] if len(df_cls.columns) > 0 else 'Số HĐ'
-                            col_nv = df_cls.columns[3] if len(df_cls.columns) > 3 else 'Nhân viên'
-                            col_tg = df_cls.columns[6] if len(df_cls.columns) > 6 else 'Tg hoàn tất'
-                            df_cls['Số HĐ'] = df_cls[col_hd].astype(str).str.strip().str.upper()
-                            df_cls['Nhân viên'] = df_cls[col_nv].astype(str).str.strip().str.upper()
-                            df_cls['dt_complete'] = pd.to_datetime(df_cls[col_tg], dayfirst=True, errors='coerce')
-                            df_cls['date_complete'] = df_cls['dt_complete'].dt.date
-                            df_cls = df_cls[['Số HĐ', 'Nhân viên', 'date_complete', 'dt_complete']]
-                            df_cls.to_pickle(CACHE_DIR / "kh_cls.pkl.gz")
-                            self.kh_cls_df = df_cls
-                    except Exception as e_cls:
-                        print(f"Warning: Failed to fetch KH Co Cls: {e_cls}", flush=True)
-
-                self.last_sync_time = datetime.datetime.fromtimestamp(hr_cache.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                mtime = hr_path.stat().st_mtime if hr_path else time.time()
+                self.last_sync_time = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
                 self._process_metadata()
                 print(f"Cache loaded successfully! Sync time: {self.last_sync_time}", flush=True)
                 return
@@ -194,158 +364,89 @@ class KPIEngine:
         t0 = time.time()
         
         try:
-            print("Fetching live HR data...", flush=True)
-            res_hr = requests.get(self._get_sheet_url(GIDS['HR']), timeout=30)
-            df_hr = pd.read_csv(io.BytesIO(res_hr.content), encoding='utf-8', dtype=str)
-            
-            print("Fetching live Trien Khai (TK) data...", flush=True)
-            res_tk = requests.get(self._get_sheet_url(GIDS['TK']), timeout=60)
-            df_tk = pd.read_csv(io.BytesIO(res_tk.content), encoding='utf-8', low_memory=False)
+            def _get_df_local(name):
+                tmp_dir = Path("/tmp/data_cache")
+                candidates = [
+                    CACHE_DIR / f"{name}.pkl.gz",
+                    CACHE_DIR / f"{name}.pkl",
+                    tmp_dir / f"{name}.pkl.gz",
+                    tmp_dir / f"{name}.pkl"
+                ]
+                for p in candidates:
+                    df = self._load_pickle_file(p)
+                    if df is not None and not (isinstance(df, pd.DataFrame) and df.empty):
+                        return df
+                return pd.DataFrame()
 
-            print("Fetching live Bao Tri (BT) data...", flush=True)
-            res_bt = requests.get(self._get_sheet_url(GIDS['BT']), timeout=60)
-            df_bt = pd.read_csv(io.BytesIO(res_bt.content), encoding='utf-8', low_memory=False)
-
-            # Fetch Tồn Triển Khai & Tồn Bảo Trì from Sheet 1Hihsf3_R3Z9aaqqj9vskIyveNX4UO2Ej3d26jF5-S2w
-            ton_sid = '1Hihsf3_R3Z9aaqqj9vskIyveNX4UO2Ej3d26jF5-S2w'
-            print("Fetching live Tồn Triển Khai (GID 0) data...", flush=True)
-            url_ton_tk = f'https://docs.google.com/spreadsheets/d/{ton_sid}/export?format=csv&gid=0'
-            try:
-                res_ton_tk = requests.get(url_ton_tk, timeout=40)
-                if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
-                    df_ton_tk = pd.read_csv(io.BytesIO(res_ton_tk.content), encoding='utf-8', dtype=str, low_memory=False)
-                    df_ton_tk.to_pickle(CACHE_DIR / "ton_tk.pkl.gz")
-                    print(f"Loaded live Tồn Triển Khai CSV! {len(df_ton_tk)} rows", flush=True)
-                else:
-                    print("Tồn Triển Khai sheet requires permissions or returned HTML. (Keep existing cache or import manually)", flush=True)
-            except Exception as e_ton_tk:
-                print(f"Warning: Failed to fetch live Tồn Triển Khai: {e_ton_tk}", flush=True)
-
-            print("Fetching live Tồn Bảo Trì (GID 440862556) data...", flush=True)
-            url_ton_bt = f'https://docs.google.com/spreadsheets/d/{ton_sid}/export?format=csv&gid=440862556'
-            try:
-                res_ton_bt = requests.get(url_ton_bt, timeout=40)
-                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
-                    df_ton_bt = pd.read_csv(io.BytesIO(res_ton_bt.content), encoding='utf-8', dtype=str, low_memory=False)
-                    df_ton_bt.to_pickle(CACHE_DIR / "ton_bt.pkl.gz")
-                    print(f"Loaded live Tồn Bảo Trì CSV! {len(df_ton_bt)} rows", flush=True)
-                else:
-                    print("Tồn Bảo Trì sheet requires permissions or returned HTML. (Keep existing cache or import manually)", flush=True)
-            except Exception as e_ton_bt:
-                print(f"Warning: Failed to fetch live Tồn Bảo Trì: {e_ton_bt}", flush=True)
-
-            print("Fetching live Lich Truc (LT) data...", flush=True)
-            df_lt = pd.DataFrame()
-            try:
-                res_lt = requests.get(self._get_lt_sheet_url(), timeout=30)
-                if res_lt.status_code == 200 and len(res_lt.content) > 50:
-                    df_lt = pd.read_csv(io.BytesIO(res_lt.content), encoding='utf-8', header=None, low_memory=False, dtype=str)
-                    df_lt.to_pickle(CACHE_DIR / "lt.pkl.gz")
-                    print(f"Loaded live Lịch Trực CSV! {len(df_lt)} rows", flush=True)
-                else:
-                    print(f"Lịch Trực sheet returned status {res_lt.status_code}. (Cần chia sẻ 'Bất kỳ ai có liên kết đều có thể xem')", flush=True)
-            except Exception as e_lt:
-                print(f"Warning: Failed to download Lịch Trực CSV: {e_lt}", flush=True)
-
-            # Fetch CLL30N Sheet (GID: 1484730732)
-            print("Fetching live CLL30N data...", flush=True)
-            df_cll30n = pd.DataFrame()
-            try:
-                url_cll = 'https://docs.google.com/spreadsheets/d/1JtMBIXmgQ37ne9a_QYb6ZuN6mWwgJHIC-kSjKEb-56w/export?format=csv&gid=1484730732'
-                res_cll = requests.get(url_cll, timeout=40)
-                if res_cll.status_code == 200:
-                    df_cll30n = pd.read_csv(io.BytesIO(res_cll.content), encoding='utf-8', low_memory=False, dtype=str, on_bad_lines='skip')
-                    print(f"Loaded live CLL30N CSV! {len(df_cll30n)} rows", flush=True)
-            except Exception as e_cll:
-                print(f"Warning: Failed to fetch CLL30N CSV: {e_cll}", flush=True)
-
-            # Fetch KH Co Cls Sheet (GID: 0)
-            print("Fetching live KH Co Cls data...", flush=True)
-            df_kh_cls = pd.DataFrame()
-            try:
-                url_cls = 'https://docs.google.com/spreadsheets/d/1JtMBIXmgQ37ne9a_QYb6ZuN6mWwgJHIC-kSjKEb-56w/export?format=csv&gid=0'
-                res_cls = requests.get(url_cls, timeout=30)
-                if res_cls.status_code == 200:
-                    df_kh_cls = pd.read_csv(io.BytesIO(res_cls.content), encoding='utf-8', low_memory=False, dtype=str, on_bad_lines='skip')
-                    print(f"Loaded live KH Co Cls CSV! {len(df_kh_cls)} rows", flush=True)
-                else:
-                    print(f"KH Co Cls sheet returned status {res_cls.status_code}.", flush=True)
-            except Exception as e_cls:
-                print(f"Warning: Failed to fetch KH Co Cls CSV: {e_cls}", flush=True)
+            # Load datasets strictly from App Data Base (in-memory or local cache)
+            df_hr = self.hr_df if hasattr(self, 'hr_df') and not self.hr_df.empty else _get_df_local("hr")
+            df_tk = self.tk_df if hasattr(self, 'tk_df') and not self.tk_df.empty else _get_df_local("tk")
+            df_bt = self.bt_df if hasattr(self, 'bt_df') and not self.bt_df.empty else _get_df_local("bt")
+            df_ton_tk = self.ton_tk_df if hasattr(self, 'ton_tk_df') and not self.ton_tk_df.empty else _get_df_local("ton_tk")
+            df_ton_bt = self.ton_bt_df if hasattr(self, 'ton_bt_df') and not self.ton_bt_df.empty else _get_df_local("ton_bt")
+            df_lt = self.lt_df if hasattr(self, 'lt_df') and not self.lt_df.empty else _get_df_local("lt")
+            df_cll30n = self.cll30n_df if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else _get_df_local("cll30n")
+            df_kh_cls = self.kh_cls_df if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else _get_df_local("kh_cls")
 
             # Process HR
-            df_hr['Inside Account'] = df_hr['Inside Account'].astype(str).str.strip().str.upper()
-            df_hr['Họ Tên NV'] = df_hr['Họ Tên NV'].astype(str).str.strip()
-            df_hr['Họ tên Đội trưởng'] = df_hr['Họ tên Đội trưởng'].astype(str).str.strip()
-            df_hr['Vùng'] = df_hr['Vùng'].astype(str).str.strip()
-            df_hr['Đối tác'] = df_hr['Đối tác'].astype(str).str.strip()
-            df_hr['Block'] = df_hr['Block'].astype(str).str.strip()
+            if not df_hr.empty:
+                if 'Inside Account' in df_hr.columns: df_hr['Inside Account'] = df_hr['Inside Account'].astype(str).str.strip().str.upper()
+                if 'Họ Tên NV' in df_hr.columns: df_hr['Họ Tên NV'] = df_hr['Họ Tên NV'].astype(str).str.strip()
+                if 'Họ tên Đội trưởng' in df_hr.columns: df_hr['Họ tên Đội trưởng'] = df_hr['Họ tên Đội trưởng'].astype(str).str.strip()
+                if 'Vùng' in df_hr.columns: df_hr['Vùng'] = df_hr['Vùng'].astype(str).str.strip()
+                if 'Đối tác' in df_hr.columns: df_hr['Đối tác'] = df_hr['Đối tác'].astype(str).str.strip()
+                if 'Block' in df_hr.columns: df_hr['Block'] = df_hr['Block'].astype(str).str.strip()
 
             # Process TK
-            df_tk['Nhân viên'] = df_tk['Nhân viên'].astype(str).str.strip().str.upper()
-            df_tk['Số hợp đồng'] = df_tk['Số hợp đồng'].astype(str).str.strip()
-            df_tk['Gói dịch vụ'] = df_tk['Gói dịch vụ'].astype(str).str.strip()
-            df_tk['Loại giao dịch'] = df_tk['Loại giao dịch'].astype(str).str.strip()
-            
-            df_tk['is_gsafe'] = (df_tk['Số hợp đồng'].str.startswith('SGG', na=False)) & \
-                                (df_tk['Gói dịch vụ'].str.lower() == 'offnet')
-            df_tk['is_swap'] = df_tk['Loại giao dịch'].str.contains('Swap', case=False, na=False)
-            df_tk['dung_hen'] = pd.to_numeric(df_tk['Đúng hẹn'], errors='coerce').fillna(0).astype(int)
-            
-            df_tk['dt_complete'] = pd.to_datetime(df_tk['Ngày hoàn tất PTC'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-            df_tk['dt_created'] = pd.to_datetime(df_tk['TG tạo PTC'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-            df_tk['date_complete'] = df_tk['dt_complete'].dt.date
-            
-            rt_sec = (df_tk['dt_complete'] - df_tk['dt_created']).dt.total_seconds()
-            df_tk['rt_hours'] = np.where(rt_sec >= 0, rt_sec / 3600.0, np.nan)
+            if not df_tk.empty:
+                if 'Nhân viên' in df_tk.columns: df_tk['Nhân viên'] = df_tk['Nhân viên'].astype(str).str.strip().str.upper()
+                if 'Số hợp đồng' in df_tk.columns: df_tk['Số hợp đồng'] = df_tk['Số hợp đồng'].astype(str).str.strip()
+                if 'Gói dịch vụ' in df_tk.columns: df_tk['Gói dịch vụ'] = df_tk['Gói dịch vụ'].astype(str).str.strip()
+                if 'Loại giao dịch' in df_tk.columns: df_tk['Loại giao dịch'] = df_tk['Loại giao dịch'].astype(str).str.strip()
+                
+                if 'Số hợp đồng' in df_tk.columns and 'Gói dịch vụ' in df_tk.columns:
+                    df_tk['is_gsafe'] = (df_tk['Số hợp đồng'].str.startswith('SGG', na=False)) & (df_tk['Gói dịch vụ'].str.lower() == 'offnet')
+                if 'Loại giao dịch' in df_tk.columns:
+                    df_tk['is_swap'] = df_tk['Loại giao dịch'].str.contains('Swap', case=False, na=False)
+                if 'Đúng hẹn' in df_tk.columns:
+                    df_tk['dung_hen'] = pd.to_numeric(df_tk['Đúng hẹn'], errors='coerce').fillna(0).astype(int)
+                
+                if 'Ngày hoàn tất PTC' in df_tk.columns:
+                    df_tk['dt_complete'] = pd.to_datetime(df_tk['Ngày hoàn tất PTC'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                if 'TG tạo PTC' in df_tk.columns:
+                    df_tk['dt_created'] = pd.to_datetime(df_tk['TG tạo PTC'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                if 'dt_complete' in df_tk.columns:
+                    df_tk['date_complete'] = df_tk['dt_complete'].dt.date
+                
+                if 'dt_complete' in df_tk.columns and 'dt_created' in df_tk.columns:
+                    rt_sec = (df_tk['dt_complete'] - df_tk['dt_created']).dt.total_seconds()
+                    df_tk['rt_hours'] = np.where(rt_sec >= 0, rt_sec / 3600.0, np.nan)
 
             # Process BT
-            df_bt['Nhân viên'] = df_bt['Nhân viên'].astype(str).str.strip().str.upper()
-            df_bt['Số HĐ'] = df_bt['Số HĐ'].astype(str).str.strip()
-            df_bt['dung_hen'] = pd.to_numeric(df_bt['Đúng hẹn'], errors='coerce').fillna(0).astype(int)
-            
-            df_bt['dt_complete'] = pd.to_datetime(df_bt['TG Hoàn Tất'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-            df_bt['dt_created'] = pd.to_datetime(df_bt['TG Tạo'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-            df_bt['date_complete'] = df_bt['dt_complete'].dt.date
-            
-            rt_sec_bt = (df_bt['dt_complete'] - df_bt['dt_created']).dt.total_seconds()
-            df_bt['rt_hours'] = np.where(rt_sec_bt >= 0, rt_sec_bt / 3600.0, np.nan)
-
-            # Process CLL30N
-            if not df_cll30n.empty:
-                col_hd = df_cll30n.columns[0] if len(df_cll30n.columns) > 0 else 'Số HĐ'
-                col_kh = df_cll30n.columns[1] if len(df_cll30n.columns) > 1 else 'Khách Hàng'
-                col_nv = df_cll30n.columns[3] if len(df_cll30n.columns) > 3 else 'Nhân viên'
-                col_tg = df_cll30n.columns[6] if len(df_cll30n.columns) > 6 else 'Tg hoàn tất'
-                col_af = df_cll30n.columns[31] if len(df_cll30n.columns) > 31 else '(Cấp 1)Tình trạng đầu vào'
-                col_ai = df_cll30n.columns[34] if len(df_cll30n.columns) > 34 else '(Cấp 1)Hướng xử lý'
-                df_cll30n['Số HĐ'] = df_cll30n[col_hd].astype(str).str.strip().str.upper()
-                df_cll30n['Khách Hàng'] = df_cll30n[col_kh].astype(str).str.strip()
-                df_cll30n['Nhân viên'] = df_cll30n[col_nv].astype(str).str.strip().str.upper()
-                df_cll30n['Tg hoàn tất'] = df_cll30n[col_tg].astype(str).str.strip()
-                df_cll30n['tinh_trang_dau_vao'] = df_cll30n[col_af].fillna('-').astype(str).str.strip()
-                df_cll30n['huong_xu_ly'] = df_cll30n[col_ai].fillna('-').astype(str).str.strip()
-                df_cll30n['dt_complete'] = pd.to_datetime(df_cll30n[col_tg], dayfirst=True, errors='coerce')
-                df_cll30n['date_complete'] = df_cll30n['dt_complete'].dt.date
-                df_cll30n = df_cll30n[['Số HĐ', 'Khách Hàng', 'Nhân viên', 'Tg hoàn tất', 'tinh_trang_dau_vao', 'huong_xu_ly', 'date_complete', 'dt_complete']]
-                df_cll30n.to_pickle(CACHE_DIR / "cll30n.pkl.gz")
-
-            # Process KH Co Cls
-            if not df_kh_cls.empty:
-                col_hd = df_kh_cls.columns[0] if len(df_kh_cls.columns) > 0 else 'Số HĐ'
-                col_nv = df_kh_cls.columns[3] if len(df_kh_cls.columns) > 3 else 'Nhân viên'
-                col_tg = df_kh_cls.columns[6] if len(df_kh_cls.columns) > 6 else 'Tg hoàn tất'
-                df_kh_cls['Số HĐ'] = df_kh_cls[col_hd].astype(str).str.strip().str.upper()
-                df_kh_cls['Nhân viên'] = df_kh_cls[col_nv].astype(str).str.strip().str.upper()
-                df_kh_cls['dt_complete'] = pd.to_datetime(df_kh_cls[col_tg], dayfirst=True, errors='coerce')
-                df_kh_cls['date_complete'] = df_kh_cls['dt_complete'].dt.date
-                df_kh_cls = df_kh_cls[['Số HĐ', 'Nhân viên', 'date_complete', 'dt_complete']]
-                df_kh_cls.to_pickle(CACHE_DIR / "kh_cls.pkl.gz")
+            if not df_bt.empty:
+                if 'Nhân viên' in df_bt.columns: df_bt['Nhân viên'] = df_bt['Nhân viên'].astype(str).str.strip().str.upper()
+                if 'Số HĐ' in df_bt.columns: df_bt['Số HĐ'] = df_bt['Số HĐ'].astype(str).str.strip()
+                if 'Đúng hẹn' in df_bt.columns: df_bt['dung_hen'] = pd.to_numeric(df_bt['Đúng hẹn'], errors='coerce').fillna(0).astype(int)
+                
+                if 'TG Hoàn Tất' in df_bt.columns:
+                    df_bt['dt_complete'] = pd.to_datetime(df_bt['TG Hoàn Tất'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                if 'TG Tạo' in df_bt.columns:
+                    df_bt['dt_created'] = pd.to_datetime(df_bt['TG Tạo'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+                if 'dt_complete' in df_bt.columns:
+                    df_bt['date_complete'] = df_bt['dt_complete'].dt.date
+                
+                if 'dt_complete' in df_bt.columns and 'dt_created' in df_bt.columns:
+                    rt_sec_bt = (df_bt['dt_complete'] - df_bt['dt_created']).dt.total_seconds()
+                    df_bt['rt_hours'] = np.where(rt_sec_bt >= 0, rt_sec_bt / 3600.0, np.nan)
 
             # Save to Cache
-            df_hr.to_pickle(CACHE_DIR / "hr.pkl.gz")
-            df_tk.to_pickle(CACHE_DIR / "tk.pkl.gz")
-            df_bt.to_pickle(CACHE_DIR / "bt.pkl.gz")
+            self._save_pickle(df_cll30n, "cll30n.pkl.gz")
+            self._save_pickle(df_kh_cls, "kh_cls.pkl.gz")
+
+            # Save to Cache
+            self._save_pickle(df_hr, "hr.pkl.gz")
+            self._save_pickle(df_tk, "tk.pkl.gz")
+            self._save_pickle(df_bt, "bt.pkl.gz")
 
             self.hr_df = df_hr
             self.tk_df = df_tk
@@ -451,23 +552,43 @@ class KPIEngine:
             if not cls.empty and 'Nhân viên' in cls.columns:
                 cls = cls[cls['Nhân viên'].isin(allowed_accounts)]
 
-        # Match contracts in filtered KH Co Cls against full Sheet CLL30N (pairs of NV and Số HĐ)
-        cll_df_all = self.cll30n_df if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
-        if not cll_df_all.empty and 'Nhân viên' in cll_df_all.columns and 'Số HĐ' in cll_df_all.columns:
-            cll_pair_set = set(zip(cll_df_all['Nhân viên'], cll_df_all['Số HĐ']))
-        else:
-            cll_pair_set = set()
+        # Filter CLL30N dataset by date range (derived from Column AC: Tg hoàn tất CLPS)
+        cll = self.cll30n_df.copy() if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
+        if not cll.empty and 'date_complete' in cll.columns:
+            if start_date:
+                s_d = pd.to_datetime(start_date).date()
+                cll = cll[cll['date_complete'] >= s_d]
+            if end_date:
+                e_d = pd.to_datetime(end_date).date()
+                cll = cll[cll['date_complete'] <= e_d]
 
-        if not cls.empty and 'Nhân viên' in cls.columns and 'Số HĐ' in cls.columns:
-            cls['is_cll'] = [(nv, hd) in cll_pair_set for nv, hd in zip(cls['Nhân viên'], cls['Số HĐ'])]
+        if team_lead or region or partner or block or search:
+            if not cll.empty and 'Nhân viên' in cll.columns:
+                cll = cll[cll['Nhân viên'].isin(allowed_accounts)]
+
+        # Safety checks for tk columns
+        if not tk.empty:
+            if 'is_gsafe' not in tk.columns or tk['is_gsafe'].dtype != bool:
+                tk['is_gsafe'] = False
+            if 'is_swap' not in tk.columns or tk['is_swap'].dtype != bool:
+                tk['is_swap'] = False
+            if 'dung_hen' not in tk.columns:
+                tk['dung_hen'] = 0
+            else:
+                tk['dung_hen'] = pd.to_numeric(tk['dung_hen'], errors='coerce').fillna(0).astype(int)
+            if 'rt_hours' not in tk.columns:
+                tk['rt_hours'] = np.nan
         else:
-            cls['is_cll'] = []
+            tk['is_gsafe'] = []
+            tk['is_swap'] = []
+            tk['dung_hen'] = []
+            tk['rt_hours'] = []
 
         # 2. Overall Aggregations
         # TK Valid (Excluding Gsafe and Swap for KPIs)
-        tk_valid = tk[~tk['is_gsafe'] & ~tk['is_swap']]
-        tk_swap = tk[tk['is_swap']]
-        tk_gsafe = tk[tk['is_gsafe']]
+        tk_valid = tk[~tk['is_gsafe'] & ~tk['is_swap']] if not tk.empty else tk
+        tk_swap = tk[tk['is_swap']] if not tk.empty else tk
+        tk_gsafe = tk[tk['is_gsafe']] if not tk.empty else tk
 
         tk_1 = int((tk_valid['dung_hen'] == 1).sum())
         tk_0 = int((tk_valid['dung_hen'] == 0).sum())
@@ -487,20 +608,24 @@ class KPIEngine:
         tot_all = tk_tot + bt_tot
         total_dh_pct = round((tot_1 / tot_all * 100), 2) if tot_all > 0 else 0.0
 
-        # CLL30N % Aggregation (Tử số: cll_tot, Mẫu số: cls_tot)
-        cls_tot = len(cls)
-        cll_tot = int(cls['is_cll'].sum()) if not cls.empty else 0
+        # CLL30N % Aggregation (Tử số: cll_tot, CLPS 7N BT: clps7n_tot, Mẫu số: cls_tot if loaded, else cll_tot)
+        cll_tot = len(cll)
+        cls_tot = len(cls) if not cls.empty else cll_tot
+        clps7n_tot = int((cll['is_clps_7n_bt'] == True).sum()) if not cll.empty and 'is_clps_7n_bt' in cll.columns else 0
         cll30n_pct = round((cll_tot / cls_tot * 100), 2) if cls_tot > 0 else 0.0
+        clps7n_pct = round((clps7n_tot / cls_tot * 100), 2) if cls_tot > 0 else 0.0
 
         # Status rules:
         # 1. Đúng Hẹn >= 97.2% -> PASS
         # 2. RT-TK <= 18H -> PASS
         # 3. RT-BT <= 8H -> PASS
         # 4. CLL30N <= 7% -> PASS
+        # 5. CLPS 7N BT <= 3% -> PASS
         dung_hen_status = 'PASS' if total_dh_pct >= 97.2 else 'FAIL'
         rt_tk_status = 'PASS' if (rt_tk_avg is None or rt_tk_avg <= 18.0) else 'FAIL'
         rt_bt_status = 'PASS' if (rt_bt_avg is None or rt_bt_avg <= 8.0) else 'FAIL'
         cll30n_status = 'PASS' if cll30n_pct <= 7.0 else 'FAIL'
+        clps7n_status = 'PASS' if clps7n_pct <= 3.0 else 'FAIL'
 
         # Swap breakdown by transaction type
         swap_counts = tk_swap['Loại giao dịch'].value_counts().to_dict()
@@ -509,6 +634,8 @@ class KPIEngine:
         active_accs = set(tk['Nhân viên'].dropna().unique()) | set(bt['Nhân viên'].dropna().unique())
         if not cls.empty and 'Nhân viên' in cls.columns:
             active_accs |= set(cls['Nhân viên'].dropna().unique())
+        if not cll.empty and 'Nhân viên' in cll.columns:
+            active_accs |= set(cll['Nhân viên'].dropna().unique())
 
         if team_lead or region or partner or block or search:
             active_accs &= allowed_accounts
@@ -521,6 +648,7 @@ class KPIEngine:
         tk_gsafe_grp = tk_gsafe.groupby('Nhân viên')
         bt_grp = bt.groupby('Nhân viên')
         cls_grp = cls.groupby('Nhân viên') if not cls.empty and 'Nhân viên' in cls.columns else {}
+        cll_grp = cll.groupby('Nhân viên') if not cll.empty and 'Nhân viên' in cll.columns else {}
 
         # Cache pre-aggregated dicts
         tk_v_dict = {
@@ -550,7 +678,8 @@ class KPIEngine:
             } for acc, group in bt_grp
         }
 
-        cll_dict = {acc: int(group['is_cll'].sum()) for acc, group in cls_grp} if not isinstance(cls_grp, dict) else {}
+        cll_dict = {acc: len(group) for acc, group in cll_grp} if not isinstance(cll_grp, dict) else {}
+        clps7n_dict = {acc: int((group['is_clps_7n_bt'] == True).sum()) for acc, group in cll_grp} if not isinstance(cll_grp, dict) else {}
         cls_dict = {acc: len(group) for acc, group in cls_grp} if not isinstance(cls_grp, dict) else {}
 
         for acc in sorted(active_accs):
@@ -586,16 +715,20 @@ class KPIEngine:
             rt_tk_val = e_tk_v['rt_avg']
             rt_bt_val = e_bt['rt_avg']
 
-            # Employee CLL30N calculation (strictly using KH Co Cls denominator)
+            # Employee CLL30N calculation (using KH Co Cls denominator if available, fallback to CLL30N count)
             e_cll_count = cll_dict.get(acc, 0)
+            e_clps7n_count = clps7n_dict.get(acc, 0)
             e_cls_count = cls_dict.get(acc, 0)
-            e_cll30n_pct = round((e_cll_count / e_cls_count * 100), 2) if e_cls_count > 0 else 0.0
+            e_denom = e_cls_count if e_cls_count > 0 else e_cll_count
+            e_cll30n_pct = round((e_cll_count / e_denom * 100), 2) if e_denom > 0 else 0.0
+            e_clps7n_pct = round((e_clps7n_count / e_denom * 100), 2) if e_denom > 0 else 0.0
 
             # Employee evaluation rule statuses
             e_dh_status = 'PASS' if e_tot_dh >= 97.2 else 'FAIL'
             e_rt_tk_status = 'PASS' if (rt_tk_val is not None and not pd.isna(rt_tk_val) and rt_tk_val <= 18.0) else ('FAIL' if (rt_tk_val is not None and not pd.isna(rt_tk_val)) else 'NONE')
             e_rt_bt_status = 'PASS' if (rt_bt_val is not None and not pd.isna(rt_bt_val) and rt_bt_val <= 8.0) else ('FAIL' if (rt_bt_val is not None and not pd.isna(rt_bt_val)) else 'NONE')
             e_cll30n_status = 'PASS' if e_cll30n_pct <= 7.0 else 'FAIL'
+            e_clps7n_status = 'PASS' if e_clps7n_pct <= 3.0 else 'FAIL'
 
             emp_rows.append({
                 'account': acc,
@@ -632,9 +765,12 @@ class KPIEngine:
 
                 # CLL30N KPIs
                 'cll30n_count': e_cll_count,
+                'clps7n_count': e_clps7n_count,
                 'kh_cls_count': e_cls_count,
                 'cll30n_pct': e_cll30n_pct,
+                'clps7n_pct': e_clps7n_pct,
                 'cll30n_status': e_cll30n_status,
+                'clps7n_status': e_clps7n_status,
 
                 # Overall Total
                 'total_dung_hen_pct': e_tot_dh,
@@ -698,9 +834,12 @@ class KPIEngine:
 
                 # CLL30N
                 'cll30n_count': cll_tot,
+                'clps7n_count': clps7n_tot,
                 'kh_cls_count': cls_tot,
                 'cll30n_pct': cll30n_pct,
+                'clps7n_pct': clps7n_pct,
                 'cll30n_status': cll30n_status,
+                'clps7n_status': clps7n_status,
 
                 # Total
                 'total_dung_hen_pct': total_dh_pct,
@@ -776,16 +915,18 @@ class KPIEngine:
                 cll_list.append({
                     'contract_no': str(row.get('Số HĐ', '')),
                     'customer_name': str(row.get('Khách Hàng', '')),
-                    'dt_complete': str(row.get('Tg hoàn tất', '')),
+                    'dt_complete': str(row.get('Tg hoàn tất CLPS', '') or row.get('Tg hoàn tất', '')),
                     'tinh_trang_dau_vao': str(row.get('tinh_trang_dau_vao', '-')),
-                    'huong_xu_ly': str(row.get('huong_xu_ly', '-'))
+                    'huong_xu_ly': str(row.get('huong_xu_ly', '-')),
+                    'is_clps_7n_bt': bool(row.get('is_clps_7n_bt', False))
                 })
 
         return {
             'employee_info': meta,
             'tk_tickets': tk_list,
             'bt_tickets': bt_list,
-            'cll_tickets': cll_list
+            'cll_tickets': cll_list,
+            'clps7n_tickets': [t for t in cll_list if t.get('is_clps_7n_bt')]
         }
 
     # =========================================================================
@@ -874,16 +1015,19 @@ class KPIEngine:
 
     def _get_ton_tk_parsed(self, hr_map):
         df_ton_tk = getattr(self, 'ton_tk_df', pd.DataFrame())
-        if df_ton_tk.empty:
-            df_ton_tk = self.tk_df
+        if df_ton_tk.empty and (CACHE_DIR / "ton_tk.pkl.gz").exists():
+            try:
+                df_ton_tk = pd.read_pickle(CACHE_DIR / "ton_tk.pkl.gz")
+                self.ton_tk_df = df_ton_tk
+            except Exception:
+                pass
         if df_ton_tk.empty:
             return []
         
-        cols = list(df_ton_tk.columns)
-        col_f_block = cols[5] if len(cols) > 5 else 'Block'
-        ns_col = cols[17] if len(cols) > 17 else 'Nhân sự'
-        s_col = cols[18] if len(cols) > 18 else 'TG Hẹn xanh'
-        t_col = cols[19] if len(cols) > 19 else 'TG Hẹn đỏ'
+        col_f_block = self._find_col(df_ton_tk, ['Block', 'Block nhân sự'], default_idx=5)
+        ns_col = self._find_col(df_ton_tk, ['Nhân sự', 'Nhân viên'], default_idx=17)
+        s_col = self._find_col(df_ton_tk, ['TG Hẹn xanh', 'Ngày hẹn Xanh'], default_idx=18)
+        t_col = self._find_col(df_ton_tk, ['TG Hẹn đỏ', 'Ngày hẹn đỏ'], default_idx=19)
 
         tk_rows = []
         for _, r in df_ton_tk.iterrows():
@@ -913,14 +1057,19 @@ class KPIEngine:
 
     def _get_ton_bt_parsed(self, hr_map):
         df_ton_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
+        if df_ton_bt.empty and (CACHE_DIR / "ton_bt.pkl.gz").exists():
+            try:
+                df_ton_bt = pd.read_pickle(CACHE_DIR / "ton_bt.pkl.gz")
+                self.ton_bt_df = df_ton_bt
+            except Exception:
+                pass
         if df_ton_bt.empty:
             return []
         
-        cols = list(df_ton_bt.columns)
-        col_e_block = cols[4] if len(cols) > 4 else 'Block'
-        k_col = cols[10] if len(cols) > 10 else 'Ngày hẹn Xanh'
-        l_col = cols[11] if len(cols) > 11 else 'Ngày hẹn đỏ'
-        ns_col = cols[18] if len(cols) > 18 else 'Nhân sự'
+        col_e_block = self._find_col(df_ton_bt, ['Block'], default_idx=4)
+        k_col = self._find_col(df_ton_bt, ['Ngày hẹn Xanh', 'TG Hẹn xanh'], default_idx=10)
+        l_col = self._find_col(df_ton_bt, ['Ngày hẹn đỏ', 'TG Hẹn đỏ'], default_idx=11)
+        ns_col = self._find_col(df_ton_bt, ['Nhân sự', 'Nhân viên'], default_idx=18)
 
         bt_rows = []
         for _, r in df_ton_bt.iterrows():
@@ -1023,8 +1172,8 @@ class KPIEngine:
         tot_tk_map = df_tk_p.groupby('block').size().to_dict() if not df_tk_p.empty else {}
         tot_bt_map = df_bt_p.groupby('block').size().to_dict() if not df_bt_p.empty else {}
 
-        tk_0_map = df_tk_p[df_tk_p['dt_hen'] == d0].groupby('block').size().to_dict() if not df_tk_p.empty else {}
-        bt_0_map = df_bt_p[df_bt_p['dt_hen'] == d0].groupby('block').size().to_dict() if not df_bt_p.empty else {}
+        tk_0_map = df_tk_p[df_tk_p['dt_hen'].isna() | (df_tk_p['dt_hen'] <= d0)].groupby('block').size().to_dict() if not df_tk_p.empty else {}
+        bt_0_map = df_bt_p[df_bt_p['dt_hen'].isna() | (df_bt_p['dt_hen'] <= d0)].groupby('block').size().to_dict() if not df_bt_p.empty else {}
 
         tk_1_map = df_tk_p[df_tk_p['dt_hen'] == d1].groupby('block').size().to_dict() if not df_tk_p.empty else {}
         bt_1_map = df_bt_p[df_bt_p['dt_hen'] == d1].groupby('block').size().to_dict() if not df_bt_p.empty else {}
@@ -1411,25 +1560,33 @@ class KPIEngine:
         ns_by_block, hr_map = self._get_nhan_su_by_block()
         import unicodedata
         df_tk = getattr(self, 'ton_tk_df', pd.DataFrame())
-        if df_tk.empty:
-            df_tk = self.tk_df
+        if df_tk.empty and (CACHE_DIR / "ton_tk.pkl.gz").exists():
+            try:
+                df_tk = pd.read_pickle(CACHE_DIR / "ton_tk.pkl.gz")
+                self.ton_tk_df = df_tk
+            except Exception:
+                pass
+
         df_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
-        if df_bt.empty:
-            df_bt = self.bt_df
+        if df_bt.empty and (CACHE_DIR / "ton_bt.pkl.gz").exists():
+            try:
+                df_bt = pd.read_pickle(CACHE_DIR / "ton_bt.pkl.gz")
+                self.ton_bt_df = df_bt
+            except Exception:
+                pass
 
         now = datetime.datetime.now()
 
         # Parse TK list
         tk_list = []
         if not df_tk.empty:
-            cols = list(df_tk.columns)
-            col_f_block = cols[5] if len(cols) > 5 else 'Block'
-            ns_col = cols[17] if len(cols) > 17 else 'Nhân sự'
-            hd_col = cols[3] if len(cols) > 3 else 'Số HĐ'
-            kh_col = cols[6] if len(cols) > 6 else 'Tên KH'
-            time_created_col = cols[11] if len(cols) > 11 else 'TG tạo PTC'
-            loai_col = cols[12] if len(cols) > 12 else (cols[9] if len(cols) > 9 else 'Loại triển khai')
-            note_col = cols[21] if len(cols) > 21 else 'Ghi chú triển khai TIN/PNC'
+            col_f_block = self._find_col(df_tk, ['Block', 'Block nhân sự'], default_idx=5)
+            ns_col = self._find_col(df_tk, ['Nhân sự', 'Nhân viên'], default_idx=17)
+            hd_col = self._find_col(df_tk, ['Số HĐ', 'Số hợp đồng'], default_idx=3)
+            kh_col = self._find_col(df_tk, ['Tên KH', 'Khách Hàng'], default_idx=6)
+            time_created_col = self._find_col(df_tk, ['TG tạo PTC', 'Thời gian tạo', 'TG Tạo'], default_idx=11)
+            loai_col = self._find_col(df_tk, ['Loại triển khai', 'Loại giao dịch', 'Đơn hàng & Dịch Vụ'], default_idx=12)
+            note_col = self._find_col(df_tk, ['Ghi chú triển khai TIN/PNC', 'Ghi chú triển khai', 'Ghi chú'], default_idx=21)
 
             for _, r in df_tk.iterrows():
                 ns = str(r.get(ns_col, '')).strip().upper()
@@ -1479,16 +1636,15 @@ class KPIEngine:
         # Parse BT list
         bt_list = []
         if not df_bt.empty:
-            cols = list(df_bt.columns)
-            col_e_block = cols[4] if len(cols) > 4 else 'Block'
-            ns_col = cols[18] if len(cols) > 18 else 'Nhân sự'
-            hd_col = cols[5] if len(cols) > 5 else 'Số HĐ'
-            kh_col = cols[6] if len(cols) > 6 else 'Tên đầy đủ'
-            time_created_col = cols[7] if len(cols) > 7 else 'Thời gian tạo'
-            ton_hrs_col = cols[8] if len(cols) > 8 else 'Tồn giờ'
-            tinh_trang_col = cols[28] if len(cols) > 28 else (cols[19] if len(cols) > 19 else 'TTSCBĐ 1')
-            note_cc_col = cols[22] if len(cols) > 22 else 'Ghi Chú CC'
-            note_ktv_col = cols[23] if len(cols) > 23 else 'Ghi Chú KTV Gần Nhất'
+            col_e_block = self._find_col(df_bt, ['Block'], default_idx=4)
+            ns_col = self._find_col(df_bt, ['Nhân sự', 'Nhân viên'], default_idx=18)
+            hd_col = self._find_col(df_bt, ['Số HĐ', 'Số hợp đồng'], default_idx=5)
+            kh_col = self._find_col(df_bt, ['Tên đầy đủ', 'Tên KH', 'Khách Hàng'], default_idx=6)
+            time_created_col = self._find_col(df_bt, ['Thời gian tạo', 'TG Tạo', 'TG tạo'], default_idx=7)
+            ton_hrs_col = self._find_col(df_bt, ['Tồn giờ', 'Giờ tồn'], default_idx=8)
+            tinh_trang_col = self._find_col(df_bt, ['TTSCBĐ 1', 'TTSCBĐ', 'Tình trạng'], default_idx=28)
+            note_cc_col = self._find_col(df_bt, ['Ghi Chú CC', 'Ghi chú CC'], default_idx=22)
+            note_ktv_col = self._find_col(df_bt, ['Ghi Chú KTV Gần Nhất', 'Ghi chú KTV'], default_idx=23)
 
             for _, r in df_bt.iterrows():
                 ns = str(r.get(ns_col, '')).strip().upper()
@@ -1618,25 +1774,13 @@ class KPIEngine:
         }
 
     def import_ton_tk_bt(self, file_bytes: bytes, filename: str, mode: str = "AUTO"):
-        filename_lower = filename.lower()
         try:
-            if filename_lower.endswith('.csv'):
-                try:
-                    df = pd.read_csv(io.BytesIO(file_bytes), encoding='utf-8', dtype=str, low_memory=False, on_bad_lines='skip')
-                except Exception:
-                    try:
-                        df = pd.read_csv(io.BytesIO(file_bytes), encoding='utf-8-sig', dtype=str, low_memory=False, on_bad_lines='skip')
-                    except Exception:
-                        df = pd.read_csv(io.BytesIO(file_bytes), encoding='cp1252', dtype=str, low_memory=False, on_bad_lines='skip')
-            elif filename_lower.endswith(('.xlsx', '.xls')):
-                df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
-            else:
-                return {"ok": False, "error": "Định dạng file không hỗ trợ. Vui lòng sử dụng file CSV hoặc Excel (.xlsx, .xls)"}
+            df = self._read_any_dataframe(file_bytes, filename)
         except Exception as e:
             return {"ok": False, "error": f"Lỗi đọc file: {str(e)}"}
 
         if df is None or df.empty:
-            return {"ok": False, "error": "File rỗng, không có dữ liệu."}
+            return {"ok": False, "error": "File rỗng hoặc không đọc được dữ liệu. Vui lòng kiểm tra định dạng file (.xlsx, .xls, .csv)."}
 
         cols_str = " ".join([str(c).strip().upper() for c in df.columns])
         
@@ -1653,11 +1797,17 @@ class KPIEngine:
 
         if detected_mode == "TK":
             self.ton_tk_df = df
-            self._save_pickle(df, "ton_tk.pkl.gz")
+            try:
+                df.to_pickle(CACHE_DIR / "ton_tk.pkl.gz")
+            except Exception as e:
+                print(f"Warning saving ton_tk cache: {e}", flush=True)
             label = "Tồn Triển Khai (TK)"
         else:
             self.ton_bt_df = df
-            self._save_pickle(df, "ton_bt.pkl.gz")
+            try:
+                df.to_pickle(CACHE_DIR / "ton_bt.pkl.gz")
+            except Exception as e:
+                print(f"Warning saving ton_bt cache: {e}", flush=True)
             label = "Tồn Bảo Trì (BT)"
 
         return {
@@ -1665,6 +1815,460 @@ class KPIEngine:
             "mode": detected_mode,
             "count": imported_count,
             "message": f"Đã cập nhật thành công {imported_count} dòng cho {label}!"
+        }
+
+    def get_dataset_counts(self):
+        # Ensure dataset dataframes are loaded from cache if empty
+        for target, cache_name, attr in [
+            ("kh_cls", "kh_cls.pkl.gz", "kh_cls_df"),
+            ("cll30n", "cll30n.pkl.gz", "cll30n_df"),
+            ("tk", "tk.pkl.gz", "tk_df"),
+            ("bt", "bt.pkl.gz", "bt_df"),
+            ("ton_tk", "ton_tk.pkl.gz", "ton_tk_df"),
+            ("ton_bt", "ton_bt.pkl.gz", "ton_bt_df")
+        ]:
+            df = getattr(self, attr, pd.DataFrame())
+            if (df is None or df.empty) and (CACHE_DIR / cache_name).exists():
+                try:
+                    df = pd.read_pickle(CACHE_DIR / cache_name)
+                    setattr(self, attr, df)
+                except Exception:
+                    pass
+
+        return {
+            "ok": True,
+            "counts": {
+                "kh_cls": len(getattr(self, 'kh_cls_df', pd.DataFrame())),
+                "cll30n": len(getattr(self, 'cll30n_df', pd.DataFrame())),
+                "tk": len(getattr(self, 'tk_df', pd.DataFrame())),
+                "bt": len(getattr(self, 'bt_df', pd.DataFrame())),
+                "ton_tk": len(getattr(self, 'ton_tk_df', pd.DataFrame())),
+                "ton_bt": len(getattr(self, 'ton_bt_df', pd.DataFrame()))
+            }
+        }
+
+    def _enrich_tk_df(self, df_tk: pd.DataFrame) -> pd.DataFrame:
+        if df_tk is None or df_tk.empty:
+            return pd.DataFrame()
+        df = df_tk.copy()
+        col_nv = self._get_required_col(df, ['Nhân viên', 'Nhân sự', 'nhan_vien']) or (df.columns[0] if len(df.columns) > 0 else 'Nhân viên')
+        col_hd = self._get_required_col(df, ['Số hợp đồng', 'Số HĐ', 'so_hd']) or (df.columns[1] if len(df.columns) > 1 else 'Số hợp đồng')
+        col_goi = self._find_col(df, ['Gói dịch vụ', 'goi_dich_vu'], default_idx=None)
+        col_loai = self._find_col(df, ['Loại giao dịch', 'loai_giao_dich'], default_idx=None)
+        col_dh = self._find_col(df, ['Đúng hẹn', 'dung_hen'], default_idx=None)
+        col_complete = self._find_col(df, ['Ngày hoàn tất PTC', 'TG hoàn tất PTC', 'TG hoàn tất', 'Ngày online'], default_idx=None)
+        col_created = self._find_col(df, ['TG tạo PTC', 'TG tạo', 'Ngày tạo'], default_idx=None)
+
+        if col_nv and col_nv in df.columns: df['Nhân viên'] = df[col_nv].astype(str).str.strip().str.upper()
+        if col_hd and col_hd in df.columns: df['Số hợp đồng'] = df[col_hd].astype(str).str.strip()
+        goi_str = df[col_goi].astype(str) if col_goi and col_goi in df.columns else pd.Series('', index=df.index)
+        loai_str = df[col_loai].astype(str) if col_loai and col_loai in df.columns else pd.Series('', index=df.index)
+
+        df['is_gsafe'] = (df['Số hợp đồng'].astype(str).str.startswith('SGG', na=False)) & (goi_str.str.lower() == 'offnet')
+        df['is_swap'] = loai_str.str.contains('Swap', case=False, na=False)
+
+        dh_series = df[col_dh] if col_dh and col_dh in df.columns else pd.Series(0, index=df.index)
+        df['dung_hen'] = pd.to_numeric(dh_series, errors='coerce').fillna(0).astype(int)
+
+        complete_series = df[col_complete] if col_complete and col_complete in df.columns else pd.Series('', index=df.index)
+        created_series = df[col_created] if col_created and col_created in df.columns else pd.Series('', index=df.index)
+
+        df['dt_complete'] = pd.to_datetime(complete_series, dayfirst=True, errors='coerce')
+        df['dt_created'] = pd.to_datetime(created_series, dayfirst=True, errors='coerce')
+        df['date_complete'] = df['dt_complete'].dt.date
+
+        rt_sec = (df['dt_complete'] - df['dt_created']).dt.total_seconds()
+        df['rt_hours'] = np.where(rt_sec >= 0, rt_sec / 3600.0, np.nan)
+        return df
+
+    def _enrich_bt_df(self, df_bt: pd.DataFrame) -> pd.DataFrame:
+        if df_bt is None or df_bt.empty:
+            return pd.DataFrame()
+        df = df_bt.copy()
+        col_nv = self._get_required_col(df, ['Nhân viên', 'Nhân sự', 'nhan_vien']) or (df.columns[0] if len(df.columns) > 0 else 'Nhân viên')
+        col_hd = self._get_required_col(df, ['Số HĐ', 'Số hợp đồng', 'so_hd']) or (df.columns[1] if len(df.columns) > 1 else 'Số HĐ')
+        col_dh = self._find_col(df, ['Đúng hẹn', 'dung_hen'], default_idx=None)
+        col_complete = self._find_col(df, ['TG Hoàn Tất', 'Thời gian hoàn tất', 'TG hoàn tất'], default_idx=None)
+        col_created = self._find_col(df, ['TG Tạo', 'Thời gian tạo', 'TG tạo'], default_idx=None)
+
+        if col_nv and col_nv in df.columns: df['Nhân viên'] = df[col_nv].astype(str).str.strip().str.upper()
+        if col_hd and col_hd in df.columns: df['Số HĐ'] = df[col_hd].astype(str).str.strip()
+
+        dh_series = df[col_dh] if col_dh and col_dh in df.columns else pd.Series(0, index=df.index)
+        df['dung_hen'] = pd.to_numeric(dh_series, errors='coerce').fillna(0).astype(int)
+
+        complete_series = df[col_complete] if col_complete and col_complete in df.columns else pd.Series('', index=df.index)
+        created_series = df[col_created] if col_created and col_created in df.columns else pd.Series('', index=df.index)
+
+        df['dt_complete'] = pd.to_datetime(complete_series, dayfirst=True, errors='coerce')
+        df['dt_created'] = pd.to_datetime(created_series, dayfirst=True, errors='coerce')
+        df['date_complete'] = df['dt_complete'].dt.date
+
+        rt_sec_bt = (df['dt_complete'] - df['dt_created']).dt.total_seconds()
+        df['rt_hours'] = np.where(rt_sec_bt >= 0, rt_sec_bt / 3600.0, np.nan)
+        return df
+
+    def import_database_dataset(self, file_bytes: bytes, filename: str, target: str = "kh_cls", rule: str = "MERGE_NO_OVERWRITE"):
+        try:
+            df_incoming = self._read_any_dataframe(file_bytes, filename)
+        except Exception as e:
+            return {"ok": False, "error": f"Lỗi đọc file: {str(e)}"}
+
+        if df_incoming is None or df_incoming.empty:
+            return {"ok": False, "error": "File rỗng hoặc không đọc được dữ liệu. Vui lòng kiểm tra định dạng file (.xlsx, .xls, .csv)."}
+
+        total_incoming = len(df_incoming)
+        cols_lower = [str(c).strip().lower() for c in df_incoming.columns]
+
+        if target in ("kh_cls", "cll30n"):
+            target_label = "KH Có Cls / CLL30N (Data Base)"
+
+            df_inc_processed = self._process_cll30n_df(df_incoming)
+            if df_inc_processed.empty:
+                return {
+                    "ok": False,
+                    "error": "❌ Lỗi Cấu Trúc File Import! File tải lên không tìm thấy các cột bắt buộc (Số HĐ, Nhân viên, hoặc Thời gian hoàn tất)."
+                }
+
+            if target == "kh_cls":
+                # Mẫu số: kh_cls_df contains ALL rows from df_inc_processed
+                inc_cls = df_inc_processed.copy()
+                existing_cls = getattr(self, 'kh_cls_df', pd.DataFrame())
+                if existing_cls.empty and (CACHE_DIR / "kh_cls.pkl.gz").exists():
+                    try: existing_cls = pd.read_pickle(CACHE_DIR / "kh_cls.pkl.gz")
+                    except Exception: existing_cls = pd.DataFrame()
+                
+                added_count = total_incoming
+                skipped_count = 0
+                if rule == "OVERWRITE" or existing_cls.empty:
+                    merged_cls = inc_cls.drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                else:
+                    merged_cls = pd.concat([existing_cls, inc_cls], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                self._save_pickle(merged_cls, "kh_cls.pkl.gz")
+                self.kh_cls_df = merged_cls
+
+                # Tử số: cll30n_df contains rows from df_inc_processed where is_cll30n == True
+                inc_cll = df_inc_processed[df_inc_processed['is_cll30n'] == True]
+                existing_cll = getattr(self, 'cll30n_df', pd.DataFrame())
+                if existing_cll.empty and (CACHE_DIR / "cll30n.pkl.gz").exists():
+                    try: existing_cll = pd.read_pickle(CACHE_DIR / "cll30n.pkl.gz")
+                    except Exception: existing_cll = pd.DataFrame()
+
+                if rule == "OVERWRITE" or existing_cll.empty:
+                    merged_cll = inc_cll.drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                else:
+                    merged_cll = pd.concat([existing_cll, inc_cll], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                self._save_pickle(merged_cll, "cll30n.pkl.gz")
+                self.cll30n_df = merged_cll
+                db_total = len(merged_cls)
+
+            else: # target == "cll30n"
+                existing_cll = getattr(self, 'cll30n_df', pd.DataFrame())
+                if existing_cll.empty and (CACHE_DIR / "cll30n.pkl.gz").exists():
+                    try: existing_cll = pd.read_pickle(CACHE_DIR / "cll30n.pkl.gz")
+                    except Exception: existing_cll = pd.DataFrame()
+
+                added_count = total_incoming
+                skipped_count = 0
+                if rule == "OVERWRITE" or existing_cll.empty:
+                    merged_cll = df_inc_processed.drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                else:
+                    merged_cll = pd.concat([existing_cll, df_inc_processed], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                self._save_pickle(merged_cll, "cll30n.pkl.gz")
+                self.cll30n_df = merged_cll
+                db_total = len(merged_cll)
+
+        elif target == "tk":
+            target_label = "Data Triển Khai (TK)"
+            col_hd = self._get_required_col(df_incoming, ['Số hợp đồng', 'Số HĐ', 'so_hd'])
+            col_nv = self._get_required_col(df_incoming, ['Nhân viên', 'Nhân sự', 'nhan_vien'])
+
+            missing_cols = []
+            if not col_hd: missing_cols.append("Số hợp đồng")
+            if not col_nv: missing_cols.append("Nhân viên")
+
+            if missing_cols:
+                return {
+                    "ok": False,
+                    "error": f"❌ Lỗi Cấu Trúc File Import! File tải lên không đúng cấu trúc dataset [{target_label}]. Thiếu các cột bắt buộc: [{', '.join(missing_cols)}]."
+                }
+
+            sample_hds = df_incoming[col_hd].dropna().astype(str).str.strip()
+            if sample_hds.empty or (sample_hds.str.len() < 3).all():
+                return {
+                    "ok": False,
+                    "error": "❌ Lỗi Dữ Liệu! Cột 'Số hợp đồng' trong file rỗng hoặc chứa dữ liệu không hợp lệ."
+                }
+
+            existing_df = getattr(self, 'tk_df', pd.DataFrame())
+            if existing_df.empty and (CACHE_DIR / "tk.pkl.gz").exists():
+                try:
+                    existing_df = pd.read_pickle(CACHE_DIR / "tk.pkl.gz")
+                except Exception:
+                    existing_df = pd.DataFrame()
+
+            if rule == "MERGE_NO_OVERWRITE" and not existing_df.empty:
+                ex_hd = self._find_col(existing_df, ['Số hợp đồng', 'Số HĐ'], default_idx=0)
+                ex_nv = self._find_col(existing_df, ['Nhân viên', 'Nhân sự'], default_idx=1)
+                existing_keys = set(existing_df[ex_hd].astype(str).str.strip().str.upper() + "||" + existing_df[ex_nv].astype(str).str.strip().str.upper())
+                df_incoming['_comp_key'] = df_incoming[col_hd].astype(str).str.strip().str.upper() + "||" + df_incoming[col_nv].astype(str).str.strip().str.upper()
+
+                new_rows = df_incoming[~df_incoming['_comp_key'].isin(existing_keys)].drop(columns=['_comp_key'])
+                added_count = len(new_rows)
+                skipped_count = total_incoming - added_count
+                merged_df = pd.concat([existing_df, new_rows], ignore_index=True) if added_count > 0 else existing_df
+            else:
+                added_count = total_incoming
+                skipped_count = 0
+                merged_df = df_incoming if existing_df.empty else pd.concat([existing_df, df_incoming], ignore_index=True)
+
+            merged_df = self._enrich_tk_df(merged_df)
+            self._save_pickle(merged_df, "tk.pkl.gz")
+            self.tk_df = merged_df
+            db_total = len(merged_df)
+
+        elif target == "bt":
+            target_label = "Data Bảo Trì (BT)"
+            col_hd = self._get_required_col(df_incoming, ['Số HĐ', 'Số hợp đồng', 'so_hd'])
+            col_nv = self._get_required_col(df_incoming, ['Nhân viên', 'Nhân sự', 'nhan_vien'])
+
+            missing_cols = []
+            if not col_hd: missing_cols.append("Số HĐ")
+            if not col_nv: missing_cols.append("Nhân viên")
+
+            if missing_cols:
+                return {
+                    "ok": False,
+                    "error": f"❌ Lỗi Cấu Trúc File Import! File tải lên không đúng cấu trúc dataset [{target_label}]. Thiếu các cột bắt buộc: [{', '.join(missing_cols)}]."
+                }
+
+            sample_hds = df_incoming[col_hd].dropna().astype(str).str.strip()
+            if sample_hds.empty or (sample_hds.str.len() < 3).all():
+                return {
+                    "ok": False,
+                    "error": "❌ Lỗi Dữ Liệu! Cột 'Số HĐ' trong file rỗng hoặc chứa dữ liệu không hợp lệ."
+                }
+
+            existing_df = getattr(self, 'bt_df', pd.DataFrame())
+            if existing_df.empty and (CACHE_DIR / "bt.pkl.gz").exists():
+                try:
+                    existing_df = pd.read_pickle(CACHE_DIR / "bt.pkl.gz")
+                except Exception:
+                    existing_df = pd.DataFrame()
+
+            if rule == "MERGE_NO_OVERWRITE" and not existing_df.empty:
+                ex_hd = self._find_col(existing_df, ['Số HĐ', 'Số hợp đồng'], default_idx=0)
+                ex_nv = self._find_col(existing_df, ['Nhân viên', 'Nhân sự'], default_idx=3)
+                existing_keys = set(existing_df[ex_hd].astype(str).str.strip().str.upper() + "||" + existing_df[ex_nv].astype(str).str.strip().str.upper())
+                df_incoming['_comp_key'] = df_incoming[col_hd].astype(str).str.strip().str.upper() + "||" + df_incoming[col_nv].astype(str).str.strip().str.upper()
+
+                new_rows = df_incoming[~df_incoming['_comp_key'].isin(existing_keys)].drop(columns=['_comp_key'])
+                added_count = len(new_rows)
+                skipped_count = total_incoming - added_count
+                merged_df = pd.concat([existing_df, new_rows], ignore_index=True) if added_count > 0 else existing_df
+            else:
+                added_count = total_incoming
+                skipped_count = 0
+                merged_df = df_incoming if existing_df.empty else pd.concat([existing_df, df_incoming], ignore_index=True)
+
+            merged_df = self._enrich_bt_df(merged_df)
+            self._save_pickle(merged_df, "bt.pkl.gz")
+            self.bt_df = merged_df
+            db_total = len(merged_df)
+
+        elif target == "ton_tk":
+            target_label = "Tồn Triển Khai (TK)"
+            if len(df_incoming.columns) < 3:
+                return {
+                    "ok": False,
+                    "error": f"❌ Lỗi Cấu Trúc File! File tải lên chỉ có {len(df_incoming.columns)} cột, không đủ cấu trúc chuẩn tối thiểu của dataset [{target_label}]."
+                }
+
+            # Check cross-dataset markers
+            if any(m in cols_lower for m in ['tồn giờ', 'hạn còn lại', 'múi hẹn xanh', 'cl lặp']):
+                return {
+                    "ok": False,
+                    "error": f"❌ Lỗi Cấu Trúc File Import! File tải lên chứa các cột của Tồn Bảo Trì (Tồn giờ / Hạn còn lại). Vui lòng chọn đúng đối tượng Tồn Bảo Trì!"
+                }
+
+            hd_col_in = self._get_required_col(df_incoming, ['Số HĐ', 'Số hợp đồng'])
+            if not hd_col_in:
+                return {
+                    "ok": False,
+                    "error": f"❌ Lỗi Cấu Trúc File Import! File tải lên không đúng cấu trúc hiện hành của [{target_label}]. Thiếu cột bắt buộc 'Số HĐ'."
+                }
+
+            sample_hds = df_incoming[hd_col_in].dropna().astype(str).str.strip()
+            if sample_hds.empty or (sample_hds.str.len() < 3).all():
+                return {
+                    "ok": False,
+                    "error": "❌ Lỗi Dữ Liệu! Cột 'Số HĐ' trong file rỗng hoặc chứa dữ liệu số hợp đồng không hợp lệ."
+                }
+
+            existing_df = getattr(self, 'ton_tk_df', pd.DataFrame())
+            if existing_df.empty and (CACHE_DIR / "ton_tk.pkl.gz").exists():
+                try:
+                    existing_df = pd.read_pickle(CACHE_DIR / "ton_tk.pkl.gz")
+                except Exception:
+                    existing_df = pd.DataFrame()
+
+            if rule == "MERGE_NO_OVERWRITE" and not existing_df.empty:
+                hd_col_ex = self._find_col(existing_df, ['Số HĐ', 'Số hợp đồng'], default_idx=3)
+                existing_keys = set(existing_df[hd_col_ex].astype(str).str.strip().str.upper())
+                df_incoming['_comp_key'] = df_incoming[hd_col_in].astype(str).str.strip().str.upper()
+                
+                new_rows = df_incoming[~df_incoming['_comp_key'].isin(existing_keys)].drop(columns=['_comp_key'])
+                added_count = len(new_rows)
+                skipped_count = total_incoming - added_count
+                merged_df = pd.concat([existing_df, new_rows], ignore_index=True) if added_count > 0 else existing_df
+            else:
+                added_count = total_incoming
+                skipped_count = 0
+                merged_df = df_incoming
+
+            self._save_pickle(merged_df, "ton_tk.pkl.gz")
+            self.ton_tk_df = merged_df
+            db_total = len(merged_df)
+
+        elif target == "ton_bt":
+            target_label = "Tồn Bảo Trì (BT)"
+            if len(df_incoming.columns) < 3:
+                return {
+                    "ok": False,
+                    "error": f"❌ Lỗi Cấu Trúc File! File tải lên chỉ có {len(df_incoming.columns)} cột, không đủ cấu trúc chuẩn tối thiểu của dataset [{target_label}]."
+                }
+
+            # Check cross-dataset markers
+            if any(m in cols_lower for m in ['ghi chú triển khai tin/pnc', 'loại triển khai', 'thông số thi công']):
+                return {
+                    "ok": False,
+                    "error": f"❌ Lỗi Cấu Trúc File Import! File tải lên chứa các cột của Tồn Triển Khai (Thông số thi công / Loại triển khai). Vui lòng chọn đúng đối tượng Tồn Triển Khai!"
+                }
+
+            hd_col_in = self._get_required_col(df_incoming, ['Số HĐ', 'Số hợp đồng'])
+            if not hd_col_in:
+                return {
+                    "ok": False,
+                    "error": f"❌ Lỗi Cấu Trúc File Import! File tải lên không đúng cấu trúc hiện hành của [{target_label}]. Thiếu cột bắt buộc 'Số HĐ'."
+                }
+
+            sample_hds = df_incoming[hd_col_in].dropna().astype(str).str.strip()
+            if sample_hds.empty or (sample_hds.str.len() < 3).all():
+                return {
+                    "ok": False,
+                    "error": "❌ Lỗi Dữ Liệu! Cột 'Số HĐ' trong file rỗng hoặc chứa dữ liệu số hợp đồng không hợp lệ."
+                }
+
+            existing_df = getattr(self, 'ton_bt_df', pd.DataFrame())
+            if existing_df.empty and (CACHE_DIR / "ton_bt.pkl.gz").exists():
+                try:
+                    existing_df = pd.read_pickle(CACHE_DIR / "ton_bt.pkl.gz")
+                except Exception:
+                    existing_df = pd.DataFrame()
+
+            if rule == "MERGE_NO_OVERWRITE" and not existing_df.empty:
+                hd_col_ex = self._find_col(existing_df, ['Số HĐ', 'Số hợp đồng'], default_idx=5)
+                existing_keys = set(existing_df[hd_col_ex].astype(str).str.strip().str.upper())
+                df_incoming['_comp_key'] = df_incoming[hd_col_in].astype(str).str.strip().str.upper()
+                
+                new_rows = df_incoming[~df_incoming['_comp_key'].isin(existing_keys)].drop(columns=['_comp_key'])
+                added_count = len(new_rows)
+                skipped_count = total_incoming - added_count
+                merged_df = pd.concat([existing_df, new_rows], ignore_index=True) if added_count > 0 else existing_df
+            else:
+                added_count = total_incoming
+                skipped_count = 0
+                merged_df = df_incoming
+
+            self._save_pickle(merged_df, "ton_bt.pkl.gz")
+            self.ton_bt_df = merged_df
+            db_total = len(merged_df)
+        else:
+            return {"ok": False, "error": "Bảng dữ liệu mục tiêu không hợp lệ."}
+
+        return {
+            "ok": True,
+            "target": target,
+            "target_label": target_label,
+            "total": total_incoming,
+            "added": added_count,
+            "skipped": skipped_count,
+            "db_total": db_total,
+            "message": f"Nạp dữ liệu [{target_label}] vào Kho Data Base thành công! Thêm mới {added_count} dòng, bỏ qua {skipped_count} dòng trùng lặp (giữ nguyên dữ liệu cũ). Tổng dữ liệu DB hệ thống hiện tại: {db_total} dòng."
+        }
+
+    def clear_database_dataset(self, target: str, confirm_password: str):
+        if not confirm_password or confirm_password.strip() != "phongnh5":
+            return {"ok": False, "error": "❌ Mật khẩu xác nhận Quản trị viên không đúng! Vui lòng thử lại."}
+
+        def _safe_remove_cache(fname):
+            base_name = fname.replace('.pkl.gz', '').replace('.pkl', '')
+            targets = [
+                CACHE_DIR / f"{base_name}.pkl.gz",
+                CACHE_DIR / f"{base_name}.pkl",
+                CACHE_DIR / f"{base_name}.pkl.gz.tmp",
+                CACHE_DIR / f"{base_name}.pkl.tmp",
+                Path("/tmp/data_cache") / f"{base_name}.pkl.gz",
+                Path("/tmp/data_cache") / f"{base_name}.pkl",
+                Path("/tmp/data_cache") / f"{base_name}.pkl.gz.tmp",
+                Path("/tmp/data_cache") / f"{base_name}.pkl.tmp"
+            ]
+            for filepath in targets:
+                try:
+                    if filepath.exists():
+                        filepath.unlink()
+                except Exception as e:
+                    print(f"Warning: Could not unlink {filepath}: {e}. Overwriting with empty DataFrame.", flush=True)
+                    try:
+                        pd.DataFrame().to_pickle(filepath)
+                    except Exception:
+                        pass
+
+        target_clean = str(target).strip().lower()
+        if target_clean == "kh_cls":
+            self.kh_cls_df = pd.DataFrame()
+            self.cll30n_df = pd.DataFrame()
+            _safe_remove_cache("kh_cls.pkl.gz")
+            _safe_remove_cache("cll30n.pkl.gz")
+            label = "KH Có Cls & CLL30N (Data Base)"
+        elif target_clean == "cll30n":
+            self.cll30n_df = pd.DataFrame()
+            _safe_remove_cache("cll30n.pkl.gz")
+            label = "CLL30N (Data Base)"
+        elif target_clean == "tk":
+            self.tk_df = pd.DataFrame()
+            _safe_remove_cache("tk.pkl.gz")
+            label = "Data Triển Khai (TK)"
+        elif target_clean == "bt":
+            self.bt_df = pd.DataFrame()
+            _safe_remove_cache("bt.pkl.gz")
+            label = "Data Bảo Trì (BT)"
+        elif target_clean == "ton_tk":
+            self.ton_tk_df = pd.DataFrame()
+            _safe_remove_cache("ton_tk.pkl.gz")
+            label = "Tồn Triển Khai"
+        elif target_clean == "ton_bt":
+            self.ton_bt_df = pd.DataFrame()
+            _safe_remove_cache("ton_bt.pkl.gz")
+            label = "Tồn Bảo Trì"
+        elif target_clean == "all":
+            self.kh_cls_df = pd.DataFrame()
+            self.cll30n_df = pd.DataFrame()
+            self.tk_df = pd.DataFrame()
+            self.bt_df = pd.DataFrame()
+            self.ton_tk_df = pd.DataFrame()
+            self.ton_bt_df = pd.DataFrame()
+            for fname in ["kh_cls.pkl.gz", "cll30n.pkl.gz", "tk.pkl.gz", "bt.pkl.gz", "ton_tk.pkl.gz", "ton_bt.pkl.gz"]:
+                _safe_remove_cache(fname)
+            label = "TẤT CẢ DỮ LIỆU DATA BASE"
+        else:
+            return {"ok": False, "error": "Dataset mục tiêu không hợp lệ."}
+
+        return {
+            "ok": True,
+            "target": target,
+            "message": f"🗑️ Đã xóa sạch thành công toàn bộ dữ liệu [{label}]! Kho dữ liệu hiện tại là 0 dòng. Bạn có thể tiến hành import nạp lại từ đầu.",
+            "db_total": 0
         }
 
     # =========================================================================
@@ -1852,20 +2456,20 @@ class KPIEngine:
                 return {
                     "ok": True,
                     "count": len(records),
-                    "msg": f"✅ Đã đồng bộ {len(records)} tài khoản lên Google Sheet thành công!",
+                    "msg": f"✅ Đã lưu và đồng bộ {len(records)} tài khoản lên Data Base hệ thống thành công!",
                     "response": res_data
                 }
             elif resp.status_code == 403:
                 return {
                     "ok": False,
-                    "msg": "❌ Lỗi HTTP 403 (Bị từ chối truy cập): Bạn chưa cấp quyền 'Bất kỳ ai (Anyone)' cho Google Apps Script. Vui lòng vào Google Sheet -> Tiện ích mở rộng -> Apps Script -> Triển khai -> Quản lý các bản triển khai -> Sửa bản triển khai -> Đổi 'Ai có quyền truy cập (Who has access)' thành 'Bất kỳ ai (Anyone)' ➔ Bấm Lưu/Triển khai lại!"
+                    "msg": "❌ Lỗi HTTP 403: Cần kiểm tra lại quyền kết nối WebApp API Data Base!"
                 }
             else:
-                print(f"Failed to sync to Google Sheet WebApp: status {resp.status_code}", flush=True)
-                return {"ok": False, "msg": f"Google Sheet WebApp trả về lỗi HTTP {resp.status_code}"}
+                print(f"Failed to sync to WebApp: status {resp.status_code}", flush=True)
+                return {"ok": False, "msg": f"WebApp API trả về lỗi HTTP {resp.status_code}"}
         except Exception as e:
-            print(f"Error calling Google Sheet WebApp sync: {e}", flush=True)
-            return {"ok": False, "msg": f"Lỗi kết nối WebApp Google Sheet: {e}"}
+            print(f"Error calling WebApp sync: {e}", flush=True)
+            return {"ok": False, "msg": f"Lỗi kết nối WebApp API: {e}"}
 
     def check_hr_email(self, email: str):
         if not email or not isinstance(email, str):

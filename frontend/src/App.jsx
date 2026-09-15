@@ -44,6 +44,9 @@ import {
   Checkbox,
   FormControlLabel,
   FormGroup,
+  FormControl,
+  RadioGroup,
+  Radio,
   Menu,
   useMediaQuery,
   useTheme
@@ -612,7 +615,7 @@ const UserEditModal = React.memo(({
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle sx={{ fontWeight: 800, color: '#1a73e8' }}>
-        {isEditMode ? '✏️ SỬA TÀI KHOẢN NGƯỜI DÙNG & PHÂN QUYỀN' : '➕ THÊM USER MỚI (SHEET ADMIN)'}
+        {isEditMode ? '✏️ SỬA TÀI KHOẢN NGƯỜI DÙNG & PHÂN QUYỀN' : '➕ THÊM USER MỚI (QUẢN TRỊ USER)'}
       </DialogTitle>
       <DialogContent dividers sx={{ p: 3 }}>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -649,7 +652,7 @@ const UserEditModal = React.memo(({
           <Divider sx={{ my: 1 }} />
 
           <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#1e293b' }}>
-            🔒 Phân Quyền Ứng Dụng Được Xem (RBAC Column Sheet Quyền):
+            🔒 Phân Quyền Ứng Dụng Được Xem (RBAC Phân Quyền):
           </Typography>
 
           <Grid container spacing={1}>
@@ -859,12 +862,22 @@ export default function App() {
     is_syncing: false
   });
 
-  const [startDate, setStartDate] = useState(initialDates.start);
-  const [endDate, setEndDate] = useState(initialDates.end);
-  const [selectedTeamLead, setSelectedTeamLead] = useState('');
-  const [selectedRegion, setSelectedRegion] = useState('');
+  const [startDate, setStartDate] = useState(() => localStorage.getItem('kpi_startDate') || initialDates.start);
+  const [endDate, setEndDate] = useState(() => localStorage.getItem('kpi_endDate') || initialDates.end);
+  const [selectedTeamLead, setSelectedTeamLead] = useState(() => localStorage.getItem('kpi_teamLead') || '');
+  const [selectedRegion, setSelectedRegion] = useState(() => localStorage.getItem('kpi_region') || '');
   const [searchQuery, setSearchQuery] = useState('');
-  const [datePreset, setDatePreset] = useState('month_to_yesterday');
+  const [datePreset, setDatePreset] = useState(() => localStorage.getItem('kpi_datePreset') || 'month_to_yesterday');
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('kpi_startDate', startDate || '');
+      localStorage.setItem('kpi_endDate', endDate || '');
+      localStorage.setItem('kpi_datePreset', datePreset || '');
+      localStorage.setItem('kpi_teamLead', selectedTeamLead || '');
+      localStorage.setItem('kpi_region', selectedRegion || '');
+    } catch (e) {}
+  }, [startDate, endDate, datePreset, selectedTeamLead, selectedRegion]);
 
   // KPI Data State
   const [reportData, setReportData] = useState(null);
@@ -886,6 +899,7 @@ export default function App() {
   // Transaction Details Modal State
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [btDetailModalOpen, setBtDetailModalOpen] = useState(false);
+  const [clps7nDetailModalOpen, setClps7nDetailModalOpen] = useState(false);
 
   // ================= LỊCH TRỰC SYSTEM STATES =================
   const [ltTab, setLtTab] = useState('dashboard'); // 'dashboard' | 'chitiet'
@@ -1020,6 +1034,22 @@ export default function App() {
   });
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState(null);
+
+  // Data Base Dataset Import States
+  const [dbCounts, setDbCounts] = useState({ kh_cls: 0, cll30n: 0, ton_tk: 0, ton_bt: 0 });
+  const [importTarget, setImportTarget] = useState('kh_cls'); // 'kh_cls', 'cll30n', 'ton_tk', 'ton_bt'
+  const [importRule, setImportRule] = useState('MERGE_NO_OVERWRITE');
+  const [dbFile, setDbFile] = useState(null);
+  const [dbUploading, setDbUploading] = useState(false);
+  const [dbResult, setDbResult] = useState(null);
+  const dbInputRef = useRef(null);
+
+  // Clear Dataset Modal States
+  const [clearModalOpen, setClearModalOpen] = useState(false);
+  const [clearTarget, setClearTarget] = useState('kh_cls');
+  const [clearPassword, setClearPassword] = useState('');
+  const [clearingDb, setClearingDb] = useState(false);
+  const [clearError, setClearError] = useState(null);
 
   const handleLogin = async (e) => {
     if (e) e.preventDefault();
@@ -1196,6 +1226,97 @@ export default function App() {
       console.error("Fetch HR list error:", err);
     } finally {
       setHrLoading(false);
+    }
+  };
+
+  const fetchDbCounts = async () => {
+    try {
+      const res = await axios.get('/api/admin/dataset-counts');
+      if (res.data) {
+        setDbCounts(res.data.counts || res.data);
+      }
+    } catch (err) {
+      console.error("Lỗi fetch db counts:", err);
+    }
+  };
+
+  const handleImportDbDataset = async () => {
+    if (!dbFile) {
+      alert("Vui lòng chọn file Excel hoặc CSV để import!");
+      return;
+    }
+    setDbUploading(true);
+    setDbResult(null);
+    const formData = new FormData();
+    formData.append('file', dbFile);
+    formData.append('target', importTarget);
+    formData.append('rule', importRule);
+
+    try {
+      const res = await axios.post('/api/admin/import-dataset', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if (res.data && res.data.ok) {
+        setDbResult({
+          success: true,
+          message: res.data.message,
+          added: res.data.added,
+          skipped: res.data.skipped,
+          total: res.data.total,
+          db_total: res.data.db_total
+        });
+        setDbFile(null);
+        if (dbInputRef.current) dbInputRef.current.value = '';
+        fetchDbCounts();
+      } else {
+        setDbResult({
+          success: false,
+          message: res.data?.error || 'Import thất bại!'
+        });
+      }
+    } catch (err) {
+      setDbResult({
+        success: false,
+        message: err.response?.data?.detail || err.message || 'Lỗi khi gửi file lên server!'
+      });
+    } finally {
+      setDbUploading(false);
+    }
+  };
+
+  const handleClearDbDataset = async (e) => {
+    if (e) e.preventDefault();
+    if (!clearPassword) {
+      setClearError("Vui lòng nhập mật khẩu xác nhận Quản trị viên!");
+      return;
+    }
+    setClearingDb(true);
+    setClearError(null);
+
+    try {
+      const res = await axios.post('/api/admin/clear-dataset', {
+        target: clearTarget,
+        password: clearPassword
+      });
+      if (res.data && res.data.ok) {
+        setDbResult({
+          success: true,
+          message: res.data.message,
+          added: 0,
+          skipped: 0,
+          total: 0,
+          db_total: 0
+        });
+        setClearModalOpen(false);
+        setClearPassword('');
+        fetchDbCounts();
+      } else {
+        setClearError(res.data?.error || 'Xác nhận mật khẩu thất bại!');
+      }
+    } catch (err) {
+      setClearError(err.response?.data?.detail || err.message || 'Lỗi khi gửi yêu cầu xóa dữ liệu!');
+    } finally {
+      setClearingDb(false);
     }
   };
 
@@ -2600,7 +2721,7 @@ export default function App() {
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 
                 {/* OVERALL KPI METRIC CARDS ROW - FULL WIDTH GRID */}
-                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(6, 1fr)' }, gap: 2, width: '100%' }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(7, 1fr)' }, gap: 2, width: '100%' }}>
                   
                   {/* Card 1: Triển khai */}
                   <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #d2e3fc', borderLeft: '6px solid #1a73e8', backgroundColor: '#ffffff', height: '100%' }}>
@@ -2731,10 +2852,10 @@ export default function App() {
                         <TrendingUpIcon sx={{ color: summary.cll30n_status === 'PASS' ? '#7b1fa2' : '#d32f2f', fontSize: 22 }} />
                       </Box>
                       <Typography variant="h4" sx={{ fontWeight: 800, color: summary.cll30n_status === 'PASS' ? '#7b1fa2' : '#d32f2f', letterSpacing: '-1px' }}>
-                        {summary.kh_cls_count > 0 ? `${summary.cll30n_pct || 0}%` : `${summary.cll30n_count || 0} HĐ`}
+                        {`${summary.cll30n_pct || 0}%`}
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.2 }}>
-                        {summary.kh_cls_count > 0 ? `HĐ: ${summary.cll30n_count || 0} / ${summary.kh_cls_count}` : `Sheet CLL: ${summary.cll30n_count || 0} HĐ`}
+                        {`HĐ: ${summary.cll30n_count || 0} / ${summary.kh_cls_count || summary.cll30n_count || 0}`}
                       </Typography>
                       <Box sx={{ mt: 0.8 }}>
                         <Chip
@@ -2743,6 +2864,47 @@ export default function App() {
                           color={summary.cll30n_status === 'PASS' ? 'success' : 'error'}
                           sx={{ fontWeight: 800, fontSize: '11px', height: 22 }}
                         />
+                      </Box>
+                    </CardContent>
+                  </Card>
+
+                  {/* Card 6: CLPS 7N BT */}
+                  <Card elevation={0} sx={{ borderRadius: 3, border: `1px solid ${summary.clps7n_status === 'PASS' ? '#e1bee7' : '#ffcdd2'}`, borderLeft: `6px solid ${summary.clps7n_status === 'PASS' ? '#7b1fa2' : '#d32f2f'}`, backgroundColor: '#ffffff', height: '100%' }}>
+                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                        <Typography variant="overline" sx={{ color: '#7b1fa2', fontWeight: 800 }}>
+                          {"CLPS 7N BT (<= 3%)"}
+                        </Typography>
+                        <TrendingUpIcon sx={{ color: summary.clps7n_status === 'PASS' ? '#7b1fa2' : '#d32f2f', fontSize: 22 }} />
+                      </Box>
+                      <Typography variant="h4" sx={{ fontWeight: 800, color: summary.clps7n_status === 'PASS' ? '#7b1fa2' : '#d32f2f', letterSpacing: '-1px' }}>
+                        {`${summary.clps7n_pct || 0}%`}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.2 }}>
+                        {`HĐ: ${summary.clps7n_count || 0} / ${summary.kh_cls_count || summary.cll30n_count || 0}`}
+                      </Typography>
+                      <Box sx={{ mt: 0.8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <Chip
+                          label={summary.clps7n_status === 'PASS' ? "ĐẠT (<= 3%)" : "KHÔNG ĐẠT (> 3%)"}
+                          size="small"
+                          color={summary.clps7n_status === 'PASS' ? 'success' : 'error'}
+                          sx={{ fontWeight: 800, fontSize: '11px', height: 22 }}
+                        />
+                        <Button
+                          size="small"
+                          startIcon={<InfoIcon sx={{ fontSize: '14px !important' }} />}
+                          onClick={() => setClps7nDetailModalOpen(true)}
+                          sx={{
+                            p: 0,
+                            textTransform: 'none',
+                            fontWeight: 700,
+                            color: '#7b1fa2',
+                            fontSize: '11px',
+                            '&:hover': { backgroundColor: 'transparent', textDecoration: 'underline' }
+                          }}
+                        >
+                          Chi tiết
+                        </Button>
                       </Box>
                     </CardContent>
                   </Card>
@@ -2949,8 +3111,8 @@ export default function App() {
                               TIẾN ĐỘ (RT)
                             </TableCell>
 
-                            <TableCell colSpan={1} align="center" sx={{ fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7', borderBottom: '1px solid #e1bee7', fontSize: '13px', py: 1 }}>
-                              CHẤT LƯỢNG LẶP
+                            <TableCell colSpan={2} align="center" sx={{ fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7', borderBottom: '1px solid #e1bee7', fontSize: '13px', py: 1 }}>
+                              CHẤT LƯỢNG (CLL)
                             </TableCell>
 
                             <TableCell colSpan={3} align="center" sx={{ fontWeight: 800, backgroundColor: '#e6f4ea', color: '#1e8e3e', borderRight: '1px solid #ceead6', borderBottom: '1px solid #ceead6', fontSize: '13px', py: 1 }}>
@@ -3020,6 +3182,16 @@ export default function App() {
                                 onClick={() => handleRequestSort('cll30n_pct')}
                               >
                                 {"CLL30N (%) (<=7%)"}
+                              </TableSortLabel>
+                            </TableCell>
+
+                            <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7' }}>
+                              <TableSortLabel
+                                active={orderBy === 'clps7n_pct'}
+                                direction={orderBy === 'clps7n_pct' ? order : 'asc'}
+                                onClick={() => handleRequestSort('clps7n_pct')}
+                              >
+                                {"CLPS 7N BT (%) (<=3%)"}
                               </TableSortLabel>
                             </TableCell>
 
@@ -3106,6 +3278,18 @@ export default function App() {
                                   </Typography>
                                   <Typography variant="caption" sx={{ color: '#5f6368', fontSize: '10px' }}>
                                     {emp.kh_cls_count > 0 ? `(${emp.cll30n_count || 0}/${emp.kh_cls_count} HĐ)` : `(${emp.cll30n_count || 0} HĐ)`}
+                                  </Typography>
+                                </Box>
+                              </TableCell>
+
+                              {/* CLPS 7N BT Column */}
+                              <TableCell align="center" sx={{ backgroundColor: '#fcf8fe', borderRight: '1px solid #e1bee7' }}>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.2 }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 800, color: emp.clps7n_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
+                                    {emp.clps7n_pct || 0}%
+                                  </Typography>
+                                  <Typography variant="caption" sx={{ color: '#5f6368', fontSize: '10px' }}>
+                                    {emp.kh_cls_count > 0 ? `(${emp.clps7n_count || 0}/${emp.kh_cls_count} HĐ)` : `(${emp.clps7n_count || 0} HĐ)`}
                                   </Typography>
                                 </Box>
                               </TableCell>
@@ -3297,7 +3481,7 @@ export default function App() {
                                 .reduce((a, b) => a + b.slActive, 0)}
                             </Typography>
                             <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                              Theo sheet Nhân Sự (tình trạng Active)
+                              Theo danh mục Nhân Sự (tình trạng Active)
                             </Typography>
                           </CardContent>
                         </Card>
@@ -3368,9 +3552,9 @@ export default function App() {
                                 <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#fff3e0', color: '#e65100' }}>Tồn/NS<br />{ltDashData?.date0 || 'Ngày X'}</TableCell>
                                 <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#f3e5f5', color: '#6a1b9a' }}>Tồn Dự Kiến<br />(Tổng/Active)</TableCell>
                                 <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#e8f5e9', color: '#2e7d32' }}>NS Đi Làm<br />{ltDashData?.date1 || 'Ngày X+1'}</TableCell>
-                                <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#e8f5e9', color: '#2e7d32' }}>Tồn Dự Kiến<br />{ltDashData?.date1 || 'Ngày X+1'}</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#e8f5e9', color: '#2e7d32' }}>Tồn/NS<br />{ltDashData?.date1 || 'Ngày X+1'}</TableCell>
                                 <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#e0f7fa', color: '#00838f' }}>NS Đi Làm<br />{ltDashData?.date2 || 'Ngày X+2'}</TableCell>
-                                <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#e0f0fa', color: '#00838f' }}>Tồn Dự Kiến<br />{ltDashData?.date2 || 'Ngày X+2'}</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#e0f0fa', color: '#00838f' }}>Tồn/NS<br />{ltDashData?.date2 || 'Ngày X+2'}</TableCell>
                               </TableRow>
                             </TableHead>
                             <TableBody>
@@ -4481,6 +4665,7 @@ export default function App() {
                           setAdminSubTab(topic.id);
                           if (topic.id === 0) fetchAdminHrList();
                           if (topic.id === 1) fetchAdminUsers();
+                          if (topic.id === 2) fetchDbCounts();
                           if (topic.id === 3) fetchLuongList();
                           if (topic.id === 4) fetchLichTrucChiTiet();
                         }}
@@ -4923,16 +5108,363 @@ export default function App() {
                   {/* TOPIC 2: IMPORT DATA BASE */}
                   {adminSubTab === 2 && (
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#1e293b' }}>
-                        📦 Trung Tâm Import & Đồng Bộ Dữ Liệu Dùng Chung (Data Hub)
-                      </Typography>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                        <Box>
+                          <Typography variant="h6" sx={{ fontWeight: 900, color: '#1e293b', display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <StorageIcon sx={{ color: '#2563eb' }} /> Trung Tâm Quản Trị Import & Đồng Bộ Data Base
+                          </Typography>
+                          <Typography variant="body2" sx={{ color: '#64748b', mt: 0.5 }}>
+                            Nạp và cập nhật dữ liệu từ file Excel / CSV vào hệ thống. Quy tắc lọc trùng thông minh (không ghi đè data cũ, nạp thêm dòng mới).
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={<RefreshIcon />}
+                            onClick={fetchDbCounts}
+                            sx={{ borderRadius: 2, fontWeight: 700 }}
+                          >
+                            Làm mới số lượng DB
+                          </Button>
+                          <Button
+                            variant="outlined"
+                            color="error"
+                            size="small"
+                            startIcon={<DeleteIcon />}
+                            onClick={() => {
+                              setClearTarget(importTarget);
+                              setClearPassword('');
+                              setClearError(null);
+                              setClearModalOpen(true);
+                            }}
+                            sx={{ borderRadius: 2, fontWeight: 700 }}
+                          >
+                            Xóa Sạch [{importTarget === 'kh_cls' ? 'KH Có Cls' : importTarget === 'cll30n' ? 'CLL30N' : importTarget === 'tk' ? 'Data TK' : importTarget === 'bt' ? 'Data BT' : importTarget === 'ton_tk' ? 'Tồn TK' : 'Tồn BT'}] Để Import Lại
+                          </Button>
+                        </Box>
+                      </Box>
 
+                      {/* 1. SELECT DATASET CARDS */}
+                      <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#334155' }}>
+                        1. ĐỐI TƯỢNG DATASET CẦN IMPORT
+                      </Typography>
+                      <Grid container spacing={2}>
+                        {[
+                          {
+                            id: 'kh_cls',
+                            title: 'KH Có Cls',
+                            sheetInfo: 'Kho Data Base: kh_cls',
+                            count: dbCounts.kh_cls || 0,
+                            color: '#2563eb',
+                            bg: '#eff6ff',
+                            desc: 'Danh sách KH có chỉ số chất lượng / CLS'
+                          },
+                          {
+                            id: 'cll30n',
+                            title: 'CLL30N (CLL30)',
+                            sheetInfo: 'Kho Data Base: cll30n',
+                            count: dbCounts.cll30n || 0,
+                            color: '#7c3aed',
+                            bg: '#f5f3ff',
+                            desc: 'Danh sách phiếu CLL30N chất lượng kém'
+                          },
+                          {
+                            id: 'tk',
+                            title: 'Data Triển Khai',
+                            sheetInfo: 'Kho Data Base: tk',
+                            count: dbCounts.tk || 0,
+                            color: '#0d9488',
+                            bg: '#f0fdfa',
+                            desc: 'Dữ liệu tổng hợp phiếu PTC Triển Khai'
+                          },
+                          {
+                            id: 'bt',
+                            title: 'Data Bảo Trì',
+                            sheetInfo: 'Kho Data Base: bt',
+                            count: dbCounts.bt || 0,
+                            color: '#d97706',
+                            bg: '#fffbeb',
+                            desc: 'Dữ liệu tổng hợp phiếu PTC Bảo Trì'
+                          },
+                          {
+                            id: 'ton_tk',
+                            title: 'Tồn Triển Khai',
+                            sheetInfo: 'Kho Data Base: ton_tk',
+                            count: dbCounts.ton_tk || 0,
+                            color: '#059669',
+                            bg: '#ecfdf5',
+                            desc: 'Phiếu tồn Triển Khai đang xử lý'
+                          },
+                          {
+                            id: 'ton_bt',
+                            title: 'Tồn Bảo Trì',
+                            sheetInfo: 'Kho Data Base: ton_bt',
+                            count: dbCounts.ton_bt || 0,
+                            color: '#ea580c',
+                            bg: '#fff7ed',
+                            desc: 'Phiếu tồn Bảo Trì đang xử lý'
+                          }
+                        ].map((item) => {
+                          const selected = importTarget === item.id;
+                          return (
+                            <Grid item xs={12} sm={6} md={4} key={item.id}>
+                              <Paper
+                                elevation={0}
+                                onClick={() => { setImportTarget(item.id); setDbResult(null); }}
+                                sx={{
+                                  p: 2.5,
+                                  borderRadius: 3,
+                                  cursor: 'pointer',
+                                  border: selected ? `2px solid ${item.color}` : '1px solid #e2e8f0',
+                                  backgroundColor: selected ? item.bg : '#ffffff',
+                                  transition: 'all 0.2s ease-in-out',
+                                  boxShadow: selected ? `0 4px 14px ${item.color}25` : 'none',
+                                  '&:hover': {
+                                    borderColor: item.color,
+                                    transform: 'translateY(-2px)'
+                                  }
+                                }}
+                              >
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+                                  <Typography variant="subtitle1" sx={{ fontWeight: 800, color: selected ? item.color : '#1e293b' }}>
+                                    {item.title}
+                                  </Typography>
+                                  {selected && (
+                                    <Chip label="Đang chọn" size="small" sx={{ backgroundColor: item.color, color: '#fff', fontWeight: 800, height: 20, fontSize: '0.7rem' }} />
+                                  )}
+                                </Box>
+                                <Typography variant="caption" sx={{ color: '#64748b', display: 'block', mb: 1.5, fontSize: '0.75rem' }}>
+                                  {item.desc}
+                                </Typography>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pt: 1, borderTop: '1px solid #f1f5f9' }}>
+                                  <Typography variant="caption" sx={{ color: '#94a3b8', fontSize: '0.7rem' }}>
+                                    {item.sheetInfo}
+                                  </Typography>
+                                  <Chip
+                                    label={`${((item.count ?? 0)).toLocaleString()} dòng`}
+                                    size="small"
+                                    sx={{
+                                      fontWeight: 800,
+                                      backgroundColor: selected ? item.color : '#f1f5f9',
+                                      color: selected ? '#fff' : '#475569'
+                                    }}
+                                  />
+                                </Box>
+                              </Paper>
+                            </Grid>
+                          );
+                        })}
+                      </Grid>
+
+                      {/* 2. RULE & UPLOAD CARD */}
+                      <Paper elevation={0} sx={{ p: 3, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#334155', mb: 2 }}>
+                          2. CẤU HÌNH & TẢI FILE IMPORT [{importTarget === 'kh_cls' ? 'KH Có Cls' : importTarget === 'cll30n' ? 'CLL30N' : importTarget === 'tk' ? 'Data Triển Khai' : importTarget === 'bt' ? 'Data Bảo Trì' : importTarget === 'ton_tk' ? 'Tồn Triển Khai' : 'Tồn Bảo Trì'}]
+                        </Typography>
+
+                        <Grid container spacing={3}>
+                          {/* Rule Selector */}
+                          <Grid item xs={12} md={5}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, color: '#475569', mb: 1 }}>
+                              Quy tắc xử lý dữ liệu trùng (Deduplication Rule):
+                            </Typography>
+                            <Paper elevation={0} sx={{ p: 2, borderRadius: 2, border: '1px solid #cbd5e1', backgroundColor: '#f8fafc' }}>
+                              <FormControl component="fieldset">
+                                <RadioGroup
+                                  value={importRule}
+                                  onChange={(e) => setImportRule(e.target.value)}
+                                >
+                                  <FormControlLabel
+                                    value="MERGE_NO_OVERWRITE"
+                                    control={<Radio size="small" color="primary" />}
+                                    label={
+                                      <Box>
+                                        <Typography variant="body2" sx={{ fontWeight: 800, color: '#1e293b' }}>
+                                          🛡️ Giữ nguyên data cũ - Chỉ nạp dòng mới (Mặc định)
+                                        </Typography>
+                                        <Typography variant="caption" sx={{ color: '#64748b', display: 'block' }}>
+                                          Nếu dòng đã tồn tại trong Data Base thì KHÔNG ghi đè. Nếu chưa có thì import thêm vào.
+                                        </Typography>
+                                      </Box>
+                                    }
+                                  />
+                                </RadioGroup>
+                              </FormControl>
+                            </Paper>
+                            <Alert severity="info" sx={{ mt: 2, borderRadius: 2, '& .MuiAlert-message': { fontSize: '0.8rem' } }}>
+                              Khóa xác định trùng lặp ({importTarget === 'kh_cls' || importTarget === 'cll30n' || importTarget === 'tk' || importTarget === 'bt' ? 'Số HĐ + Nhân viên + Ngày hoàn tất' : 'Số HĐ'}).
+                            </Alert>
+                          </Grid>
+
+                          {/* File Drop & Submit */}
+                          <Grid item xs={12} md={7}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, color: '#475569', mb: 1 }}>
+                              Chọn File Excel (.xlsx, .xls) hoặc CSV:
+                            </Typography>
+
+                            <input
+                              type="file"
+                              accept=".xlsx, .xls, .csv"
+                              ref={dbInputRef}
+                              style={{ display: 'none' }}
+                              onChange={(e) => {
+                                if (e.target.files && e.target.files[0]) {
+                                  setDbFile(e.target.files[0]);
+                                  setDbResult(null);
+                                }
+                              }}
+                            />
+
+                            <Box
+                              onClick={() => dbInputRef.current && dbInputRef.current.click()}
+                              sx={{
+                                p: 3,
+                                borderRadius: 2.5,
+                                border: '2px dashed #93c5fd',
+                                backgroundColor: '#eff6ff',
+                                textAlign: 'center',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s',
+                                '&:hover': {
+                                  borderColor: '#2563eb',
+                                  backgroundColor: '#dbeafe'
+                                }
+                              }}
+                            >
+                              <FileUploadIcon sx={{ fontSize: 36, color: '#2563eb', mb: 1 }} />
+                              {dbFile ? (
+                                <Box>
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#1e293b' }}>
+                                    📄 {dbFile.name}
+                                  </Typography>
+                                  <Typography variant="caption" sx={{ color: '#059669', fontWeight: 700 }}>
+                                    Dung lượng: {(dbFile.size / 1024).toFixed(1)} KB — Nhấn để chọn file khác
+                                  </Typography>
+                                </Box>
+                              ) : (
+                                <Box>
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#1e293b' }}>
+                                    Nhấp vào đây để chọn file Excel / CSV
+                                  </Typography>
+                                  <Typography variant="caption" sx={{ color: '#64748b' }}>
+                                    Hỗ trợ định dạng .xlsx, .xls, .csv
+                                  </Typography>
+                                </Box>
+                              )}
+                            </Box>
+
+                            <Box sx={{ mt: 2, display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                              {dbFile && (
+                                <Button
+                                  variant="outlined"
+                                  color="inherit"
+                                  size="medium"
+                                  onClick={() => {
+                                    setDbFile(null);
+                                    if (dbInputRef.current) dbInputRef.current.value = '';
+                                  }}
+                                  sx={{ borderRadius: 2, fontWeight: 700 }}
+                                >
+                                  Hủy file
+                                </Button>
+                              )}
+                              <Button
+                                variant="contained"
+                                color="primary"
+                                size="medium"
+                                disabled={!dbFile || dbUploading}
+                                onClick={handleImportDbDataset}
+                                startIcon={dbUploading ? <CircularProgress size={20} color="inherit" /> : <FileUploadIcon />}
+                                sx={{ borderRadius: 2, fontWeight: 800, px: 3 }}
+                              >
+                                {dbUploading ? 'Đang Xử Lý Import...' : 'Bắt Đầu Import Nạp Data'}
+                              </Button>
+                            </Box>
+                          </Grid>
+                        </Grid>
+
+                        {/* 3. RESULT SUMMARY DISPLAY */}
+                        {dbResult && (
+                          <Box sx={{ mt: 3, pt: 3, borderTop: '1px solid #e2e8f0' }}>
+                            {dbResult.success ? (
+                              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 2.5, border: '1px solid #a7f3d0', backgroundColor: '#ecfdf5' }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, color: '#047857', mb: 2 }}>
+                                  <CheckCircleIcon sx={{ fontSize: 28 }} />
+                                  <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                                    🎉 {dbResult.message}
+                                  </Typography>
+                                </Box>
+
+                                <Grid container spacing={2}>
+                                  <Grid item xs={6} sm={3}>
+                                    <Paper elevation={0} sx={{ p: 1.5, borderRadius: 2, textAlign: 'center', border: '1px solid #6ee7b7', backgroundColor: '#ffffff' }}>
+                                      <Typography variant="caption" sx={{ color: '#047857', fontWeight: 700, display: 'block' }}>
+                                        NẠP MỚI THÀNH CÔNG
+                                      </Typography>
+                                      <Typography variant="h5" sx={{ fontWeight: 900, color: '#059669', mt: 0.5 }}>
+                                        +{(dbResult.added ?? 0).toLocaleString()}
+                                      </Typography>
+                                      <Typography variant="caption" sx={{ color: '#64748b' }}>dòng</Typography>
+                                    </Paper>
+                                  </Grid>
+
+                                  <Grid item xs={6} sm={3}>
+                                    <Paper elevation={0} sx={{ p: 1.5, borderRadius: 2, textAlign: 'center', border: '1px solid #fde68a', backgroundColor: '#ffffff' }}>
+                                      <Typography variant="caption" sx={{ color: '#b45309', fontWeight: 700, display: 'block' }}>
+                                        TRÙNG LẶP (GIỮ NGUYÊN)
+                                      </Typography>
+                                      <Typography variant="h5" sx={{ fontWeight: 900, color: '#d97706', mt: 0.5 }}>
+                                        {(dbResult.skipped ?? 0).toLocaleString()}
+                                      </Typography>
+                                      <Typography variant="caption" sx={{ color: '#64748b' }}>dòng không ghi đè</Typography>
+                                    </Paper>
+                                  </Grid>
+
+                                  <Grid item xs={6} sm={3}>
+                                    <Paper elevation={0} sx={{ p: 1.5, borderRadius: 2, textAlign: 'center', border: '1px solid #cbd5e1', backgroundColor: '#ffffff' }}>
+                                      <Typography variant="caption" sx={{ color: '#475569', fontWeight: 700, display: 'block' }}>
+                                        TỔNG FILE UPLOAD
+                                      </Typography>
+                                      <Typography variant="h5" sx={{ fontWeight: 900, color: '#1e293b', mt: 0.5 }}>
+                                        {(dbResult.total ?? 0).toLocaleString()}
+                                      </Typography>
+                                      <Typography variant="caption" sx={{ color: '#64748b' }}>dòng</Typography>
+                                    </Paper>
+                                  </Grid>
+
+                                  <Grid item xs={6} sm={3}>
+                                    <Paper elevation={0} sx={{ p: 1.5, borderRadius: 2, textAlign: 'center', border: '1px solid #bfdbfe', backgroundColor: '#ffffff' }}>
+                                      <Typography variant="caption" sx={{ color: '#1d4ed8', fontWeight: 700, display: 'block' }}>
+                                        TỔNG KHO DB HỆ THỐNG
+                                      </Typography>
+                                      <Typography variant="h5" sx={{ fontWeight: 900, color: '#2563eb', mt: 0.5 }}>
+                                        {(dbResult.db_total ?? 0).toLocaleString()}
+                                      </Typography>
+                                      <Typography variant="caption" sx={{ color: '#64748b' }}>dòng hiện tại</Typography>
+                                    </Paper>
+                                  </Grid>
+                                </Grid>
+                              </Paper>
+                            ) : (
+                              <Alert severity="error" sx={{ borderRadius: 2 }}>
+                                ❌ {dbResult.message}
+                              </Alert>
+                            )}
+                          </Box>
+                        )}
+                      </Paper>
+
+                      {/* QUICK ACTIONS TOOLKIT */}
+                      <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#334155', mt: 1 }}>
+                        3. CÁC CÔNG CỤ ĐỒNG BỘ NẠP DATA KHÁC
+                      </Typography>
                       <Grid container spacing={3}>
                         <Grid item xs={12} sm={6} md={3}>
                           <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 1.5, '&:hover': { boxShadow: '0 6px 16px rgba(0,0,0,0.06)' } }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: '#2563eb' }}>
                               <PendingActionsIcon />
-                              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Tồn TK-BT</Typography>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Tồn TK-BT (Data Base)</Typography>
                             </Box>
                             <Typography variant="caption" sx={{ color: '#64748b' }}>Import file CSV/Excel danh sách phiếu tồn Triển Khai và Bảo Trì mới nhất.</Typography>
                             <Button variant="contained" size="small" startIcon={<FileUploadIcon />} onClick={() => setImportTonModalOpen(true)} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
@@ -4960,8 +5492,8 @@ export default function App() {
                               <BarChartIcon />
                               <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>KPIs Live Sync</Typography>
                             </Box>
-                            <Typography variant="caption" sx={{ color: '#64748b' }}>Đồng bộ dữ liệu trực tiếp từ Google Sheet KPI Triển Khai & Bảo Trì.</Typography>
-                            <Button variant="contained" color="secondary" size="small" startIcon={<RefreshIcon />} onClick={triggerSync} disabled={syncing} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
+                            <Typography variant="caption" sx={{ color: '#64748b' }}>Cập nhật lại dữ liệu từ Data Base KPI Triển Khai & Bảo Trì.</Typography>
+                            <Button variant="contained" color="secondary" size="small" startIcon={<RefreshIcon />} onClick={handleTriggerSync} disabled={syncing} sx={{ borderRadius: 2, fontWeight: 700, mt: 1 }}>
                               {syncing ? 'Đang Đồng Bộ...' : 'Đồng Bộ Live KPI'}
                             </Button>
                           </Paper>
@@ -4980,6 +5512,49 @@ export default function App() {
                           </Paper>
                         </Grid>
                       </Grid>
+
+                      {/* DIALOG XÁC NHẬN XÓA DATASET */}
+                      <Dialog open={clearModalOpen} onClose={() => !clearingDb && setClearModalOpen(false)} maxWidth="xs" fullWidth>
+                        <DialogTitle sx={{ fontWeight: 900, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <WarningIcon color="error" /> Xác Nhận Xóa Dữ Liệu Import
+                        </DialogTitle>
+                        <form onSubmit={handleClearDbDataset}>
+                          <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+                            <Alert severity="warning" sx={{ borderRadius: 2 }}>
+                              ⚠️ Bạn đang chọn xóa sạch toàn bộ dữ liệu <strong>[{clearTarget === 'kh_cls' ? 'KH Có Cls' : clearTarget === 'cll30n' ? 'CLL30N' : clearTarget === 'tk' ? 'Data Triển Khai' : clearTarget === 'bt' ? 'Data Bảo Trì' : clearTarget === 'ton_tk' ? 'Tồn Triển Khai' : clearTarget === 'ton_bt' ? 'Tồn Bảo Trì' : 'Tất Cả Dataset'}]</strong> trong Kho Data Base hiện tại để tiến hành nạp lại từ đầu.
+                            </Alert>
+
+                            {clearError && (
+                              <Alert severity="error" sx={{ borderRadius: 2 }}>
+                                {clearError}
+                              </Alert>
+                            )}
+
+                            <Typography variant="body2" sx={{ fontWeight: 700, color: '#334155' }}>
+                              Nhập mật khẩu xác nhận Quản trị viên để tiến hành xóa:
+                            </Typography>
+
+                            <TextField
+                              type="password"
+                              label="Mật Khẩu Xác Nhận"
+                              placeholder="Nhập mật khẩu xác nhận..."
+                              fullWidth
+                              required
+                              value={clearPassword}
+                              onChange={(e) => setClearPassword(e.target.value)}
+                              sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                            />
+                          </DialogContent>
+                          <DialogActions sx={{ px: 3, pb: 2.5 }}>
+                            <Button onClick={() => setClearModalOpen(false)} disabled={clearingDb} variant="outlined" color="inherit" sx={{ borderRadius: 2, fontWeight: 700 }}>
+                              Hủy bỏ
+                            </Button>
+                            <Button type="submit" disabled={clearingDb || !clearPassword} variant="contained" color="error" sx={{ borderRadius: 2, fontWeight: 800, px: 3 }}>
+                              {clearingDb ? 'Đang Xóa Data...' : 'Xác Nhận Xóa Data'}
+                            </Button>
+                          </DialogActions>
+                        </form>
+                      </Dialog>
                     </Box>
                   )}
 
@@ -5238,6 +5813,40 @@ export default function App() {
           </DialogActions>
         </Dialog>
 
+        {/* CLPS 7N BT DETAILS MODAL */}
+        <Dialog open={clps7nDetailModalOpen} onClose={() => setClps7nDetailModalOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
+            <Typography variant="h6" sx={{ fontWeight: 800, color: '#7b1fa2' }}>
+              CHI TIẾT DANH SÁCH CLPS 7N BT (SG01)
+            </Typography>
+            <IconButton onClick={() => setClps7nDetailModalOpen(false)}><CloseIcon /></IconButton>
+          </DialogTitle>
+          
+          <DialogContent dividers sx={{ p: 3 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#202124' }}>
+                Tỉ Lệ CLPS 7N BT Toàn Đơn Vị: <span style={{ color: summary?.clps7n_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>{summary?.clps7n_pct || 0}%</span> (Tiêu chuẩn: &le; 3%)
+              </Typography>
+              <Chip
+                label={summary?.clps7n_status === 'PASS' ? "ĐẠT (<= 3%)" : "KHÔNG ĐẠT (> 3%)"}
+                color={summary?.clps7n_status === 'PASS' ? 'success' : 'error'}
+                sx={{ fontWeight: 800 }}
+              />
+            </Box>
+
+            <Typography variant="body2" sx={{ color: '#5f6368', mb: 2 }}>
+              Phiếu CLPS 7N BT là ca lặp có TG Hoàn Tất (cột G) đến TG Tạo CLPS (cột AB) &le; 7 ngày. 
+              Tổng số phiếu: <strong>{summary?.clps7n_count || 0} HĐ</strong> trên tổng <strong>{summary?.kh_cls_count || 0} HĐ KH Có Cls</strong>.
+            </Typography>
+          </DialogContent>
+
+          <DialogActions sx={{ p: 2 }}>
+            <Button onClick={() => setClps7nDetailModalOpen(false)} variant="contained" sx={{ backgroundColor: '#7b1fa2', '&:hover': { backgroundColor: '#4a148c' }, borderRadius: '18px', textTransform: 'none', px: 3 }}>
+              Đóng
+            </Button>
+          </DialogActions>
+        </Dialog>
+
         {/* EMPLOYEE TICKET DETAILS DRAWER */}
         <Drawer
           anchor="right"
@@ -5268,6 +5877,7 @@ export default function App() {
                 <Tab label={`Triển Khai (TK) (${empDetails?.tk_tickets?.length || 0})`} />
                 <Tab label={`Bảo Trì (BT) (${empDetails?.bt_tickets?.length || 0})`} />
                 <Tab label={`CLL30N (Ca Lặp) (${empDetails?.cll_tickets?.length || 0})`} />
+                <Tab label={`CLPS 7N BT (${empDetails?.clps7n_tickets?.length || empDetails?.cll_tickets?.filter(t => t.is_clps_7n_bt)?.length || 0})`} />
               </Tabs>
 
               {loadingDetails ? (
@@ -5356,7 +5966,7 @@ export default function App() {
                     </TableBody>
                   </Table>
                 </TableContainer>
-              ) : (
+              ) : activeTab === 2 ? (
                 <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e0e0e0', borderRadius: 2 }}>
                   <Table size="small">
                     <TableHead sx={{ backgroundColor: '#f8f9fa' }}>
@@ -5364,7 +5974,7 @@ export default function App() {
                         <TableCell sx={{ fontWeight: 700, width: 40 }}>STT</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Số HĐ</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Khách Hàng</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>TG Hoàn Tất</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>TG Hoàn Tất CLPS</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Tình Trạng Đầu Vào</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Hướng Xử Lý</TableCell>
                       </TableRow>
@@ -5373,7 +5983,10 @@ export default function App() {
                       {empDetails?.cll_tickets?.map((t, idx) => (
                         <TableRow key={idx}>
                           <TableCell sx={{ color: '#5f6368' }}>{idx + 1}</TableCell>
-                          <TableCell sx={{ fontWeight: 600 }}>{t.contract_no}</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }}>
+                            {t.contract_no}
+                            {t.is_clps_7n_bt && <Chip label="CLPS 7N BT" size="small" sx={{ ml: 1, height: 18, fontSize: '10px', backgroundColor: '#f3e5f5', color: '#7b1fa2', fontWeight: 700 }} />}
+                          </TableCell>
                           <TableCell>{t.customer_name || '-'}</TableCell>
                           <TableCell sx={{ whiteSpace: 'nowrap' }}>{t.dt_complete || '-'}</TableCell>
                           <TableCell>
@@ -5388,6 +6001,47 @@ export default function App() {
                         <TableRow>
                           <TableCell colSpan={6} align="center" sx={{ py: 3, color: '#5f6368' }}>
                             Không có ca lặp CLL30N trong khoảng thời gian này
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              ) : (
+                <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e0e0e0', borderRadius: 2 }}>
+                  <Table size="small">
+                    <TableHead sx={{ backgroundColor: '#f8f9fa' }}>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 700, width: 40 }}>STT</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Số HĐ</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Khách Hàng</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>TG Hoàn Tất CLPS</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Tình Trạng Đầu Vào</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Hướng Xử Lý</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {(empDetails?.clps7n_tickets || empDetails?.cll_tickets?.filter(t => t.is_clps_7n_bt))?.map((t, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell sx={{ color: '#5f6368' }}>{idx + 1}</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }}>
+                            {t.contract_no}
+                            <Chip label="CLPS 7N BT" size="small" sx={{ ml: 1, height: 18, fontSize: '10px', backgroundColor: '#f3e5f5', color: '#7b1fa2', fontWeight: 700 }} />
+                          </TableCell>
+                          <TableCell>{t.customer_name || '-'}</TableCell>
+                          <TableCell sx={{ whiteSpace: 'nowrap' }}>{t.dt_complete || '-'}</TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>{t.tinh_trang_dau_vao || '-'}</Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" sx={{ fontSize: '0.8125rem', color: '#7b1fa2', fontWeight: 500 }}>{t.huong_xu_ly || '-'}</Typography>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {(!empDetails?.clps7n_tickets?.length && !empDetails?.cll_tickets?.some(t => t.is_clps_7n_bt)) && (
+                        <TableRow>
+                          <TableCell colSpan={6} align="center" sx={{ py: 3, color: '#5f6368' }}>
+                            Không có phiếu CLPS 7N BT trong khoảng thời gian này
                           </TableCell>
                         </TableRow>
                       )}
