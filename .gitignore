@@ -19,3 +19,6 @@ Thumbs.db
 # Environment & logs
 .env
 *.log
+
+# Scratch scripts
+scratch/

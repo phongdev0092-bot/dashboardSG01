@@ -48,6 +48,10 @@ class KPIEngine:
         self.PERMISSIONS_WEBAPP_URL = os.environ.get("PERMISSIONS_WEBAPP_URL", "") or self.DEFAULT_PERMISSIONS_WEBAPP_URL
         self.LT_SHEET_ID = os.environ.get("LT_SHEET_ID", "1qd8O1bqbtHmbPUO_HhZv07YS9c27bo1QMWh4yvmQr2U").strip()
         self.LT_GID = os.environ.get("LT_GID", "0").strip()
+        self.TON_TK_SHEET_ID = os.environ.get("TON_TK_SHEET_ID", "1Hihsf3_R3Z9aaqqj9vskIyveNX4UO2Ej3d26jF5-S2w").strip()
+        self.TON_TK_GID = os.environ.get("TON_TK_GID", "0").strip()
+        self.TON_BT_SHEET_ID = os.environ.get("TON_BT_SHEET_ID", "1Hihsf3_R3Z9aaqqj9vskIyveNX4UO2Ej3d26jF5-S2w").strip()
+        self.TON_BT_GID = os.environ.get("TON_BT_GID", "440862556").strip()
         try:
             CACHE_DIR.mkdir(exist_ok=True, parents=True)
             cfg_file = CACHE_DIR / "webapp_config.json"
@@ -205,10 +209,20 @@ class KPIEngine:
             else:
                 pd.to_pickle(df_or_obj, tmp_target, compression=comp)
             if tmp_target.exists():
-                if target.exists():
-                    try: target.unlink()
-                    except Exception: pass
-                tmp_target.replace(target)
+                try:
+                    if target.exists():
+                        try: target.unlink()
+                        except Exception: pass
+                    tmp_target.replace(target)
+                except Exception:
+                    try:
+                        import shutil
+                        shutil.copyfile(str(tmp_target), str(target))
+                        if tmp_target.exists():
+                            try: tmp_target.unlink()
+                            except Exception: pass
+                    except Exception:
+                        pass
                 if filename.endswith('.pkl.gz'):
                     uncomp = CACHE_DIR / filename[:-3]
                     if uncomp.exists():
@@ -309,6 +323,12 @@ class KPIEngine:
     def _get_lt_sheet_url(self) -> str:
         return f'https://docs.google.com/spreadsheets/d/{self.LT_SHEET_ID}/export?format=csv&gid={self.LT_GID}'
 
+    def _get_ton_tk_sheet_url(self) -> str:
+        return f'https://docs.google.com/spreadsheets/d/{self.TON_TK_SHEET_ID}/export?format=csv&gid={self.TON_TK_GID}'
+
+    def _get_ton_bt_sheet_url(self) -> str:
+        return f'https://docs.google.com/spreadsheets/d/{self.TON_BT_SHEET_ID}/export?format=csv&gid={self.TON_BT_GID}'
+
     def load_cache_or_fetch(self):
         def _get_df(name):
             tmp_dir = Path("/tmp/data_cache")
@@ -386,6 +406,7 @@ class KPIEngine:
             df_ton_bt = self.ton_bt_df if hasattr(self, 'ton_bt_df') and not self.ton_bt_df.empty else _get_df_local("ton_bt")
             df_lt = self.lt_df if hasattr(self, 'lt_df') and not self.lt_df.empty else _get_df_local("lt")
             df_cll30n = self.cll30n_df if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else _get_df_local("cll30n")
+            df_kh_cls = self.kh_cls_df if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else _get_df_local("kh_cls")
             # Fallback to online Google Sheets ONLY if App DB for core datasets is completely empty (e.g., initial Vercel deploy)
             if df_hr.empty:
                 try:
@@ -413,6 +434,40 @@ class KPIEngine:
                         df_bt = pd.read_csv(io.BytesIO(res_bt.content), encoding='utf-8', low_memory=False)
                 except Exception as e_bt:
                     print(f"Warning: BT sheet fetch failed: {e_bt}", flush=True)
+
+            # Fetch live Lịch Trực, Tồn TK, Tồn BT from designated Google Sheets
+            try:
+                print("Fetching live Lịch Trực data from Sheet...", flush=True)
+                res_lt = requests.get(self._get_lt_sheet_url(), timeout=30)
+                if res_lt.status_code == 200 and not res_lt.text.strip().startswith('<!DOCTYPE'):
+                    df_lt_fetched = self._read_any_dataframe(res_lt.content, "lt.csv")
+                    if not df_lt_fetched.empty:
+                        df_lt = df_lt_fetched
+                        self._save_pickle(df_lt, "lt.pkl.gz")
+            except Exception as e_lt:
+                print(f"Warning: Lịch Trực sheet fetch failed: {e_lt}", flush=True)
+
+            try:
+                print("Fetching live Tồn TK data from Sheet...", flush=True)
+                res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=30)
+                if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_tk_fetched = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
+                    if not df_ton_tk_fetched.empty:
+                        df_ton_tk = df_ton_tk_fetched
+                        self._save_pickle(df_ton_tk, "ton_tk.pkl.gz")
+            except Exception as e_ton_tk:
+                print(f"Warning: Tồn TK sheet fetch failed: {e_ton_tk}", flush=True)
+
+            try:
+                print("Fetching live Tồn BT data from Sheet...", flush=True)
+                res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=30)
+                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_bt_fetched = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
+                    if not df_ton_bt_fetched.empty:
+                        df_ton_bt = df_ton_bt_fetched
+                        self._save_pickle(df_ton_bt, "ton_bt.pkl.gz")
+            except Exception as e_ton_bt:
+                print(f"Warning: Tồn BT sheet fetch failed: {e_ton_bt}", flush=True)
 
             # Process HR
             if not df_hr.empty:
@@ -1048,7 +1103,35 @@ class KPIEngine:
             except Exception:
                 pass
         if df_ton_tk.empty:
+            try:
+                res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
+                if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_tk = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
+                    if not df_ton_tk.empty:
+                        self.ton_tk_df = df_ton_tk
+                        self._save_pickle(df_ton_tk, "ton_tk.pkl.gz")
+            except Exception:
+                pass
+        if df_ton_tk.empty:
             return []
+
+        df_ton_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
+        if df_ton_bt.empty and (CACHE_DIR / "ton_bt.pkl.gz").exists():
+            try:
+                df_ton_bt = pd.read_pickle(CACHE_DIR / "ton_bt.pkl.gz")
+                self.ton_bt_df = df_ton_bt
+            except Exception:
+                pass
+        if df_ton_bt.empty:
+            try:
+                res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
+                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_bt = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
+                    if not df_ton_bt.empty:
+                        self.ton_bt_df = df_ton_bt
+                        self._save_pickle(df_ton_bt, "ton_bt.pkl.gz")
+            except Exception:
+                pass
         
         col_f_block = self._find_col(df_ton_tk, ['Block', 'Block nhân sự'], default_idx=5)
         ns_col = self._find_col(df_ton_tk, ['Nhân sự', 'Nhân viên'], default_idx=17)
