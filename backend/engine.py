@@ -1304,11 +1304,11 @@ class KPIEngine:
         tk_0_map = df_tk_p[df_tk_p['dt_hen'].isna() | (df_tk_p['dt_hen'] <= d0)].groupby('block').size().to_dict() if not df_tk_p.empty else {}
         bt_0_map = df_bt_p[df_bt_p['dt_hen'].isna() | (df_bt_p['dt_hen'] <= d0)].groupby('block').size().to_dict() if not df_bt_p.empty else {}
 
-        tk_1_map = df_tk_p[df_tk_p['dt_hen'] == d1].groupby('block').size().to_dict() if not df_tk_p.empty else {}
-        bt_1_map = df_bt_p[df_bt_p['dt_hen'] == d1].groupby('block').size().to_dict() if not df_bt_p.empty else {}
+        tk_1_map = df_tk_p[df_tk_p['dt_hen'].isna() | (df_tk_p['dt_hen'] <= d1)].groupby('block').size().to_dict() if not df_tk_p.empty else {}
+        bt_1_map = df_bt_p[df_bt_p['dt_hen'].isna() | (df_bt_p['dt_hen'] <= d1)].groupby('block').size().to_dict() if not df_bt_p.empty else {}
 
-        tk_2_map = df_tk_p[df_tk_p['dt_hen'] == d2].groupby('block').size().to_dict() if not df_tk_p.empty else {}
-        bt_2_map = df_bt_p[df_bt_p['dt_hen'] == d2].groupby('block').size().to_dict() if not df_bt_p.empty else {}
+        tk_2_map = df_tk_p[df_tk_p['dt_hen'].isna() | (df_tk_p['dt_hen'] <= d2)].groupby('block').size().to_dict() if not df_tk_p.empty else {}
+        bt_2_map = df_bt_p[df_bt_p['dt_hen'].isna() | (df_bt_p['dt_hen'] <= d2)].groupby('block').size().to_dict() if not df_bt_p.empty else {}
 
         summary_table = []
         for block in all_blocks:
