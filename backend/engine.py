@@ -1095,13 +1095,8 @@ class KPIEngine:
         return res_blocks, hr_map
 
     def _get_ton_tk_parsed(self, hr_map):
+        self._refresh_lt_from_sheet()
         df_ton_tk = getattr(self, 'ton_tk_df', pd.DataFrame())
-        if df_ton_tk.empty and (CACHE_DIR / "ton_tk.pkl.gz").exists():
-            try:
-                df_ton_tk = pd.read_pickle(CACHE_DIR / "ton_tk.pkl.gz")
-                self.ton_tk_df = df_ton_tk
-            except Exception:
-                pass
         if df_ton_tk.empty:
             try:
                 res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
@@ -1114,24 +1109,6 @@ class KPIEngine:
                 pass
         if df_ton_tk.empty:
             return []
-
-        df_ton_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
-        if df_ton_bt.empty and (CACHE_DIR / "ton_bt.pkl.gz").exists():
-            try:
-                df_ton_bt = pd.read_pickle(CACHE_DIR / "ton_bt.pkl.gz")
-                self.ton_bt_df = df_ton_bt
-            except Exception:
-                pass
-        if df_ton_bt.empty:
-            try:
-                res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
-                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
-                    df_ton_bt = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
-                    if not df_ton_bt.empty:
-                        self.ton_bt_df = df_ton_bt
-                        self._save_pickle(df_ton_bt, "ton_bt.pkl.gz")
-            except Exception:
-                pass
         
         col_f_block = self._find_col(df_ton_tk, ['Block', 'Block nhân sự'], default_idx=5)
         ns_col = self._find_col(df_ton_tk, ['Nhân sự', 'Nhân viên'], default_idx=17)
@@ -1165,11 +1142,16 @@ class KPIEngine:
         return tk_rows
 
     def _get_ton_bt_parsed(self, hr_map):
+        self._refresh_lt_from_sheet()
         df_ton_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
-        if df_ton_bt.empty and (CACHE_DIR / "ton_bt.pkl.gz").exists():
+        if df_ton_bt.empty:
             try:
-                df_ton_bt = pd.read_pickle(CACHE_DIR / "ton_bt.pkl.gz")
-                self.ton_bt_df = df_ton_bt
+                res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
+                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_bt = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
+                    if not df_ton_bt.empty:
+                        self.ton_bt_df = df_ton_bt
+                        self._save_pickle(df_ton_bt, "ton_bt.pkl.gz")
             except Exception:
                 pass
         if df_ton_bt.empty:
@@ -1250,14 +1232,15 @@ class KPIEngine:
     def _refresh_lt_from_sheet(self, force=False):
         now = time.time()
         last_fetch = getattr(self, '_last_lt_fetch_time', 0)
-        if force or (now - last_fetch > 60) or not hasattr(self, 'lt_df') or self.lt_df.empty:
+        need_fetch = force or (now - last_fetch > 60) or not hasattr(self, 'lt_df') or self.lt_df.empty or not hasattr(self, 'ton_tk_df') or self.ton_tk_df.empty or not hasattr(self, 'ton_bt_df') or self.ton_bt_df.empty
+        if need_fetch:
+            # 1. Fetch Lịch Trực live from Google Sheet
             try:
                 res_lt = requests.get(self._get_lt_sheet_url(), timeout=15)
                 if res_lt.status_code == 200 and not res_lt.text.strip().startswith('<!DOCTYPE'):
                     df_lt_fetched = self._read_any_dataframe(res_lt.content, "lt.csv")
                     if not df_lt_fetched.empty:
                         self.lt_df = df_lt_fetched
-                        self._last_lt_fetch_time = now
                         self._save_pickle(self.lt_df, "lt.pkl.gz")
                         try:
                             self._snapshot_and_detect_lt_changes(source_label="Google Sheet Sync")
@@ -1265,6 +1248,30 @@ class KPIEngine:
                             print(f"Warning: snapshot detection failed: {e_snap}", flush=True)
             except Exception as e:
                 print(f"Auto-refresh Lịch Trực error: {e}", flush=True)
+
+            # 2. Fetch Tồn TK live from Google Sheet
+            try:
+                res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
+                if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_tk_fetched = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
+                    if not df_ton_tk_fetched.empty:
+                        self.ton_tk_df = df_ton_tk_fetched
+                        self._save_pickle(self.ton_tk_df, "ton_tk.pkl.gz")
+            except Exception as e_ton_tk:
+                print(f"Auto-refresh Tồn TK error: {e_ton_tk}", flush=True)
+
+            # 3. Fetch Tồn BT live from Google Sheet
+            try:
+                res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
+                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_bt_fetched = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
+                    if not df_ton_bt_fetched.empty:
+                        self.ton_bt_df = df_ton_bt_fetched
+                        self._save_pickle(self.ton_bt_df, "ton_bt.pkl.gz")
+            except Exception as e_ton_bt:
+                print(f"Auto-refresh Tồn BT error: {e_ton_bt}", flush=True)
+
+            self._last_lt_fetch_time = now
 
     def get_lich_truc_dashboard(self, date_str=None):
         self._refresh_lt_from_sheet()
@@ -1687,23 +1694,11 @@ class KPIEngine:
         return {"ok": True}
 
     def get_ton_tk_bt_dashboard(self):
+        self._refresh_lt_from_sheet()
         ns_by_block, hr_map = self._get_nhan_su_by_block()
         import unicodedata
         df_tk = getattr(self, 'ton_tk_df', pd.DataFrame())
-        if df_tk.empty and (CACHE_DIR / "ton_tk.pkl.gz").exists():
-            try:
-                df_tk = pd.read_pickle(CACHE_DIR / "ton_tk.pkl.gz")
-                self.ton_tk_df = df_tk
-            except Exception:
-                pass
-
         df_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
-        if df_bt.empty and (CACHE_DIR / "ton_bt.pkl.gz").exists():
-            try:
-                df_bt = pd.read_pickle(CACHE_DIR / "ton_bt.pkl.gz")
-                self.ton_bt_df = df_bt
-            except Exception:
-                pass
 
         now = datetime.datetime.now()
 
