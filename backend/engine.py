@@ -30,8 +30,6 @@ class KPIEngine:
         self.bt_df = pd.DataFrame()
         self.ton_tk_df = pd.DataFrame()
         self.ton_bt_df = pd.DataFrame()
-        self._ton_tk_cleared = False
-        self._ton_bt_cleared = False
         self.lt_df = pd.DataFrame()
         self.cll30n_df = pd.DataFrame()
         self.kh_cls_df = pd.DataFrame()
@@ -1099,16 +1097,6 @@ class KPIEngine:
     def _get_ton_tk_parsed(self, hr_map):
         self._refresh_lt_from_sheet()
         df_ton_tk = getattr(self, 'ton_tk_df', pd.DataFrame())
-        if df_ton_tk.empty and not getattr(self, '_ton_tk_cleared', False):
-            try:
-                res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
-                if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
-                    df_ton_tk = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
-                    if not df_ton_tk.empty:
-                        self.ton_tk_df = df_ton_tk
-                        self._save_pickle(df_ton_tk, "ton_tk.pkl.gz")
-            except Exception:
-                pass
         if df_ton_tk.empty:
             return []
         
@@ -1146,16 +1134,6 @@ class KPIEngine:
     def _get_ton_bt_parsed(self, hr_map):
         self._refresh_lt_from_sheet()
         df_ton_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
-        if df_ton_bt.empty and not getattr(self, '_ton_bt_cleared', False):
-            try:
-                res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
-                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
-                    df_ton_bt = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
-                    if not df_ton_bt.empty:
-                        self.ton_bt_df = df_ton_bt
-                        self._save_pickle(df_ton_bt, "ton_bt.pkl.gz")
-            except Exception:
-                pass
         if df_ton_bt.empty:
             return []
         
@@ -1232,10 +1210,6 @@ class KPIEngine:
         return res
 
     def _refresh_lt_from_sheet(self, force=False):
-        if force:
-            self._ton_tk_cleared = False
-            self._ton_bt_cleared = False
-
         now = time.time()
         last_fetch = getattr(self, '_last_lt_fetch_time', 0)
         need_fetch = force or (now - last_fetch > 60) or not hasattr(self, 'lt_df') or self.lt_df.empty
@@ -1255,29 +1229,25 @@ class KPIEngine:
             except Exception as e:
                 print(f"Auto-refresh Lịch Trực error: {e}", flush=True)
 
-            # 2. Fetch Tồn TK live from Google Sheet (if not explicitly cleared)
-            if not getattr(self, '_ton_tk_cleared', False):
-                try:
-                    res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
-                    if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
-                        df_ton_tk_fetched = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
-                        if not df_ton_tk_fetched.empty:
-                            self.ton_tk_df = df_ton_tk_fetched
-                            self._save_pickle(self.ton_tk_df, "ton_tk.pkl.gz")
-                except Exception as e_ton_tk:
-                    print(f"Auto-refresh Tồn TK error: {e_ton_tk}", flush=True)
+            # 2. Fetch Tồn TK live from Google Sheet
+            try:
+                res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
+                if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_tk_fetched = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
+                    self.ton_tk_df = df_ton_tk_fetched if not df_ton_tk_fetched.empty else pd.DataFrame()
+                    self._save_pickle(self.ton_tk_df, "ton_tk.pkl.gz")
+            except Exception as e_ton_tk:
+                print(f"Auto-refresh Tồn TK error: {e_ton_tk}", flush=True)
 
-            # 3. Fetch Tồn BT live from Google Sheet (if not explicitly cleared)
-            if not getattr(self, '_ton_bt_cleared', False):
-                try:
-                    res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
-                    if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
-                        df_ton_bt_fetched = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
-                        if not df_ton_bt_fetched.empty:
-                            self.ton_bt_df = df_ton_bt_fetched
-                            self._save_pickle(self.ton_bt_df, "ton_bt.pkl.gz")
-                except Exception as e_ton_bt:
-                    print(f"Auto-refresh Tồn BT error: {e_ton_bt}", flush=True)
+            # 3. Fetch Tồn BT live from Google Sheet
+            try:
+                res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
+                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_bt_fetched = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
+                    self.ton_bt_df = df_ton_bt_fetched if not df_ton_bt_fetched.empty else pd.DataFrame()
+                    self._save_pickle(self.ton_bt_df, "ton_bt.pkl.gz")
+            except Exception as e_ton_bt:
+                print(f"Auto-refresh Tồn BT error: {e_ton_bt}", flush=True)
 
             self._last_lt_fetch_time = now
 
@@ -1930,7 +1900,6 @@ class KPIEngine:
 
         if detected_mode == "TK":
             self.ton_tk_df = df
-            self._ton_tk_cleared = False
             try:
                 df.to_pickle(CACHE_DIR / "ton_tk.pkl.gz")
             except Exception as e:
@@ -1938,7 +1907,6 @@ class KPIEngine:
             label = "Tồn Triển Khai (TK)"
         else:
             self.ton_bt_df = df
-            self._ton_bt_cleared = False
             try:
                 df.to_pickle(CACHE_DIR / "ton_bt.pkl.gz")
             except Exception as e:
@@ -2380,12 +2348,10 @@ class KPIEngine:
             label = "Data Bảo Trì (BT)"
         elif target_clean == "ton_tk":
             self.ton_tk_df = pd.DataFrame()
-            self._ton_tk_cleared = True
             _safe_remove_cache("ton_tk.pkl.gz")
             label = "Tồn Triển Khai"
         elif target_clean == "ton_bt":
             self.ton_bt_df = pd.DataFrame()
-            self._ton_bt_cleared = True
             _safe_remove_cache("ton_bt.pkl.gz")
             label = "Tồn Bảo Trì"
         elif target_clean == "all":
@@ -2395,8 +2361,6 @@ class KPIEngine:
             self.bt_df = pd.DataFrame()
             self.ton_tk_df = pd.DataFrame()
             self.ton_bt_df = pd.DataFrame()
-            self._ton_tk_cleared = True
-            self._ton_bt_cleared = True
             for fname in ["kh_cls.pkl.gz", "cll30n.pkl.gz", "tk.pkl.gz", "bt.pkl.gz", "ton_tk.pkl.gz", "ton_bt.pkl.gz"]:
                 _safe_remove_cache(fname)
             label = "TẤT CẢ DỮ LIỆU DATA BASE"
