@@ -386,7 +386,33 @@ class KPIEngine:
             df_ton_bt = self.ton_bt_df if hasattr(self, 'ton_bt_df') and not self.ton_bt_df.empty else _get_df_local("ton_bt")
             df_lt = self.lt_df if hasattr(self, 'lt_df') and not self.lt_df.empty else _get_df_local("lt")
             df_cll30n = self.cll30n_df if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else _get_df_local("cll30n")
-            df_kh_cls = self.kh_cls_df if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else _get_df_local("kh_cls")
+            # Fallback to online Google Sheets ONLY if App DB for core datasets is completely empty (e.g., initial Vercel deploy)
+            if df_hr.empty:
+                try:
+                    print("App DB HR is empty. Fetching live HR data from Sheet...", flush=True)
+                    res_hr = requests.get(self._get_sheet_url(GIDS['HR']), timeout=20)
+                    if res_hr.status_code == 200 and not res_hr.text.strip().startswith('<!DOCTYPE'):
+                        df_hr = pd.read_csv(io.BytesIO(res_hr.content), encoding='utf-8', dtype=str)
+                except Exception as e_hr:
+                    print(f"Warning: HR sheet fetch failed: {e_hr}", flush=True)
+
+            if df_tk.empty:
+                try:
+                    print("App DB TK is empty. Fetching live TK data from Sheet...", flush=True)
+                    res_tk = requests.get(self._get_sheet_url(GIDS['TK']), timeout=30)
+                    if res_tk.status_code == 200 and not res_tk.text.strip().startswith('<!DOCTYPE'):
+                        df_tk = pd.read_csv(io.BytesIO(res_tk.content), encoding='utf-8', low_memory=False)
+                except Exception as e_tk:
+                    print(f"Warning: TK sheet fetch failed: {e_tk}", flush=True)
+
+            if df_bt.empty:
+                try:
+                    print("App DB BT is empty. Fetching live BT data from Sheet...", flush=True)
+                    res_bt = requests.get(self._get_sheet_url(GIDS['BT']), timeout=30)
+                    if res_bt.status_code == 200 and not res_bt.text.strip().startswith('<!DOCTYPE'):
+                        df_bt = pd.read_csv(io.BytesIO(res_bt.content), encoding='utf-8', low_memory=False)
+                except Exception as e_bt:
+                    print(f"Warning: BT sheet fetch failed: {e_bt}", flush=True)
 
             # Process HR
             if not df_hr.empty:
