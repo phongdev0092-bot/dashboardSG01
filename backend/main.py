@@ -40,13 +40,13 @@ def get_filter_options():
 
 @app.get("/api/kpi/report")
 def get_kpi_report(
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    team_lead: Optional[str] = Query(None),
-    region: Optional[str] = Query(None),
-    partner: Optional[str] = Query(None),
-    block: Optional[str] = Query(None),
-    search: Optional[str] = Query(None)
+    start_date: Optional[str] = Query(default=None),
+    end_date: Optional[str] = Query(default=None),
+    team_lead: Optional[str] = Query(default=None),
+    region: Optional[str] = Query(default=None),
+    partner: Optional[str] = Query(default=None),
+    block: Optional[str] = Query(default=None),
+    search: Optional[str] = Query(default=None)
 ):
     return engine.get_kpi_report(
         start_date=start_date,
@@ -61,8 +61,8 @@ def get_kpi_report(
 @app.get("/api/kpi/employee/{account}")
 def get_employee_details(
     account: str,
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None)
+    start_date: Optional[str] = Query(default=None),
+    end_date: Optional[str] = Query(default=None)
 ):
     return engine.get_employee_details(account, start_date=start_date, end_date=end_date)
 
@@ -207,6 +207,30 @@ def start_lt_milestone_scheduler():
 
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
+
+def start_kpi_sheet_auto_scheduler():
+    def auto_sync_loop():
+        print("KPI Google Sheets 3-minute auto-sync scheduler started...", flush=True)
+        time.sleep(10)
+        while True:
+            try:
+                if not engine.is_syncing:
+                    print("Auto-syncing KPI data from Google Sheets to Supabase...", flush=True)
+                    engine.sync_live_data()
+            except Exception as e:
+                print(f"Auto-sync loop error: {e}", flush=True)
+            time.sleep(180)
+
+    t = threading.Thread(target=auto_sync_loop, daemon=True)
+    t.start()
+
+# Start background schedulers
+try:
+    start_lt_milestone_scheduler()
+    start_kpi_sheet_auto_scheduler()
+except Exception as e_sched:
+    print(f"Warning starting schedulers: {e_sched}", flush=True)
+
 
 # =========================================================================
 # ADMIN & AUTHENTICATION API ENDPOINTS

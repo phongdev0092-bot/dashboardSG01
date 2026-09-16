@@ -68,6 +68,20 @@ class KPIEngine:
         self.TON_TK_GID = os.environ.get("TON_TK_GID", "0").strip()
         self.TON_BT_SHEET_ID = os.environ.get("TON_BT_SHEET_ID", "1Hihsf3_R3Z9aaqqj9vskIyveNX4UO2Ej3d26jF5-S2w").strip()
         self.TON_BT_GID = os.environ.get("TON_BT_GID", "440862556").strip()
+
+        # Google Sheets IDs for Dashboard KPIs
+        self.TK_SHEET_ID = os.environ.get("TK_SHEET_ID", "1UhOfDJ99n01nYr577fQC-LPlMd8ByP5APJcBXSUXyoQ").strip()
+        self.TK_GID = os.environ.get("TK_GID", "0").strip()
+
+        self.BT_SHEET_ID = os.environ.get("BT_SHEET_ID", "1GC7Z4nmLf6fFr-eE6epazkan8mJ2QcUv5ThUdT4usI0").strip()
+        self.BT_GID = os.environ.get("BT_GID", "0").strip()
+
+        self.KH_CLS_SHEET_ID = os.environ.get("KH_CLS_SHEET_ID", "1pDv3KT3OlgIDGcjBtwl0TNHxn2shjkMABISwVRC2d5U").strip()
+        self.KH_CLS_GID = os.environ.get("KH_CLS_GID", "0").strip()
+
+        self.CLL30N_SHEET_ID = os.environ.get("CLL30N_SHEET_ID", "1iNzByTpTVARldj9ggWyv-FKe_vzpeDKyHeYZt4vYU94").strip()
+        self.CLL30N_GID = os.environ.get("CLL30N_GID", "0").strip()
+
         self.DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip()
         try:
             CACHE_DIR.mkdir(exist_ok=True, parents=True)
@@ -81,6 +95,14 @@ class KPIEngine:
                         self.LT_SHEET_ID = cfg['LT_SHEET_ID']
                     if cfg.get('LT_GID'):
                         self.LT_GID = str(cfg['LT_GID'])
+                    if cfg.get('TK_SHEET_ID'):
+                        self.TK_SHEET_ID = cfg['TK_SHEET_ID']
+                    if cfg.get('BT_SHEET_ID'):
+                        self.BT_SHEET_ID = cfg['BT_SHEET_ID']
+                    if cfg.get('KH_CLS_SHEET_ID'):
+                        self.KH_CLS_SHEET_ID = cfg['KH_CLS_SHEET_ID']
+                    if cfg.get('CLL30N_SHEET_ID'):
+                        self.CLL30N_SHEET_ID = cfg['CLL30N_SHEET_ID']
                     if cfg.get('DATABASE_URL'):
                         self.DATABASE_URL = str(cfg['DATABASE_URL']).strip()
         except Exception:
@@ -94,6 +116,20 @@ class KPIEngine:
             return None
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+        # Tự động URL-encode ký tự @ trong mật khẩu nếu bị trùng với ký tự phân cách host
+        try:
+            from urllib.parse import quote_plus
+            if db_url.count('@') > 1:
+                prefix, host_part = db_url.rsplit('@', 1)
+                if '://' in prefix:
+                    scheme, user_pass = prefix.split('://', 1)
+                    if ':' in user_pass:
+                        user, password = user_pass.split(':', 1)
+                        db_url = f"{scheme}://{user}:{quote_plus(password)}@{host_part}"
+        except Exception:
+            pass
+
         try:
             from sqlalchemy import create_engine
             return create_engine(db_url, pool_pre_ping=True, connect_args={"connect_timeout": 10})
@@ -107,17 +143,38 @@ class KPIEngine:
         engine = self.get_db_engine()
         if engine is None:
             return False
-        try:
-            df_to_save = df.copy()
-            df_to_save.columns = [str(c).strip().replace(".", "_").replace(" ", "_") for c in df_to_save.columns]
-            for c in df_to_save.columns:
-                df_to_save[c] = df_to_save[c].astype(str)
-            df_to_save.to_sql(table_name, engine, if_exists='replace', index=False, chunksize=1000)
-            print(f"Successfully saved {len(df_to_save)} rows to Supabase table '{table_name}'", flush=True)
-            return True
-        except Exception as e:
-            print(f"Warning: Failed to save to Supabase table '{table_name}': {e}", flush=True)
-            return False
+        
+        if not hasattr(self, '_sp_save_lock'):
+            import threading
+            self._sp_save_lock = threading.Lock()
+
+        with self._sp_save_lock:
+            for attempt in range(2):
+                try:
+                    df_to_save = df.copy()
+                    clean_cols = []
+                    seen = set()
+                    for c in df_to_save.columns:
+                        c_clean = str(c).strip().replace(".", "_").replace(" ", "_")
+                        base = c_clean
+                        idx = 1
+                        while c_clean in seen:
+                            c_clean = f"{base}_{idx}"
+                            idx += 1
+                        seen.add(c_clean)
+                        clean_cols.append(c_clean)
+                    df_to_save.columns = clean_cols
+                    for c in df_to_save.columns:
+                        df_to_save[c] = df_to_save[c].astype(str)
+                    df_to_save.to_sql(table_name, engine, if_exists='replace', index=False, chunksize=1000)
+                    print(f"Successfully saved {len(df_to_save)} rows to Supabase table '{table_name}'", flush=True)
+                    return True
+                except Exception as e:
+                    if attempt == 0:
+                        time.sleep(0.5)
+                    else:
+                        print(f"Warning: Failed to save to Supabase table '{table_name}': {e}", flush=True)
+                        return False
 
     def _load_df_from_supabase(self, table_name: str) -> pd.DataFrame:
         engine = self.get_db_engine()
@@ -416,6 +473,54 @@ class KPIEngine:
     def _get_ton_bt_sheet_url(self) -> str:
         return f'https://docs.google.com/spreadsheets/d/{self.TON_BT_SHEET_ID}/export?format=csv&gid={self.TON_BT_GID}'
 
+    def _get_tk_sheet_url(self) -> str:
+        return f'https://docs.google.com/spreadsheets/d/{self.TK_SHEET_ID}/export?format=csv&gid={self.TK_GID}'
+
+    def _get_bt_sheet_url(self) -> str:
+        return f'https://docs.google.com/spreadsheets/d/{self.BT_SHEET_ID}/export?format=csv&gid={self.BT_GID}'
+
+    def _get_kh_cls_sheet_url(self) -> str:
+        return f'https://docs.google.com/spreadsheets/d/{self.KH_CLS_SHEET_ID}/export?format=csv&gid={self.KH_CLS_GID}'
+
+    def _get_cll30n_sheet_url(self) -> str:
+        return f'https://docs.google.com/spreadsheets/d/{self.CLL30N_SHEET_ID}/export?format=csv&gid={self.CLL30N_GID}'
+
+    def _push_dataset_to_google_sheet(self, target: str, df: pd.DataFrame) -> bool:
+        """
+        Đẩy dữ liệu đã cập nhật về Google Apps Script WebApp nếu PERMISSIONS_WEBAPP_URL khả dụng.
+        """
+        if df is None:
+            df = pd.DataFrame()
+        webapp_url = getattr(self, 'PERMISSIONS_WEBAPP_URL', '') or os.environ.get("PERMISSIONS_WEBAPP_URL", "").strip()
+        if not webapp_url:
+            print(f"Info: Push back dataset '{target}' skipped (No WebApp URL configured).", flush=True)
+            return False
+        try:
+            records = df.head(5000).astype(str).to_dict(orient='records') if not df.empty else []
+            payload = {
+                "action": "update_dataset",
+                "target": target,
+                "data": records
+            }
+            resp = requests.post(webapp_url, json=payload, timeout=15)
+            print(f"Push back dataset '{target}' to Google Sheet: status={resp.status_code}", flush=True)
+            return resp.status_code == 200
+        except Exception as e:
+            print(f"Warning: Failed to push dataset '{target}' to Google Sheet: {e}", flush=True)
+            return False
+
+    def _async_sync_after_import(self, target_name: str, df_target: pd.DataFrame):
+        def _bg_task():
+            try:
+                self._save_df_to_supabase(df_target, target_name)
+                self._push_dataset_to_google_sheet(target_name, df_target)
+            except Exception as e:
+                print(f"Background post-import sync warning for '{target_name}': {e}", flush=True)
+
+        import threading
+        threading.Thread(target=_bg_task, daemon=True).start()
+
+
     def _is_custom_ton_imported(self, name: str) -> bool:
         tmp_dir = Path("/tmp/data_cache")
         for p in [CACHE_DIR / f"{name}_imported.json", tmp_dir / f"{name}_imported.json"]:
@@ -474,6 +579,22 @@ class KPIEngine:
         if not sp_ton_tk.empty:
             ton_tk_df = sp_ton_tk
 
+        sp_tk = self._load_df_from_supabase("tk")
+        if not sp_tk.empty:
+            tk_df = sp_tk
+
+        sp_bt = self._load_df_from_supabase("bt")
+        if not sp_bt.empty:
+            bt_df = sp_bt
+
+        sp_kh_cls = self._load_df_from_supabase("kh_cls")
+        if not sp_kh_cls.empty:
+            kh_cls_df = sp_kh_cls
+
+        sp_cll30n = self._load_df_from_supabase("cll30n")
+        if not sp_cll30n.empty:
+            cll30n_df = sp_cll30n
+
         if not hr_df.empty and not tk_df.empty and not bt_df.empty:
             try:
                 print("Loading data from local cache...", flush=True)
@@ -490,6 +611,10 @@ class KPIEngine:
                 self.last_sync_time = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
                 self._process_metadata()
                 print(f"Cache loaded successfully! Sync time: {self.last_sync_time}", flush=True)
+
+                if getattr(self, 'ton_tk_df', pd.DataFrame()).empty or getattr(self, 'ton_bt_df', pd.DataFrame()).empty:
+                    self._refresh_lt_from_sheet(force=True)
+
                 return
             except Exception as e:
                 print(f"Cache load failed: {e}. Fetching live data...", flush=True)
@@ -528,35 +653,64 @@ class KPIEngine:
             df_lt = self.lt_df if hasattr(self, 'lt_df') and not self.lt_df.empty else _get_df_local("lt")
             df_cll30n = self.cll30n_df if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else _get_df_local("cll30n")
             df_kh_cls = self.kh_cls_df if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else _get_df_local("kh_cls")
-            # Fallback to online Google Sheets ONLY if App DB for core datasets is completely empty (e.g., initial Vercel deploy)
-            if df_hr.empty:
-                try:
-                    print("App DB HR is empty. Fetching live HR data from Sheet...", flush=True)
-                    res_hr = requests.get(self._get_sheet_url(GIDS['HR']), timeout=20)
-                    if res_hr.status_code == 200 and not res_hr.text.strip().startswith('<!DOCTYPE'):
-                        df_hr = pd.read_csv(io.BytesIO(res_hr.content), encoding='utf-8', dtype=str)
-                except Exception as e_hr:
-                    print(f"Warning: HR sheet fetch failed: {e_hr}", flush=True)
+            # Fetch live data from designated Google Sheets for Dashboard KPIs & Lịch trực
+            try:
+                print("Fetching live HR data from Sheet...", flush=True)
+                res_hr = requests.get(self._get_sheet_url(GIDS['HR']), timeout=20)
+                if res_hr.status_code == 200 and not res_hr.text.strip().startswith('<!DOCTYPE'):
+                    df_hr = pd.read_csv(io.BytesIO(res_hr.content), encoding='utf-8', dtype=str)
+            except Exception as e_hr:
+                print(f"Warning: HR sheet fetch failed: {e_hr}", flush=True)
 
-            if df_tk.empty:
-                try:
-                    print("App DB TK is empty. Fetching live TK data from Sheet...", flush=True)
-                    res_tk = requests.get(self._get_sheet_url(GIDS['TK']), timeout=30)
-                    if res_tk.status_code == 200 and not res_tk.text.strip().startswith('<!DOCTYPE'):
-                        df_tk = pd.read_csv(io.BytesIO(res_tk.content), encoding='utf-8', low_memory=False)
-                except Exception as e_tk:
-                    print(f"Warning: TK sheet fetch failed: {e_tk}", flush=True)
+            # 1. Khối Lượng Công Việc Triển Khai (TK): Sheet ID 1UhOfDJ99n01nYr577fQC-LPlMd8ByP5APJcBXSUXyoQ (GID 0)
+            try:
+                print("Fetching live TK data from Sheet...", flush=True)
+                res_tk = requests.get(self._get_tk_sheet_url(), timeout=30)
+                if res_tk.status_code == 200 and not res_tk.text.strip().startswith('<!DOCTYPE'):
+                    df_tk_fetched = pd.read_csv(io.BytesIO(res_tk.content), encoding='utf-8', low_memory=False)
+                    if not df_tk_fetched.empty:
+                        df_tk = df_tk_fetched
+            except Exception as e_tk:
+                print(f"Warning: TK sheet fetch failed: {e_tk}", flush=True)
 
-            if df_bt.empty:
-                try:
-                    print("App DB BT is empty. Fetching live BT data from Sheet...", flush=True)
-                    res_bt = requests.get(self._get_sheet_url(GIDS['BT']), timeout=30)
-                    if res_bt.status_code == 200 and not res_bt.text.strip().startswith('<!DOCTYPE'):
-                        df_bt = pd.read_csv(io.BytesIO(res_bt.content), encoding='utf-8', low_memory=False)
-                except Exception as e_bt:
-                    print(f"Warning: BT sheet fetch failed: {e_bt}", flush=True)
+            # 2. Khối Lượng Công Việc Bảo Trì (BT): Sheet ID 1GC7Z4nmLf6fFr-eE6epazkan8mJ2QcUv5ThUdT4usI0 (GID 0)
+            try:
+                print("Fetching live BT data from Sheet...", flush=True)
+                res_bt = requests.get(self._get_bt_sheet_url(), timeout=30)
+                if res_bt.status_code == 200 and not res_bt.text.strip().startswith('<!DOCTYPE'):
+                    df_bt_fetched = pd.read_csv(io.BytesIO(res_bt.content), encoding='utf-8', low_memory=False)
+                    if not df_bt_fetched.empty:
+                        df_bt = df_bt_fetched
+            except Exception as e_bt:
+                print(f"Warning: BT sheet fetch failed: {e_bt}", flush=True)
 
-            # Fetch live Lịch Trực, Tồn TK, Tồn BT from designated Google Sheets
+            # 3. KH Có Cls (kh_cls): Sheet ID 1pDv3KT3OlgIDGcjBtwl0TNHxn2shjkMABISwVRC2d5U (GID 0)
+            try:
+                print("Fetching live KH Có Cls data from Sheet...", flush=True)
+                res_kh_cls = requests.get(self._get_kh_cls_sheet_url(), timeout=30)
+                if res_kh_cls.status_code == 200 and not res_kh_cls.text.strip().startswith('<!DOCTYPE'):
+                    df_kh_cls_fetched = self._read_any_dataframe(res_kh_cls.content, "kh_cls.csv")
+                    if not df_kh_cls_fetched.empty:
+                        df_kh_cls_processed = self._process_cll30n_df(df_kh_cls_fetched)
+                        if not df_kh_cls_processed.empty:
+                            df_kh_cls = df_kh_cls_processed
+            except Exception as e_kh_cls:
+                print(f"Warning: KH Có Cls sheet fetch failed: {e_kh_cls}", flush=True)
+
+            # 4. CLL30N (cll30n): Sheet ID 1iNzByTpTVARldj9ggWyv-FKe_vzpeDKyHeYZt4vYU94 (GID 0)
+            try:
+                print("Fetching live CLL30N data from Sheet...", flush=True)
+                res_cll30n = requests.get(self._get_cll30n_sheet_url(), timeout=30)
+                if res_cll30n.status_code == 200 and not res_cll30n.text.strip().startswith('<!DOCTYPE'):
+                    df_cll30n_fetched = self._read_any_dataframe(res_cll30n.content, "cll30n.csv")
+                    if not df_cll30n_fetched.empty:
+                        df_cll30n_processed = self._process_cll30n_df(df_cll30n_fetched)
+                        if not df_cll30n_processed.empty:
+                            df_cll30n = df_cll30n_processed
+            except Exception as e_cll30n:
+                print(f"Warning: CLL30N sheet fetch failed: {e_cll30n}", flush=True)
+
+            # Fetch live Lịch Trực, Tồn TK, Tồn BT from designated Google Sheets (GIỮ NGUYÊN UNTOUCHED)
             try:
                 print("Fetching live Lịch Trực data from Sheet...", flush=True)
                 res_lt = requests.get(self._get_lt_sheet_url(), timeout=30)
@@ -601,54 +755,28 @@ class KPIEngine:
 
             # Process TK
             if not df_tk.empty:
-                if 'Nhân viên' in df_tk.columns: df_tk['Nhân viên'] = df_tk['Nhân viên'].astype(str).str.strip().str.upper()
-                if 'Số hợp đồng' in df_tk.columns: df_tk['Số hợp đồng'] = df_tk['Số hợp đồng'].astype(str).str.strip()
-                if 'Gói dịch vụ' in df_tk.columns: df_tk['Gói dịch vụ'] = df_tk['Gói dịch vụ'].astype(str).str.strip()
-                if 'Loại giao dịch' in df_tk.columns: df_tk['Loại giao dịch'] = df_tk['Loại giao dịch'].astype(str).str.strip()
-                
-                if 'Số hợp đồng' in df_tk.columns and 'Gói dịch vụ' in df_tk.columns:
-                    df_tk['is_gsafe'] = (df_tk['Số hợp đồng'].str.startswith('SGG', na=False)) & (df_tk['Gói dịch vụ'].str.lower() == 'offnet')
-                if 'Loại giao dịch' in df_tk.columns:
-                    df_tk['is_swap'] = df_tk['Loại giao dịch'].str.contains('Swap', case=False, na=False)
-                if 'Đúng hẹn' in df_tk.columns:
-                    df_tk['dung_hen'] = pd.to_numeric(df_tk['Đúng hẹn'], errors='coerce').fillna(0).astype(int)
-                
-                if 'Ngày hoàn tất PTC' in df_tk.columns:
-                    df_tk['dt_complete'] = pd.to_datetime(df_tk['Ngày hoàn tất PTC'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-                if 'TG tạo PTC' in df_tk.columns:
-                    df_tk['dt_created'] = pd.to_datetime(df_tk['TG tạo PTC'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-                if 'dt_complete' in df_tk.columns:
-                    df_tk['date_complete'] = df_tk['dt_complete'].dt.date
-                
-                if 'dt_complete' in df_tk.columns and 'dt_created' in df_tk.columns:
-                    rt_sec = (df_tk['dt_complete'] - df_tk['dt_created']).dt.total_seconds()
-                    df_tk['rt_hours'] = np.where(rt_sec >= 0, rt_sec / 3600.0, np.nan)
+                df_tk = self._enrich_tk_df(df_tk)
 
             # Process BT
             if not df_bt.empty:
-                if 'Nhân viên' in df_bt.columns: df_bt['Nhân viên'] = df_bt['Nhân viên'].astype(str).str.strip().str.upper()
-                if 'Số HĐ' in df_bt.columns: df_bt['Số HĐ'] = df_bt['Số HĐ'].astype(str).str.strip()
-                if 'Đúng hẹn' in df_bt.columns: df_bt['dung_hen'] = pd.to_numeric(df_bt['Đúng hẹn'], errors='coerce').fillna(0).astype(int)
-                
-                if 'TG Hoàn Tất' in df_bt.columns:
-                    df_bt['dt_complete'] = pd.to_datetime(df_bt['TG Hoàn Tất'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-                if 'TG Tạo' in df_bt.columns:
-                    df_bt['dt_created'] = pd.to_datetime(df_bt['TG Tạo'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-                if 'dt_complete' in df_bt.columns:
-                    df_bt['date_complete'] = df_bt['dt_complete'].dt.date
-                
-                if 'dt_complete' in df_bt.columns and 'dt_created' in df_bt.columns:
-                    rt_sec_bt = (df_bt['dt_complete'] - df_bt['dt_created']).dt.total_seconds()
-                    df_bt['rt_hours'] = np.where(rt_sec_bt >= 0, rt_sec_bt / 3600.0, np.nan)
+                df_bt = self._enrich_bt_df(df_bt)
 
             # Save to Cache
             self._save_pickle(df_cll30n, "cll30n.pkl.gz")
             self._save_pickle(df_kh_cls, "kh_cls.pkl.gz")
-
-            # Save to Cache
             self._save_pickle(df_hr, "hr.pkl.gz")
             self._save_pickle(df_tk, "tk.pkl.gz")
             self._save_pickle(df_bt, "bt.pkl.gz")
+
+            # Save to Supabase PostgreSQL Database automatically
+            if not df_tk.empty:
+                self._save_df_to_supabase(df_tk, "tk")
+            if not df_bt.empty:
+                self._save_df_to_supabase(df_bt, "bt")
+            if not df_kh_cls.empty:
+                self._save_df_to_supabase(df_kh_cls, "kh_cls")
+            if not df_cll30n.empty:
+                self._save_df_to_supabase(df_cll30n, "cll30n")
 
             self.hr_df = df_hr
             self.tk_df = df_tk
@@ -701,20 +829,48 @@ class KPIEngine:
             return "-"
         return f"{val_hours:.2f}H"
 
+    def _parse_date_param(self, val):
+        if val is None:
+            return None
+        if not isinstance(val, (str, datetime.date, datetime.datetime, pd.Timestamp)):
+            return None
+        s_val = str(val).strip()
+        if not s_val or s_val.lower() in ('none', 'null', 'nan', 'undefined', 'query'):
+            return None
+        try:
+            return pd.to_datetime(s_val).date()
+        except Exception:
+            return None
+
+    def _clean_str_param(self, val):
+        if val is None or not isinstance(val, str):
+            return None
+        s = val.strip()
+        if not s or s.lower() in ('none', 'null', 'nan', 'undefined', 'query', '__all__', 'all'):
+            return None
+        return s
+
     def get_kpi_report(self, start_date=None, end_date=None, team_lead=None, region=None, partner=None, block=None, search=None):
         t0 = time.time()
         
+        team_lead = self._clean_str_param(team_lead)
+        region = self._clean_str_param(region)
+        partner = self._clean_str_param(partner)
+        block = self._clean_str_param(block)
+        search = self._clean_str_param(search)
+
         # 1. Date Filtering
         tk = self.tk_df.copy()
         bt = self.bt_df.copy()
 
-        if start_date:
-            s_d = pd.to_datetime(start_date).date()
+        s_d = self._parse_date_param(start_date)
+        e_d = self._parse_date_param(end_date)
+
+        if s_d:
             tk = tk[tk['date_complete'] >= s_d]
             bt = bt[bt['date_complete'] >= s_d]
 
-        if end_date:
-            e_d = pd.to_datetime(end_date).date()
+        if e_d:
             tk = tk[tk['date_complete'] <= e_d]
             bt = bt[bt['date_complete'] <= e_d]
 
@@ -722,11 +878,9 @@ class KPIEngine:
         cls = self.kh_cls_df.copy() if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else pd.DataFrame()
 
         if not cls.empty and 'date_complete' in cls.columns:
-            if start_date:
-                s_d = pd.to_datetime(start_date).date()
+            if s_d:
                 cls = cls[cls['date_complete'] >= s_d]
-            if end_date:
-                e_d = pd.to_datetime(end_date).date()
+            if e_d:
                 cls = cls[cls['date_complete'] <= e_d]
 
         # Get list of accounts matching metadata filters
@@ -741,7 +895,7 @@ class KPIEngine:
         if block:
             allowed_accounts &= {k for k, v in self.emp_map.items() if v['block'] == block}
         if search:
-            s = search.strip().upper()
+            s = search.upper()
             allowed_accounts &= {
                 k for k, v in self.emp_map.items() 
                 if s in k or s in v['name'].upper() or s in str(v['code']).upper()
@@ -757,11 +911,9 @@ class KPIEngine:
         # Filter CLL30N dataset by date range (derived from Column AC: Tg hoàn tất CLPS)
         cll = self.cll30n_df.copy() if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
         if not cll.empty and 'date_complete' in cll.columns:
-            if start_date:
-                s_d = pd.to_datetime(start_date).date()
+            if s_d:
                 cll = cll[cll['date_complete'] >= s_d]
-            if end_date:
-                e_d = pd.to_datetime(end_date).date()
+            if e_d:
                 cll = cll[cll['date_complete'] <= e_d]
 
         if team_lead or region or partner or block or search:
@@ -1113,13 +1265,14 @@ class KPIEngine:
         tk = self.tk_df[self.tk_df['Nhân viên'] == acc].copy()
         bt = self.bt_df[self.bt_df['Nhân viên'] == acc].copy()
 
-        if start_date:
-            s_d = pd.to_datetime(start_date).date()
+        s_d = self._parse_date_param(start_date)
+        e_d = self._parse_date_param(end_date)
+
+        if s_d:
             tk = tk[tk['date_complete'] >= s_d]
             bt = bt[bt['date_complete'] >= s_d]
 
-        if end_date:
-            e_d = pd.to_datetime(end_date).date()
+        if e_d:
             tk = tk[tk['date_complete'] <= e_d]
             bt = bt[bt['date_complete'] <= e_d]
 
@@ -1171,11 +1324,9 @@ class KPIEngine:
         cll = self.cll30n_df[self.cll30n_df['Nhân viên'] == acc].copy() if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
 
         if not cll.empty and 'date_complete' in cll.columns:
-            if start_date:
-                s_d = pd.to_datetime(start_date).date()
+            if s_d:
                 cll = cll[cll['date_complete'] >= s_d]
-            if end_date:
-                e_d = pd.to_datetime(end_date).date()
+            if e_d:
                 cll = cll[cll['date_complete'] <= e_d]
 
         cll_list = []
@@ -1421,8 +1572,8 @@ class KPIEngine:
             except Exception as e:
                 print(f"Auto-refresh Lịch Trực error: {e}", flush=True)
 
-            # 2. Fetch Tồn TK live from Google Sheet (only if user hasn't imported custom file or force=True)
-            if force or not self._is_custom_ton_imported("ton_tk"):
+            # 2. Fetch Tồn TK live from Google Sheet (only if user hasn't imported custom file or force=True or ton_tk_df is empty)
+            if force or not self._is_custom_ton_imported("ton_tk") or not hasattr(self, 'ton_tk_df') or getattr(self, 'ton_tk_df', pd.DataFrame()).empty:
                 try:
                     res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
                     if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
@@ -1433,8 +1584,8 @@ class KPIEngine:
                 except Exception as e_ton_tk:
                     print(f"Auto-refresh Tồn TK error: {e_ton_tk}", flush=True)
 
-            # 3. Fetch Tồn BT live from Google Sheet (only if user hasn't imported custom file or force=True)
-            if force or not self._is_custom_ton_imported("ton_bt"):
+            # 3. Fetch Tồn BT live from Google Sheet (only if user hasn't imported custom file or force=True or ton_bt_df is empty)
+            if force or not self._is_custom_ton_imported("ton_bt") or not hasattr(self, 'ton_bt_df') or getattr(self, 'ton_bt_df', pd.DataFrame()).empty:
                 try:
                     res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
                     if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
@@ -1961,17 +2112,17 @@ class KPIEngine:
                 info = hr_map.get(ns, {})
                 doi_truong = info.get('truong') or ns_by_block.get(block, {}).get('truong') or '(chưa rõ)'
 
-                raw_hrs = str(r.get(ton_hrs_col, '')).strip()
-                ton_hrs = 0.0
-                try:
-                    ton_hrs = float(raw_hrs)
-                except Exception:
-                    raw_created = str(r.get(time_created_col, '')).strip()
-                    dt_created = pd.to_datetime(raw_created, dayfirst=True, errors='coerce')
-                    if pd.notnull(dt_created):
-                        ton_hrs = round((now - dt_created).total_seconds() / 3600.0, 1)
-
                 raw_created = str(r.get(time_created_col, '')).strip()
+                dt_created = pd.to_datetime(raw_created, dayfirst=True, errors='coerce')
+                ton_hrs = 0.0
+                if pd.notnull(dt_created):
+                    ton_hrs = round((now - dt_created).total_seconds() / 3600.0, 1)
+                else:
+                    raw_hrs = str(r.get(ton_hrs_col, '')).strip()
+                    try:
+                        ton_hrs = float(raw_hrs)
+                    except Exception:
+                        ton_hrs = 0.0
 
                 note_cc = str(r.get(note_cc_col, '')).strip()
                 note_ktv = str(r.get(note_ktv_col, '')).strip()
@@ -2259,6 +2410,7 @@ class KPIEngine:
                     merged_cls = pd.concat([existing_cls, inc_cls], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
                 self._save_pickle(merged_cls, "kh_cls.pkl.gz")
                 self.kh_cls_df = merged_cls
+                self._async_sync_after_import("kh_cls", merged_cls)
 
                 # Tử số: cll30n_df contains rows from df_inc_processed where is_cll30n == True
                 inc_cll = df_inc_processed[df_inc_processed['is_cll30n'] == True]
@@ -2273,6 +2425,7 @@ class KPIEngine:
                     merged_cll = pd.concat([existing_cll, inc_cll], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
                 self._save_pickle(merged_cll, "cll30n.pkl.gz")
                 self.cll30n_df = merged_cll
+                self._async_sync_after_import("cll30n", merged_cll)
                 db_total = len(merged_cls)
 
             else: # target == "cll30n"
@@ -2289,6 +2442,7 @@ class KPIEngine:
                     merged_cll = pd.concat([existing_cll, df_inc_processed], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
                 self._save_pickle(merged_cll, "cll30n.pkl.gz")
                 self.cll30n_df = merged_cll
+                self._async_sync_after_import("cll30n", merged_cll)
                 db_total = len(merged_cll)
 
         elif target == "tk":
@@ -2338,6 +2492,7 @@ class KPIEngine:
             merged_df = self._enrich_tk_df(merged_df)
             self._save_pickle(merged_df, "tk.pkl.gz")
             self.tk_df = merged_df
+            self._async_sync_after_import("tk", merged_df)
             db_total = len(merged_df)
 
         elif target == "bt":
@@ -2387,6 +2542,8 @@ class KPIEngine:
             merged_df = self._enrich_bt_df(merged_df)
             self._save_pickle(merged_df, "bt.pkl.gz")
             self.bt_df = merged_df
+            self._async_sync_after_import("bt", merged_df)
+            db_total = len(merged_df)
             db_total = len(merged_df)
 
         elif target == "ton_tk":
@@ -2538,44 +2695,58 @@ class KPIEngine:
                         pass
 
         target_clean = str(target).strip().lower()
+        engine_db = self.get_db_engine()
+        def _drop_sp_table(tbl):
+            if engine_db:
+                try:
+                    from sqlalchemy import text
+                    with engine_db.connect() as conn:
+                        conn.execute(text(f'DROP TABLE IF EXISTS "{tbl}"'))
+                        conn.commit()
+                except Exception as e:
+                    print(f"Warning dropping Supabase table '{tbl}': {e}", flush=True)
+
         if target_clean == "kh_cls":
             self.kh_cls_df = pd.DataFrame()
             self.cll30n_df = pd.DataFrame()
             _safe_remove_cache("kh_cls.pkl.gz")
             _safe_remove_cache("cll30n.pkl.gz")
+            _drop_sp_table("kh_cls")
+            _drop_sp_table("cll30n")
+            self._push_dataset_to_google_sheet("kh_cls", pd.DataFrame())
+            self._push_dataset_to_google_sheet("cll30n", pd.DataFrame())
             label = "KH Có Cls & CLL30N (Data Base)"
         elif target_clean == "cll30n":
             self.cll30n_df = pd.DataFrame()
             _safe_remove_cache("cll30n.pkl.gz")
+            _drop_sp_table("cll30n")
+            self._push_dataset_to_google_sheet("cll30n", pd.DataFrame())
             label = "CLL30N (Data Base)"
         elif target_clean == "tk":
             self.tk_df = pd.DataFrame()
             _safe_remove_cache("tk.pkl.gz")
+            _drop_sp_table("tk")
+            self._push_dataset_to_google_sheet("tk", pd.DataFrame())
             label = "Data Triển Khai (TK)"
         elif target_clean == "bt":
             self.bt_df = pd.DataFrame()
             _safe_remove_cache("bt.pkl.gz")
+            _drop_sp_table("bt")
+            self._push_dataset_to_google_sheet("bt", pd.DataFrame())
             label = "Data Bảo Trì (BT)"
         elif target_clean == "ton_tk":
             self.ton_tk_df = pd.DataFrame()
             self._set_custom_ton_imported("ton_tk")
             _safe_remove_cache("ton_tk.pkl.gz")
             self._sync_ton_dataset_to_webapp("ton_tk", None)
-            try:
-                engine = self.get_db_engine()
-                if engine:
-                    from sqlalchemy import text
-                    with engine.connect() as conn:
-                        conn.execute(text('DROP TABLE IF EXISTS "ton_tk"'))
-                        conn.commit()
-            except Exception as e_sp:
-                print(f"Warning clearing ton_tk on Supabase: {e_sp}", flush=True)
+            _drop_sp_table("ton_tk")
             label = "Tồn Triển Khai"
         elif target_clean == "ton_bt":
             self.ton_bt_df = pd.DataFrame()
             self._set_custom_ton_imported("ton_bt")
             _safe_remove_cache("ton_bt.pkl.gz")
             self._sync_ton_dataset_to_webapp("ton_bt", None)
+            _drop_sp_table("ton_bt")
             label = "Tồn Bảo Trì"
         elif target_clean == "all":
             self.kh_cls_df = pd.DataFrame()
@@ -2590,6 +2761,9 @@ class KPIEngine:
             self._sync_ton_dataset_to_webapp("ton_bt", None)
             for fname in ["kh_cls.pkl.gz", "cll30n.pkl.gz", "tk.pkl.gz", "bt.pkl.gz", "ton_tk.pkl.gz", "ton_bt.pkl.gz"]:
                 _safe_remove_cache(fname)
+            for tbl in ["kh_cls", "cll30n", "tk", "bt", "ton_tk", "ton_bt"]:
+                _drop_sp_table(tbl)
+                self._push_dataset_to_google_sheet(tbl, pd.DataFrame())
             label = "TẤT CẢ DỮ LIỆU DATA BASE"
         else:
             return {"ok": False, "error": "Dataset mục tiêu không hợp lệ."}
