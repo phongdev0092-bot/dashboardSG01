@@ -635,24 +635,23 @@ class KPIEngine:
         cll30n_path, cll30n_df = _get_df("cll30n")
         kh_cls_path, kh_cls_df = _get_df("kh_cls")
 
-        # Load from Supabase – only for TK, BT, kh_cls, cll30n (import-managed datasets)
-        # lt, ton_tk, ton_bt use Google Sheet as source of truth → no Supabase loading
-        if not self._is_cleared('tk'):
+        # If local cache is empty (e.g. cold start on Vercel/Render), load from Supabase fallback
+        if tk_df.empty and not self._is_cleared('tk'):
             sp_tk = self._load_df_from_supabase("tk")
             if not sp_tk.empty:
                 tk_df = sp_tk
 
-        if not self._is_cleared('bt'):
+        if bt_df.empty and not self._is_cleared('bt'):
             sp_bt = self._load_df_from_supabase("bt")
             if not sp_bt.empty:
                 bt_df = sp_bt
 
-        if not self._is_cleared('kh_cls'):
+        if kh_cls_df.empty and not self._is_cleared('kh_cls'):
             sp_kh_cls = self._load_df_from_supabase("kh_cls")
             if not sp_kh_cls.empty:
                 kh_cls_df = sp_kh_cls
 
-        if not self._is_cleared('cll30n'):
+        if cll30n_df.empty and not self._is_cleared('cll30n'):
             sp_cll30n = self._load_df_from_supabase("cll30n")
             if not sp_cll30n.empty:
                 cll30n_df = sp_cll30n
