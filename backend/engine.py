@@ -613,6 +613,8 @@ class KPIEngine:
 
     def load_cache_or_fetch(self):
         def _get_df(name):
+            if self._is_cleared(name):
+                return None, pd.DataFrame()
             tmp_dir = Path("/tmp/data_cache")
             candidates = [
                 CACHE_DIR / f"{name}.pkl.gz",
@@ -692,6 +694,8 @@ class KPIEngine:
         
         try:
             def _get_df_local(name):
+                if self._is_cleared(name):
+                    return pd.DataFrame()
                 tmp_dir = Path("/tmp/data_cache")
                 candidates = [
                     CACHE_DIR / f"{name}.pkl.gz",
@@ -707,13 +711,13 @@ class KPIEngine:
 
             # Load datasets strictly from App Data Base (in-memory or local cache)
             df_hr = self.hr_df if hasattr(self, 'hr_df') and not self.hr_df.empty else _get_df_local("hr")
-            df_tk = self.tk_df if hasattr(self, 'tk_df') and not self.tk_df.empty else _get_df_local("tk")
-            df_bt = self.bt_df if hasattr(self, 'bt_df') and not self.bt_df.empty else _get_df_local("bt")
-            df_ton_tk = self.ton_tk_df if hasattr(self, 'ton_tk_df') and not self.ton_tk_df.empty else _get_df_local("ton_tk")
-            df_ton_bt = self.ton_bt_df if hasattr(self, 'ton_bt_df') and not self.ton_bt_df.empty else _get_df_local("ton_bt")
+            df_tk = pd.DataFrame() if self._is_cleared('tk') else (self.tk_df if hasattr(self, 'tk_df') and not self.tk_df.empty else _get_df_local("tk"))
+            df_bt = pd.DataFrame() if self._is_cleared('bt') else (self.bt_df if hasattr(self, 'bt_df') and not self.bt_df.empty else _get_df_local("bt"))
+            df_ton_tk = pd.DataFrame() if self._is_cleared('ton_tk') else (self.ton_tk_df if hasattr(self, 'ton_tk_df') and not self.ton_tk_df.empty else _get_df_local("ton_tk"))
+            df_ton_bt = pd.DataFrame() if self._is_cleared('ton_bt') else (self.ton_bt_df if hasattr(self, 'ton_bt_df') and not self.ton_bt_df.empty else _get_df_local("ton_bt"))
             df_lt = self.lt_df if hasattr(self, 'lt_df') and not self.lt_df.empty else _get_df_local("lt")
-            df_cll30n = self.cll30n_df if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else _get_df_local("cll30n")
-            df_kh_cls = self.kh_cls_df if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else _get_df_local("kh_cls")
+            df_cll30n = pd.DataFrame() if self._is_cleared('cll30n') else (self.cll30n_df if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else _get_df_local("cll30n"))
+            df_kh_cls = pd.DataFrame() if self._is_cleared('kh_cls') else (self.kh_cls_df if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else _get_df_local("kh_cls"))
 
             # kh_cls & cll30n are import-only. On cold start (no local pickle), fall back to Supabase.
             if df_cll30n.empty and not self._is_cleared('cll30n'):
@@ -2368,6 +2372,9 @@ class KPIEngine:
             ("ton_tk", "ton_tk.pkl.gz", "ton_tk_df"),
             ("ton_bt", "ton_bt.pkl.gz", "ton_bt_df")
         ]:
+            if self._is_cleared(target):
+                setattr(self, attr, pd.DataFrame())
+                continue
             df = getattr(self, attr, pd.DataFrame())
             if (df is None or df.empty) and (CACHE_DIR / cache_name).exists():
                 try:
@@ -2379,12 +2386,12 @@ class KPIEngine:
         return {
             "ok": True,
             "counts": {
-                "kh_cls": len(getattr(self, 'kh_cls_df', pd.DataFrame())),
-                "cll30n": len(getattr(self, 'cll30n_df', pd.DataFrame())),
-                "tk": len(getattr(self, 'tk_df', pd.DataFrame())),
-                "bt": len(getattr(self, 'bt_df', pd.DataFrame())),
-                "ton_tk": len(getattr(self, 'ton_tk_df', pd.DataFrame())),
-                "ton_bt": len(getattr(self, 'ton_bt_df', pd.DataFrame()))
+                "kh_cls": 0 if self._is_cleared('kh_cls') else len(getattr(self, 'kh_cls_df', pd.DataFrame())),
+                "cll30n": 0 if self._is_cleared('cll30n') else len(getattr(self, 'cll30n_df', pd.DataFrame())),
+                "tk": 0 if self._is_cleared('tk') else len(getattr(self, 'tk_df', pd.DataFrame())),
+                "bt": 0 if self._is_cleared('bt') else len(getattr(self, 'bt_df', pd.DataFrame())),
+                "ton_tk": 0 if self._is_cleared('ton_tk') else len(getattr(self, 'ton_tk_df', pd.DataFrame())),
+                "ton_bt": 0 if self._is_cleared('ton_bt') else len(getattr(self, 'ton_bt_df', pd.DataFrame()))
             }
         }
 
