@@ -107,6 +107,15 @@ def trigger_sync(background_tasks: BackgroundTasks):
     background_tasks.add_task(engine.sync_live_data)
     return {"status": "started", "message": "Đã bắt đầu đồng bộ dữ liệu mới nhất!"}
 
+@app.get("/api/kpi/sync/status")
+def get_sync_status():
+    """Poll this endpoint to check if a background sync is still running."""
+    return {
+        "is_syncing": engine.is_syncing,
+        "last_sync_time": engine.last_sync_time,
+        "sync_error": engine.sync_error
+    }
+
 # =========================================================================
 # LỊCH TRỰC API ENDPOINTS
 # =========================================================================

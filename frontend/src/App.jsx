@@ -884,6 +884,15 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
+  // Global app initialization loading state (splash screen)
+  const [appInitializing, setAppInitializing] = useState(true);
+  const appInitRef = useRef({ optionsDone: false, reportDone: false });
+
+  const _checkAppInitDone = () => {
+    if (appInitRef.current.optionsDone && appInitRef.current.reportDone) {
+      setAppInitializing(false);
+    }
+  };
 
   // Sorting & Pagination
   const [orderBy, setOrderBy] = useState('total_dung_hen_pct');
@@ -1521,11 +1530,14 @@ export default function App() {
       setOptions(res.data);
     } catch (err) {
       console.error("Failed to fetch options:", err);
+    } finally {
+      appInitRef.current.optionsDone = true;
+      _checkAppInitDone();
     }
   };
 
-  // Fetch KPI Report
-  const fetchReport = async () => {
+  // Fetch KPI Report (with auto-retry on transient error)
+  const fetchReport = async (retryCount = 0) => {
     setLoading(true);
     setError(null);
     try {
@@ -1540,9 +1552,16 @@ export default function App() {
       setReportData(res.data);
     } catch (err) {
       console.error("Failed to fetch report:", err);
+      if (retryCount < 2) {
+        // Auto-retry up to 2 times with 1.5s delay (handles cold-start / transient errors)
+        setTimeout(() => fetchReport(retryCount + 1), 1500);
+        return;
+      }
       setError("Không thể tải dữ liệu báo cáo KPI. Vui lòng thử lại!");
     } finally {
       setLoading(false);
+      appInitRef.current.reportDone = true;
+      _checkAppInitDone();
     }
   };
 
@@ -1674,21 +1693,39 @@ export default function App() {
     }
   };
 
-  // Trigger Live Data Sync
+  // Trigger Live Data Sync (with polling instead of fixed timeout)
   const handleTriggerSync = async () => {
     setSyncing(true);
     try {
       await axios.post(`${API_BASE}/sync`);
-      setTimeout(() => {
-        fetchOptions();
-        fetchReport();
-        if (currentNav === 'lich_truc') {
-          fetchLichTrucDashboard();
-        }
-        setSyncing(false);
-      }, 4000);
+      // Poll /api/kpi/sync/status every 2s until is_syncing === false (max 90s)
+      let waited = 0;
+      const maxWait = 90000;
+      const pollInterval = 2000;
+      await new Promise((resolve) => {
+        const poll = setInterval(async () => {
+          waited += pollInterval;
+          try {
+            const statusRes = await axios.get(`${API_BASE}/sync/status`);
+            if (!statusRes.data.is_syncing || waited >= maxWait) {
+              clearInterval(poll);
+              resolve();
+            }
+          } catch {
+            clearInterval(poll);
+            resolve();
+          }
+        }, pollInterval);
+      });
+      // After sync completes, refresh data
+      await fetchOptions();
+      await fetchReport();
+      if (currentNav === 'lich_truc') {
+        fetchLichTrucDashboard();
+      }
     } catch (err) {
       console.error("Sync error:", err);
+    } finally {
       setSyncing(false);
     }
   };
@@ -2638,6 +2675,65 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
+
+      {/* ========== GLOBAL APP INITIALIZING SPLASH SCREEN ========== */}
+      {appInitializing && (
+        <Box sx={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999,
+          background: 'linear-gradient(135deg, #0d47a1 0%, #1565c0 40%, #283593 100%)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3
+        }}>
+          {/* Animated background circles */}
+          <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+            {[...Array(5)].map((_, i) => (
+              <Box key={i} sx={{
+                position: 'absolute', borderRadius: '50%',
+                background: 'rgba(255,255,255,0.05)',
+                width: `${120 + i * 80}px`, height: `${120 + i * 80}px`,
+                top: `${10 + i * 12}%`, left: `${5 + i * 18}%`,
+                animation: `pulse ${2 + i * 0.4}s ease-in-out infinite alternate`
+              }} />
+            ))}
+          </Box>
+
+          {/* Logo */}
+          <Box component="img"
+            src={LOGO_URL}
+            alt="FPT Telecom"
+            sx={{ height: 52, filter: 'brightness(0) invert(1)', opacity: 0.95, mb: 1 }}
+            onError={(e) => { e.target.style.display = 'none'; }}
+          />
+
+          {/* Title */}
+          <Typography variant="h5" sx={{
+            color: '#fff', fontWeight: 700, letterSpacing: 1,
+            textShadow: '0 2px 12px rgba(0,0,0,0.3)', textAlign: 'center', px: 2
+          }}>
+            Dashboard KPI SG01
+          </Typography>
+
+          {/* Spinner */}
+          <CircularProgress size={48} thickness={3} sx={{ color: 'rgba(255,255,255,0.85)', mt: 1 }} />
+
+          {/* Loading text */}
+          <Typography sx={{ color: 'rgba(255,255,255,0.8)', fontSize: 14, fontWeight: 500 }}>
+            Đang tải dữ liệu từ máy chủ...
+          </Typography>
+
+          {/* Branding */}
+          <Typography sx={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, position: 'absolute', bottom: 24 }}>
+            FPT Telecom SG01 • KPI Management System
+          </Typography>
+
+          <style>{`
+            @keyframes pulse {
+              from { transform: scale(1); opacity: 0.04; }
+              to   { transform: scale(1.15); opacity: 0.12; }
+            }
+          `}</style>
+        </Box>
+      )}
+
       <Box sx={{ display: 'flex', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
         
         {/* DESKTOP SIDEBAR */}

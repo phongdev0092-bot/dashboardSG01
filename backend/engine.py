@@ -44,6 +44,9 @@ class KPIEngine:
         self.lt_history = []
         self.lt_snapshot_map = {}
         self.admin_users_df = pd.DataFrame()
+        # Tracks datasets that were manually cleared (so auto-sync won't overwrite them)
+        self._manually_cleared_datasets: set = set()
+        self._load_cleared_flags()
         # Auto-load .env file if present
         for env_path in [Path(__file__).parent / ".env", Path(__file__).parent.parent / ".env"]:
             if env_path.exists():
@@ -109,6 +112,43 @@ class KPIEngine:
             pass
         self._load_lt_history_and_snapshot()
         self.load_cache_or_fetch()
+
+    # -------------------------------------------------------------------------
+    # Cleared-dataset flag helpers
+    # -------------------------------------------------------------------------
+    def _cleared_flags_path(self):
+        return CACHE_DIR / "cleared_datasets.json"
+
+    def _load_cleared_flags(self):
+        try:
+            p = self._cleared_flags_path()
+            if p.exists():
+                with open(p, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self._manually_cleared_datasets = set(data.get('cleared', []))
+                    print(f"Loaded cleared-dataset flags: {self._manually_cleared_datasets}", flush=True)
+        except Exception:
+            self._manually_cleared_datasets = set()
+
+    def _save_cleared_flags(self):
+        try:
+            CACHE_DIR.mkdir(exist_ok=True, parents=True)
+            p = self._cleared_flags_path()
+            with open(p, 'w', encoding='utf-8') as f:
+                json.dump({'cleared': list(self._manually_cleared_datasets)}, f)
+        except Exception as e:
+            print(f"Warning: could not save cleared-dataset flags: {e}", flush=True)
+
+    def _set_cleared_flag(self, name: str):
+        self._manually_cleared_datasets.add(name)
+        self._save_cleared_flags()
+
+    def _clear_cleared_flag(self, name: str):
+        self._manually_cleared_datasets.discard(name)
+        self._save_cleared_flags()
+
+    def _is_cleared(self, name: str) -> bool:
+        return name in self._manually_cleared_datasets
 
     def get_db_engine(self):
         db_url = getattr(self, 'DATABASE_URL', '') or os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip()
@@ -596,25 +636,27 @@ class KPIEngine:
         cll30n_path, cll30n_df = _get_df("cll30n")
         kh_cls_path, kh_cls_df = _get_df("kh_cls")
 
-        sp_ton_tk = self._load_df_from_supabase("ton_tk")
-        if not sp_ton_tk.empty:
-            ton_tk_df = sp_ton_tk
+        # Load from Supabase – only for TK, BT, kh_cls, cll30n (import-managed datasets)
+        # lt, ton_tk, ton_bt use Google Sheet as source of truth → no Supabase loading
+        if not self._is_cleared('tk'):
+            sp_tk = self._load_df_from_supabase("tk")
+            if not sp_tk.empty:
+                tk_df = sp_tk
 
-        sp_tk = self._load_df_from_supabase("tk")
-        if not sp_tk.empty:
-            tk_df = sp_tk
+        if not self._is_cleared('bt'):
+            sp_bt = self._load_df_from_supabase("bt")
+            if not sp_bt.empty:
+                bt_df = sp_bt
 
-        sp_bt = self._load_df_from_supabase("bt")
-        if not sp_bt.empty:
-            bt_df = sp_bt
+        if not self._is_cleared('kh_cls'):
+            sp_kh_cls = self._load_df_from_supabase("kh_cls")
+            if not sp_kh_cls.empty:
+                kh_cls_df = sp_kh_cls
 
-        sp_kh_cls = self._load_df_from_supabase("kh_cls")
-        if not sp_kh_cls.empty:
-            kh_cls_df = sp_kh_cls
-
-        sp_cll30n = self._load_df_from_supabase("cll30n")
-        if not sp_cll30n.empty:
-            cll30n_df = sp_cll30n
+        if not self._is_cleared('cll30n'):
+            sp_cll30n = self._load_df_from_supabase("cll30n")
+            if not sp_cll30n.empty:
+                cll30n_df = sp_cll30n
 
         if not hr_df.empty and not tk_df.empty and not bt_df.empty:
             try:
@@ -705,33 +747,12 @@ class KPIEngine:
             except Exception as e_bt:
                 print(f"Warning: BT sheet fetch failed: {e_bt}", flush=True)
 
-            # 3. KH Có Cls (kh_cls): Sheet ID 1pDv3KT3OlgIDGcjBtwl0TNHxn2shjkMABISwVRC2d5U (GID 0)
-            try:
-                print("Fetching live KH Có Cls data from Sheet...", flush=True)
-                res_kh_cls = requests.get(self._get_kh_cls_sheet_url(), timeout=30)
-                if res_kh_cls.status_code == 200 and not res_kh_cls.text.strip().startswith('<!DOCTYPE'):
-                    df_kh_cls_fetched = self._read_any_dataframe(res_kh_cls.content, "kh_cls.csv")
-                    if not df_kh_cls_fetched.empty:
-                        df_kh_cls_processed = self._process_cll30n_df(df_kh_cls_fetched)
-                        if not df_kh_cls_processed.empty:
-                            df_kh_cls = df_kh_cls_processed
-            except Exception as e_kh_cls:
-                print(f"Warning: KH Có Cls sheet fetch failed: {e_kh_cls}", flush=True)
+            # kh_cls and cll30n are IMPORT-ONLY datasets.
+            # They must NOT be auto-fetched from Google Sheets during sync.
+            # Their data is preserved from the last manual import and saved to Supabase by import operations.
+            # df_kh_cls and df_cll30n already set from self.kh_cls_df / self.cll30n_df above.
 
-            # 4. CLL30N (cll30n): Sheet ID 1iNzByTpTVARldj9ggWyv-FKe_vzpeDKyHeYZt4vYU94 (GID 0)
-            try:
-                print("Fetching live CLL30N data from Sheet...", flush=True)
-                res_cll30n = requests.get(self._get_cll30n_sheet_url(), timeout=30)
-                if res_cll30n.status_code == 200 and not res_cll30n.text.strip().startswith('<!DOCTYPE'):
-                    df_cll30n_fetched = self._read_any_dataframe(res_cll30n.content, "cll30n.csv")
-                    if not df_cll30n_fetched.empty:
-                        df_cll30n_processed = self._process_cll30n_df(df_cll30n_fetched)
-                        if not df_cll30n_processed.empty:
-                            df_cll30n = df_cll30n_processed
-            except Exception as e_cll30n:
-                print(f"Warning: CLL30N sheet fetch failed: {e_cll30n}", flush=True)
-
-            # Fetch live Lịch Trực, Tồn TK, Tồn BT from designated Google Sheets (GIỮ NGUYÊN UNTOUCHED)
+            # Fetch live Lịch Trực from Google Sheet (unchanged – no Supabase)
             try:
                 print("Fetching live Lịch Trực data from Sheet...", flush=True)
                 res_lt = requests.get(self._get_lt_sheet_url(), timeout=30)
@@ -743,6 +764,7 @@ class KPIEngine:
             except Exception as e_lt:
                 print(f"Warning: Lịch Trực sheet fetch failed: {e_lt}", flush=True)
 
+            # Fetch live Tồn TK from Google Sheet (unchanged – no Supabase)
             try:
                 print("Fetching live Tồn TK data from Sheet...", flush=True)
                 res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=30)
@@ -754,6 +776,7 @@ class KPIEngine:
             except Exception as e_ton_tk:
                 print(f"Warning: Tồn TK sheet fetch failed: {e_ton_tk}", flush=True)
 
+            # Fetch live Tồn BT from Google Sheet (unchanged – no Supabase)
             try:
                 print("Fetching live Tồn BT data from Sheet...", flush=True)
                 res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=30)
@@ -789,15 +812,13 @@ class KPIEngine:
             self._save_pickle(df_tk, "tk.pkl.gz")
             self._save_pickle(df_bt, "bt.pkl.gz")
 
-            # Save to Supabase PostgreSQL Database automatically
-            if not df_tk.empty:
+            # Save to Supabase (TK and BT only – fetched from Sheet during sync)
+            # kh_cls and cll30n: already saved to Supabase by import operations; no re-save needed here
+            # lt, ton_tk, ton_bt: Google Sheet is source of truth – no Supabase persistence
+            if not df_tk.empty and not self._is_cleared('tk'):
                 self._save_df_to_supabase(df_tk, "tk")
-            if not df_bt.empty:
+            if not df_bt.empty and not self._is_cleared('bt'):
                 self._save_df_to_supabase(df_bt, "bt")
-            if not df_kh_cls.empty:
-                self._save_df_to_supabase(df_kh_cls, "kh_cls")
-            if not df_cll30n.empty:
-                self._save_df_to_supabase(df_cll30n, "cll30n")
 
             self.hr_df = df_hr
             self.tk_df = df_tk
@@ -1819,7 +1840,7 @@ class KPIEngine:
             new_df = pd.DataFrame([new_row])
             self.lt_df = pd.concat([self.lt_df, new_df], ignore_index=True)
         
-        self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
+        self._save_pickle(self.lt_df, "lt.pkl.gz")
         self._snapshot_and_detect_lt_changes(source_label="Thêm mới")
         return {"ok": True}
 
@@ -1851,7 +1872,7 @@ class KPIEngine:
         df_idx = row_number - 2
         if 0 <= df_idx < len(self.lt_df):
             self.lt_df = self.lt_df.drop(self.lt_df.index[df_idx]).reset_index(drop=True)
-            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
+            self._save_pickle(self.lt_df, "lt.pkl.gz")
             self._snapshot_and_detect_lt_changes(source_label="Xóa dòng")
             return {"ok": True}
         return {"ok": False, "error": "Invalid row index"}
@@ -1874,7 +1895,7 @@ class KPIEngine:
                 self.lt_df = pd.DataFrame([header] + new_rows)
             else:
                 self.lt_df = pd.concat([self.lt_df, new_df], ignore_index=True)
-            self.lt_df.to_pickle(CACHE_DIR / "lt.pkl.gz")
+            self._save_pickle(self.lt_df, "lt.pkl.gz")
             self._snapshot_and_detect_lt_changes(source_label="Import")
             return {"ok": True, "count": len(new_rows)}
         return {"ok": False, "error": "No valid rows to import"}
@@ -2448,6 +2469,7 @@ class KPIEngine:
                     merged_cls = pd.concat([existing_cls, inc_cls], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
                 self._save_pickle(merged_cls, "kh_cls.pkl.gz")
                 self.kh_cls_df = merged_cls
+                self._clear_cleared_flag('kh_cls')
                 self._async_sync_after_import("kh_cls", merged_cls)
 
                 # Tử số: cll30n_df contains rows from df_inc_processed where is_cll30n == True
@@ -2463,6 +2485,7 @@ class KPIEngine:
                     merged_cll = pd.concat([existing_cll, inc_cll], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
                 self._save_pickle(merged_cll, "cll30n.pkl.gz")
                 self.cll30n_df = merged_cll
+                self._clear_cleared_flag('cll30n')
                 self._async_sync_after_import("cll30n", merged_cll)
                 db_total = len(merged_cls)
 
@@ -2530,6 +2553,7 @@ class KPIEngine:
             merged_df = self._enrich_tk_df(merged_df)
             self._save_pickle(merged_df, "tk.pkl.gz")
             self.tk_df = merged_df
+            self._clear_cleared_flag('tk')
             self._async_sync_after_import("tk", merged_df)
             db_total = len(merged_df)
 
@@ -2580,8 +2604,8 @@ class KPIEngine:
             merged_df = self._enrich_bt_df(merged_df)
             self._save_pickle(merged_df, "bt.pkl.gz")
             self.bt_df = merged_df
+            self._clear_cleared_flag('bt')
             self._async_sync_after_import("bt", merged_df)
-            db_total = len(merged_df)
             db_total = len(merged_df)
 
         elif target == "ton_tk":
@@ -2637,6 +2661,7 @@ class KPIEngine:
             self._save_pickle(merged_df, "ton_tk.pkl.gz")
             self.ton_tk_df = merged_df
             db_total = len(merged_df)
+            # ton_tk uses Google Sheet as source of truth; no Supabase persistence needed
 
         elif target == "ton_bt":
             target_label = "Tồn Bảo Trì (BT)"
@@ -2691,6 +2716,7 @@ class KPIEngine:
             self._save_pickle(merged_df, "ton_bt.pkl.gz")
             self.ton_bt_df = merged_df
             db_total = len(merged_df)
+            # ton_bt uses Google Sheet as source of truth; no Supabase persistence needed
         else:
             return {"ok": False, "error": "Bảng dữ liệu mục tiêu không hợp lệ."}
 
@@ -2745,32 +2771,33 @@ class KPIEngine:
                     print(f"Warning dropping Supabase table '{tbl}': {e}", flush=True)
 
         if target_clean == "kh_cls":
+            # Only clear kh_cls; cll30n is an independent dataset and must NOT be auto-cleared
             self.kh_cls_df = pd.DataFrame()
-            self.cll30n_df = pd.DataFrame()
             _safe_remove_cache("kh_cls.pkl.gz")
-            _safe_remove_cache("cll30n.pkl.gz")
             _drop_sp_table("kh_cls")
-            _drop_sp_table("cll30n")
             self._push_dataset_to_google_sheet("kh_cls", pd.DataFrame())
-            self._push_dataset_to_google_sheet("cll30n", pd.DataFrame())
-            label = "KH Có Cls & CLL30N (Data Base)"
+            self._set_cleared_flag('kh_cls')
+            label = "KH Có Cls (Data Base)"
         elif target_clean == "cll30n":
             self.cll30n_df = pd.DataFrame()
             _safe_remove_cache("cll30n.pkl.gz")
             _drop_sp_table("cll30n")
             self._push_dataset_to_google_sheet("cll30n", pd.DataFrame())
+            self._set_cleared_flag('cll30n')
             label = "CLL30N (Data Base)"
         elif target_clean == "tk":
             self.tk_df = pd.DataFrame()
             _safe_remove_cache("tk.pkl.gz")
             _drop_sp_table("tk")
             self._push_dataset_to_google_sheet("tk", pd.DataFrame())
+            self._set_cleared_flag('tk')
             label = "Data Triển Khai (TK)"
         elif target_clean == "bt":
             self.bt_df = pd.DataFrame()
             _safe_remove_cache("bt.pkl.gz")
             _drop_sp_table("bt")
             self._push_dataset_to_google_sheet("bt", pd.DataFrame())
+            self._set_cleared_flag('bt')
             label = "Data Bảo Trì (BT)"
         elif target_clean == "ton_tk":
             self.ton_tk_df = pd.DataFrame()
@@ -2778,6 +2805,7 @@ class KPIEngine:
             _safe_remove_cache("ton_tk.pkl.gz")
             self._sync_ton_dataset_to_webapp("ton_tk", None)
             _drop_sp_table("ton_tk")
+            self._set_cleared_flag('ton_tk')
             label = "Tồn Triển Khai"
         elif target_clean == "ton_bt":
             self.ton_bt_df = pd.DataFrame()
@@ -2785,6 +2813,7 @@ class KPIEngine:
             _safe_remove_cache("ton_bt.pkl.gz")
             self._sync_ton_dataset_to_webapp("ton_bt", None)
             _drop_sp_table("ton_bt")
+            self._set_cleared_flag('ton_bt')
             label = "Tồn Bảo Trì"
         elif target_clean == "all":
             self.kh_cls_df = pd.DataFrame()
@@ -2802,6 +2831,9 @@ class KPIEngine:
             for tbl in ["kh_cls", "cll30n", "tk", "bt", "ton_tk", "ton_bt"]:
                 _drop_sp_table(tbl)
                 self._push_dataset_to_google_sheet(tbl, pd.DataFrame())
+            # Set cleared flags for all datasets so auto-sync won't refetch
+            for ds in ['kh_cls', 'cll30n', 'tk', 'bt', 'ton_tk', 'ton_bt']:
+                self._set_cleared_flag(ds)
             label = "TẤT CẢ DỮ LIỆU DATA BASE"
         else:
             return {"ok": False, "error": "Dataset mục tiêu không hợp lệ."}
