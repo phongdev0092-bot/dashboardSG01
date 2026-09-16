@@ -176,6 +176,13 @@ class KPIEngine:
                         print(f"Warning: Failed to save to Supabase table '{table_name}': {e}", flush=True)
                         return False
 
+    # Column names that are stored with underscores natively (not space-replaced)
+    _NATIVE_UNDERSCORE_COLS = {
+        'is_gsafe', 'is_swap', 'dung_hen', 'dt_complete', 'dt_created', 'sort_dt',
+        'date_complete', 'rt_hours', 'tinh_trang_dau_vao', 'huong_xu_ly', 'so_lan_lap',
+        'is_clps_7n_bt', 'is_cll30n', 'tg_hoan_tat', 'ngay_hoan_tat'
+    }
+
     def _load_df_from_supabase(self, table_name: str) -> pd.DataFrame:
         engine = self.get_db_engine()
         if engine is None:
@@ -184,10 +191,24 @@ class KPIEngine:
             df = pd.read_sql(f'SELECT * FROM "{table_name}"', engine)
             if df is not None and not df.empty:
                 print(f"Successfully loaded {len(df)} rows from Supabase table '{table_name}'", flush=True)
+                # Restore original column names: undo the space->underscore replacement done during save
+                # Only rename columns that are NOT natively underscore-named
+                new_cols = []
+                for c in df.columns:
+                    if c in self._NATIVE_UNDERSCORE_COLS:
+                        new_cols.append(c)
+                    else:
+                        new_cols.append(c.replace('_', ' '))
+                df.columns = new_cols
+                # Normalize datetime columns to pandas datetime64 to avoid type mismatch
+                for dt_col in ['dt_complete', 'dt_created', 'sort_dt', 'date_complete']:
+                    if dt_col in df.columns:
+                        df[dt_col] = pd.to_datetime(df[dt_col], errors='coerce')
                 return df
         except Exception as e:
             print(f"Info: Could not load table '{table_name}' from Supabase: {e}", flush=True)
         return pd.DataFrame()
+
 
     def set_database_url(self, url: str):
         url = (url or '').strip()
@@ -838,7 +859,7 @@ class KPIEngine:
         if not s_val or s_val.lower() in ('none', 'null', 'nan', 'undefined', 'query'):
             return None
         try:
-            return pd.to_datetime(s_val).date()
+            return pd.to_datetime(s_val)  # Return Timestamp, compatible with both datetime64 and date columns
         except Exception:
             return None
 
@@ -863,6 +884,12 @@ class KPIEngine:
         tk = self.tk_df.copy()
         bt = self.bt_df.copy()
 
+        # Normalize date_complete to datetime64 (handles both datetime.date from pickle and datetime64 from Supabase)
+        if 'date_complete' in tk.columns:
+            tk['date_complete'] = pd.to_datetime(tk['date_complete'], errors='coerce')
+        if 'date_complete' in bt.columns:
+            bt['date_complete'] = pd.to_datetime(bt['date_complete'], errors='coerce')
+
         s_d = self._parse_date_param(start_date)
         e_d = self._parse_date_param(end_date)
 
@@ -878,6 +905,7 @@ class KPIEngine:
         cls = self.kh_cls_df.copy() if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else pd.DataFrame()
 
         if not cls.empty and 'date_complete' in cls.columns:
+            cls['date_complete'] = pd.to_datetime(cls['date_complete'], errors='coerce')
             if s_d:
                 cls = cls[cls['date_complete'] >= s_d]
             if e_d:
@@ -911,6 +939,7 @@ class KPIEngine:
         # Filter CLL30N dataset by date range (derived from Column AC: Tg hoàn tất CLPS)
         cll = self.cll30n_df.copy() if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
         if not cll.empty and 'date_complete' in cll.columns:
+            cll['date_complete'] = pd.to_datetime(cll['date_complete'], errors='coerce')
             if s_d:
                 cll = cll[cll['date_complete'] >= s_d]
             if e_d:
@@ -1014,7 +1043,8 @@ class KPIEngine:
         clps7n_status = 'PASS' if clps7n_pct <= 3.0 else 'FAIL'
 
         # Swap breakdown by transaction type
-        swap_counts = tk_swap['Loại giao dịch'].value_counts().to_dict()
+        _loai_col = 'Loại giao dịch' if 'Loại giao dịch' in tk_swap.columns else None
+        swap_counts = tk_swap[_loai_col].value_counts().to_dict() if _loai_col and not tk_swap.empty else {}
 
         # 3. Employee-level Aggregations
         active_accs = set(tk['Nhân viên'].dropna().unique()) | set(bt['Nhân viên'].dropna().unique())
@@ -1049,10 +1079,11 @@ class KPIEngine:
                 'total': len(group)
             }
 
+        _loai_col2 = 'Loại giao dịch' if not tk_swap.empty and 'Loại giao dịch' in tk_swap.columns else None
         tk_s_dict = {
             acc: {
                 'total': len(group),
-                'breakdown': group['Loại giao dịch'].value_counts().to_dict()
+                'breakdown': group[_loai_col2].value_counts().to_dict() if _loai_col2 else {}
             } for acc, group in tk_swap_grp
         }
 
@@ -1265,6 +1296,12 @@ class KPIEngine:
         tk = self.tk_df[self.tk_df['Nhân viên'] == acc].copy()
         bt = self.bt_df[self.bt_df['Nhân viên'] == acc].copy()
 
+        # Normalize date_complete to datetime64 (handles both datetime.date from pickle and datetime64 from Supabase)
+        if 'date_complete' in tk.columns:
+            tk['date_complete'] = pd.to_datetime(tk['date_complete'], errors='coerce')
+        if 'date_complete' in bt.columns:
+            bt['date_complete'] = pd.to_datetime(bt['date_complete'], errors='coerce')
+
         s_d = self._parse_date_param(start_date)
         e_d = self._parse_date_param(end_date)
 
@@ -1324,6 +1361,7 @@ class KPIEngine:
         cll = self.cll30n_df[self.cll30n_df['Nhân viên'] == acc].copy() if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
 
         if not cll.empty and 'date_complete' in cll.columns:
+            cll['date_complete'] = pd.to_datetime(cll['date_complete'], errors='coerce')
             if s_d:
                 cll = cll[cll['date_complete'] >= s_d]
             if e_d:
