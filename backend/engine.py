@@ -571,15 +571,14 @@ class KPIEngine:
             return False
 
     def _async_sync_after_import(self, target_name: str, df_target: pd.DataFrame):
-        def _bg_task():
-            try:
-                self._save_df_to_supabase(df_target, target_name)
-                self._push_dataset_to_google_sheet(target_name, df_target)
-            except Exception as e:
-                print(f"Background post-import sync warning for '{target_name}': {e}", flush=True)
-
-        import threading
-        threading.Thread(target=_bg_task, daemon=True).start()
+        try:
+            self._save_df_to_supabase(df_target, target_name)
+        except Exception as e:
+            print(f"Post-import Supabase save warning for '{target_name}': {e}", flush=True)
+        try:
+            self._push_dataset_to_google_sheet(target_name, df_target)
+        except Exception as e:
+            print(f"Post-import Google Sheet push warning for '{target_name}': {e}", flush=True)
 
 
     def _is_custom_ton_imported(self, name: str) -> bool:
@@ -2779,14 +2778,15 @@ class KPIEngine:
                         pass
 
         target_clean = str(target).strip().lower()
-        engine_db = self.get_db_engine()
         def _drop_sp_table(tbl):
+            engine_db = self.get_db_engine()
             if engine_db:
                 try:
                     from sqlalchemy import text
                     with engine_db.connect() as conn:
-                        conn.execute(text(f'DROP TABLE IF EXISTS "{tbl}"'))
+                        conn.execute(text(f'DROP TABLE IF EXISTS "{tbl}" CASCADE'))
                         conn.commit()
+                    print(f"Successfully dropped Supabase table '{tbl}'", flush=True)
                 except Exception as e:
                     print(f"Warning dropping Supabase table '{tbl}': {e}", flush=True)
 
