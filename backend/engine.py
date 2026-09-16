@@ -716,6 +716,26 @@ class KPIEngine:
             df_lt = self.lt_df if hasattr(self, 'lt_df') and not self.lt_df.empty else _get_df_local("lt")
             df_cll30n = self.cll30n_df if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else _get_df_local("cll30n")
             df_kh_cls = self.kh_cls_df if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else _get_df_local("kh_cls")
+
+            # kh_cls & cll30n are import-only. On cold start (no local pickle), fall back to Supabase.
+            if df_cll30n.empty and not self._is_cleared('cll30n'):
+                try:
+                    sp = self._load_df_from_supabase("cll30n")
+                    if not sp.empty:
+                        df_cll30n = sp
+                        print(f"Loaded cll30n from Supabase ({len(df_cll30n)} rows) as fallback.", flush=True)
+                except Exception as e:
+                    print(f"Warning: cll30n Supabase fallback failed: {e}", flush=True)
+
+            if df_kh_cls.empty and not self._is_cleared('kh_cls'):
+                try:
+                    sp = self._load_df_from_supabase("kh_cls")
+                    if not sp.empty:
+                        df_kh_cls = sp
+                        print(f"Loaded kh_cls from Supabase ({len(df_kh_cls)} rows) as fallback.", flush=True)
+                except Exception as e:
+                    print(f"Warning: kh_cls Supabase fallback failed: {e}", flush=True)
+
             # Fetch live data from designated Google Sheets for Dashboard KPIs & Lịch trực
             try:
                 print("Fetching live HR data from Sheet...", flush=True)
