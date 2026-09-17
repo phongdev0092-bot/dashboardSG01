@@ -38,6 +38,32 @@ def get_filter_options():
         "sync_error": engine.sync_error
     }
 
+import math
+import pandas as pd
+import numpy as np
+
+def _sanitize_for_json(obj):
+    if obj is None:
+        return None
+    elif isinstance(obj, bool):
+        return obj
+    elif isinstance(obj, (int, np.integer)):
+        return int(obj)
+    elif isinstance(obj, (float, np.floating)):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, dict):
+        return {str(k): _sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple, set)):
+        return [_sanitize_for_json(v) for v in obj]
+    elif isinstance(obj, (str, bytes)):
+        return obj if isinstance(obj, str) else obj.decode('utf-8', errors='ignore')
+    elif pd.isna(obj):
+        return None
+    else:
+        return str(obj)
+
 @app.get("/api/kpi/report")
 def get_kpi_report(
     start_date: Optional[str] = Query(default=None),
@@ -49,16 +75,25 @@ def get_kpi_report(
     search: Optional[str] = Query(default=None)
 ):
     try:
+        s_date = start_date if isinstance(start_date, str) else None
+        e_date = end_date if isinstance(end_date, str) else None
+        t_lead = team_lead if isinstance(team_lead, str) else None
+        reg = region if isinstance(region, str) else None
+        part = partner if isinstance(partner, str) else None
+        blk = block if isinstance(block, str) else None
+        srch = search if isinstance(search, str) else None
+
         report = engine.get_kpi_report(
-            start_date=start_date,
-            end_date=end_date,
-            team_lead=team_lead,
-            region=region,
-            partner=partner,
-            block=block,
-            search=search
+            start_date=s_date,
+            end_date=e_date,
+            team_lead=t_lead,
+            region=reg,
+            partner=part,
+            block=blk,
+            search=srch
         )
-        return report
+        clean_report = _sanitize_for_json(report)
+        return JSONResponse(content=clean_report)
     except Exception as e:
         import traceback
         trace = traceback.format_exc()

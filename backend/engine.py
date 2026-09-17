@@ -847,7 +847,7 @@ class KPIEngine:
                 print("Fetching live HR data from Sheet...", flush=True)
                 res_hr = requests.get(self._get_sheet_url(GIDS['HR']), timeout=20)
                 if res_hr.status_code == 200 and not res_hr.text.strip().startswith('<!DOCTYPE'):
-                    df_hr = pd.read_csv(io.BytesIO(res_hr.content), encoding='utf-8', dtype=str)
+                    df_hr = self._read_any_dataframe(res_hr.content, "hr.csv")
             except Exception as e_hr:
                 print(f"Warning: HR sheet fetch failed: {e_hr}", flush=True)
 
