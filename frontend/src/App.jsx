@@ -48,6 +48,7 @@ import {
   RadioGroup,
   Radio,
   Menu,
+  Switch,
   useMediaQuery,
   useTheme
 } from '@mui/material';
@@ -109,6 +110,8 @@ import {
 import axios from 'axios';
 import * as XLSX from 'xlsx';
 import theme from './theme';
+import SOPLoadingScreen from './components/SOPLoadingScreen';
+import { DEFAULT_SOP_SLIDES } from './config/sopSlides';
 
 const API_BASE = '/api/kpi';
 const LOGO_URL = 'https://management.mypt.vn/images/FPT_Telecom_logo.svg';
@@ -823,6 +826,206 @@ const AddLichTrucRowModal = React.memo(({ open, onClose, onSubmit }) => {
   );
 });
 
+// Isolated Admin Slide Edit / Add Modal (Local State Buffering)
+const AdminSlideEditModal = React.memo(({
+  open,
+  onClose,
+  initialData,
+  onSave
+}) => {
+  const [formData, setFormData] = useState({
+    tag: '',
+    category: '',
+    title: '',
+    target: '',
+    stepsText: '',
+    note: '',
+    badgeColor: '#2563eb',
+    icon: 'EngineeringOutlined',
+    is_active: true
+  });
+
+  useEffect(() => {
+    if (open) {
+      if (initialData) {
+        setFormData({
+          tag: initialData.tag || '',
+          category: initialData.category || '',
+          title: initialData.title || '',
+          target: initialData.target || '',
+          stepsText: Array.isArray(initialData.steps) ? initialData.steps.join('\n') : (initialData.stepsText || ''),
+          note: initialData.note || '',
+          badgeColor: initialData.badgeColor || '#2563eb',
+          icon: initialData.icon || 'EngineeringOutlined',
+          is_active: initialData.is_active !== false
+        });
+      } else {
+        setFormData({
+          tag: 'QUY TRÌNH MỚI',
+          category: 'Kỹ Thuật SG01',
+          title: '',
+          target: '',
+          stepsText: '1. Tiếp nhận phiếu và kiểm tra thông tin kỹ thuật.\n2. Khảo sát hiện trường và đo kiểm chuẩn thông số.\n3. Hướng dẫn khách hàng nghiệm thu và bàn giao chu đáo.',
+          note: '💡 Khuyến nghị: Tuân thủ đúng chuẩn thao tác kỹ thuật để triệt tiêu ca lặp!',
+          badgeColor: '#0284c7',
+          icon: 'EngineeringOutlined',
+          is_active: true
+        });
+      }
+    }
+  }, [open, initialData]);
+
+  const handleChange = (field, val) => {
+    setFormData(prev => ({ ...prev, [field]: val }));
+  };
+
+  const handleFormSubmit = () => {
+    if (!formData.title.trim()) {
+      alert("Vui lòng nhập Tiêu đề Slide!");
+      return;
+    }
+    const steps = formData.stepsText
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const gradientMap = {
+      '#7c3aed': 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+      '#0284c7': 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+      '#ea580c': 'linear-gradient(135deg, #ea580c 0%, #c2410c 100%)',
+      '#059669': 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+      '#d97706': 'linear-gradient(135deg, #d97706 0%, #b45309 100%)',
+      '#dc2626': 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)'
+    };
+
+    onSave({
+      ...formData,
+      steps,
+      colorGradient: gradientMap[formData.badgeColor] || `linear-gradient(135deg, ${formData.badgeColor} 0%, #1e293b 100%)`
+    });
+  };
+
+  if (!open) return null;
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ fontWeight: 800, background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>{initialData ? '✏️ Chỉnh Sửa Slide SOP' : '➕ Thêm Slide SOP / Quy Trình Mới'}</span>
+        <IconButton size="small" onClick={onClose}><CloseIcon /></IconButton>
+      </DialogTitle>
+      <DialogContent sx={{ p: 3, pt: 3 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+          <Grid container spacing={2}>
+            <Grid item xs={6}>
+              <TextField
+                fullWidth size="small" label="Nhãn / Tag (VD: CHẤT LƯỢNG, AN TOÀN)"
+                value={formData.tag}
+                onChange={(e) => handleChange('tag', e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                fullWidth size="small" label="Danh mục (VD: G-Safe, Kiểm soát CLL)"
+                value={formData.category}
+                onChange={(e) => handleChange('category', e.target.value)}
+              />
+            </Grid>
+          </Grid>
+
+          <TextField
+            fullWidth size="small" label="Tiêu Đề Slide *"
+            placeholder="vd: Quy Trình Triệt Tiêu CLL30N & Lặp Ca Bảo Trì"
+            value={formData.title}
+            onChange={(e) => handleChange('title', e.target.value)}
+          />
+
+          <TextField
+            fullWidth size="small" label="Chỉ Tiêu / Mục Tiêu KPI"
+            placeholder="vd: Chỉ tiêu: CLL30N <= 7.0% • CLPS 7N <= 3.0%"
+            value={formData.target}
+            onChange={(e) => handleChange('target', e.target.value)}
+          />
+
+          <Box>
+            <FormLabel sx={{ fontSize: '13px', fontWeight: 700, display: 'block', mb: 0.5, color: '#334155' }}>
+              Các Bước Quy Trình (Mỗi dòng là 1 bước)
+            </FormLabel>
+            <TextField
+              fullWidth
+              multiline
+              rows={5}
+              placeholder="1. Bước 1: Tiếp nhận...\n2. Bước 2: Khảo sát..."
+              value={formData.stepsText}
+              onChange={(e) => handleChange('stepsText', e.target.value)}
+            />
+          </Box>
+
+          <TextField
+            fullWidth size="small" label="Ghi Chú / Khuyến Nghị / Tip"
+            placeholder="vd: 💡 Bí quyết: Đo kiểm kỹ suy hao quang trước khi nghiệm thu..."
+            value={formData.note}
+            onChange={(e) => handleChange('note', e.target.value)}
+          />
+
+          <Grid container spacing={2}>
+            <Grid item xs={6}>
+              <TextField
+                select
+                fullWidth
+                size="small"
+                label="Biểu Tượng (Icon)"
+                value={formData.icon}
+                onChange={(e) => handleChange('icon', e.target.value)}
+              >
+                <MenuItem value="EngineeringOutlined">🛠️ Kỹ thuật viên (Engineering)</MenuItem>
+                <MenuItem value="SpeedOutlined">⚡ Tốc độ / Đúng hẹn (Speed)</MenuItem>
+                <MenuItem value="ShieldOutlined">🛡️ An toàn lao động (Shield)</MenuItem>
+                <MenuItem value="SentimentSatisfiedAltOutlined">😊 Trải nghiệm khách hàng (Happy)</MenuItem>
+                <MenuItem value="TipsAndUpdatesOutlined">💡 Mẹo & Chỉ số KPI (Tips)</MenuItem>
+              </TextField>
+            </Grid>
+
+            <Grid item xs={6}>
+              <TextField
+                select
+                fullWidth
+                size="small"
+                label="Màu Sắc Chủ Đạo"
+                value={formData.badgeColor}
+                onChange={(e) => handleChange('badgeColor', e.target.value)}
+              >
+                <MenuItem value="#7c3aed">🟣 Tím (Chất lượng / CLL)</MenuItem>
+                <MenuItem value="#0284c7">🔵 Xanh dương (Triển khai TK)</MenuItem>
+                <MenuItem value="#ea580c">🟠 Cam (An toàn G-Safe)</MenuItem>
+                <MenuItem value="#059669">🟢 Xanh lá (Khách hàng / CS)</MenuItem>
+                <MenuItem value="#d97706">🟡 Vàng hổ phách (Mẹo KPI)</MenuItem>
+                <MenuItem value="#dc2626">🔴 Đỏ (Cảnh báo / Khẩn)</MenuItem>
+              </TextField>
+            </Grid>
+          </Grid>
+
+          <FormControlLabel
+            control={
+              <Switch
+                checked={formData.is_active}
+                onChange={(e) => handleChange('is_active', e.target.checked)}
+                color="primary"
+              />
+            }
+            label={<Typography sx={{ fontSize: 14, fontWeight: 600 }}>Kích hoạt hiển thị trên màn hình tải (Active)</Typography>}
+          />
+        </Box>
+      </DialogContent>
+      <DialogActions sx={{ p: 2, background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
+        <Button onClick={onClose} variant="outlined" sx={{ borderRadius: 2 }}>Hủy</Button>
+        <Button onClick={handleFormSubmit} variant="contained" color="primary" startIcon={<SaveIcon />} sx={{ borderRadius: 2, px: 3, fontWeight: 700 }}>
+          Lưu Slide
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+});
+
 // Helper for default date calculation: First day of current month -> Yesterday (Today - 1)
 const getInitialDates = () => {
   const now = new Date();
@@ -886,13 +1089,20 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
-  // Global app initialization loading state (splash screen)
+  // Global app initialization loading state (SOP Showcase)
   const [appInitializing, setAppInitializing] = useState(true);
   const appInitRef = useRef({ optionsDone: false, reportDone: false });
+  const [loadingProgress, setLoadingProgress] = useState(12);
+  const [loadingStatusText, setLoadingStatusText] = useState("Đang kết nối cơ sở dữ liệu Supabase...");
+  const [loadingSlides, setLoadingSlides] = useState(DEFAULT_SOP_SLIDES);
 
   const _checkAppInitDone = () => {
     if (appInitRef.current.optionsDone && appInitRef.current.reportDone) {
-      setAppInitializing(false);
+      setLoadingProgress(100);
+      setLoadingStatusText("Hệ thống sẵn sàng! Đang chuyển sang giao diện...");
+      setTimeout(() => {
+        setAppInitializing(false);
+      }, 500);
     }
   };
 
@@ -1061,6 +1271,12 @@ export default function App() {
   const [clearPassword, setClearPassword] = useState('');
   const [clearingDb, setClearingDb] = useState(false);
   const [clearError, setClearError] = useState(null);
+
+  // Admin Topic 5: Slide Chờ & Quy Trình SOP States
+  const [adminLoadingSlides, setAdminLoadingSlides] = useState(DEFAULT_SOP_SLIDES);
+  const [adminSlideModalOpen, setAdminSlideModalOpen] = useState(false);
+  const [editingSlide, setEditingSlide] = useState(null);
+  const [previewLoadingModalOpen, setPreviewLoadingModalOpen] = useState(false);
 
   const handleLogin = async (e) => {
     if (e) e.preventDefault();
@@ -1619,10 +1835,114 @@ export default function App() {
     }
   };
 
+  // Topic 5: Slide Chờ & Quy Trình Handlers
+  const fetchAdminLoadingSlides = async () => {
+    try {
+      const res = await axios.get('/api/admin/loading-slides');
+      if (res.data && res.data.ok && Array.isArray(res.data.slides) && res.data.slides.length > 0) {
+        setLoadingSlides(res.data.slides);
+        setAdminLoadingSlides(res.data.slides);
+      }
+    } catch (e) {
+      console.warn("Using default loading slides:", e);
+    }
+  };
+
+  const handleSaveLoadingSlides = async (slidesToSave) => {
+    const data = slidesToSave || adminLoadingSlides;
+    try {
+      const res = await axios.post('/api/admin/loading-slides', { slides: data });
+      if (res.data && res.data.ok) {
+        setLoadingSlides(res.data.slides);
+        setAdminLoadingSlides(res.data.slides);
+        alert("✅ Đã lưu cấu hình Slide Chờ thành công!");
+      } else {
+        alert("❌ Lưu thất bại: " + (res.data?.error || "Lỗi không xác định"));
+      }
+    } catch (err) {
+      alert("❌ Lỗi khi lưu: " + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const handleResetLoadingSlides = async () => {
+    if (!window.confirm("Bạn có chắc chắn muốn khôi phục về 5 Slide Quy trình SOP mặc định của SG01?")) return;
+    try {
+      const res = await axios.post('/api/admin/loading-slides/reset');
+      if (res.data && res.data.ok) {
+        setLoadingSlides(res.data.slides);
+        setAdminLoadingSlides(res.data.slides);
+        alert("✅ Đã khôi phục thành công các Slide mặc định!");
+      } else {
+        alert("❌ Khôi phục thất bại: " + (res.data?.error || "Lỗi không xác định"));
+      }
+    } catch (err) {
+      alert("❌ Lỗi: " + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const handleToggleSlideActive = (slideId) => {
+    const updated = adminLoadingSlides.map(s => {
+      if (s.id === slideId) {
+        return { ...s, is_active: s.is_active === false ? true : false };
+      }
+      return s;
+    });
+    setAdminLoadingSlides(updated);
+    handleSaveLoadingSlides(updated);
+  };
+
+  const handleDeleteSlide = (slideId) => {
+    if (!window.confirm("Bạn có chắc chắn muốn xóa slide này?")) return;
+    const updated = adminLoadingSlides.filter(s => s.id !== slideId);
+    setAdminLoadingSlides(updated);
+    handleSaveLoadingSlides(updated);
+  };
+
+  const handleSaveSlideForm = (slideData) => {
+    let updated;
+    if (editingSlide && editingSlide.id) {
+      updated = adminLoadingSlides.map(s => s.id === editingSlide.id ? { ...s, ...slideData } : s);
+    } else {
+      const newId = Date.now();
+      updated = [...adminLoadingSlides, { ...slideData, id: newId, is_active: true }];
+    }
+    setAdminLoadingSlides(updated);
+    setAdminSlideModalOpen(false);
+    setEditingSlide(null);
+    handleSaveLoadingSlides(updated);
+  };
+
   useEffect(() => {
     fetchOptions();
     fetchTonTkBtDashboard();
+    fetchAdminLoadingSlides();
   }, []);
+
+  // Smooth loading progress animation
+  useEffect(() => {
+    if (!appInitializing) return;
+
+    const timer = setInterval(() => {
+      setLoadingProgress(prev => {
+        if (prev >= 92) return 92;
+        if (prev < 35) {
+          setLoadingStatusText("Đang kết nối Supabase & Nạp danh mục...");
+          return prev + 5;
+        } else if (prev < 65) {
+          setLoadingStatusText("Đang phân tích dữ liệu KPI & Ca lặp...");
+          return prev + 3;
+        } else if (prev < 85) {
+          setLoadingStatusText("Đang tổng hợp tồn & lịch trực kỹ thuật...");
+          return prev + 2;
+        } else {
+          setLoadingStatusText("Đang hoàn tất tối ưu hóa giao diện...");
+          return prev + 1;
+        }
+      });
+    }, 400);
+
+    return () => clearInterval(timer);
+  }, [appInitializing]);
 
   useEffect(() => {
     fetchReport();
@@ -1649,6 +1969,7 @@ export default function App() {
     } else if (currentNav === 'admin') {
       fetchAdminUsers();
       fetchAdminHrList();
+      fetchAdminLoadingSlides();
     }
   }, [currentNav, ltTab, adminSubTab]);
 
@@ -2679,62 +3000,14 @@ export default function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
 
-      {/* ========== GLOBAL APP INITIALIZING SPLASH SCREEN ========== */}
+      {/* ========== GLOBAL APP INITIALIZING SOP SHOWCASE ========== */}
       {appInitializing && (
-        <Box sx={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999,
-          background: 'linear-gradient(135deg, #0d47a1 0%, #1565c0 40%, #283593 100%)',
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3
-        }}>
-          {/* Animated background circles */}
-          <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-            {[...Array(5)].map((_, i) => (
-              <Box key={i} sx={{
-                position: 'absolute', borderRadius: '50%',
-                background: 'rgba(255,255,255,0.05)',
-                width: `${120 + i * 80}px`, height: `${120 + i * 80}px`,
-                top: `${10 + i * 12}%`, left: `${5 + i * 18}%`,
-                animation: `pulse ${2 + i * 0.4}s ease-in-out infinite alternate`
-              }} />
-            ))}
-          </Box>
-
-          {/* Logo */}
-          <Box component="img"
-            src={LOGO_URL}
-            alt="FPT Telecom"
-            sx={{ height: 52, filter: 'brightness(0) invert(1)', opacity: 0.95, mb: 1 }}
-            onError={(e) => { e.target.style.display = 'none'; }}
-          />
-
-          {/* Title */}
-          <Typography variant="h5" sx={{
-            color: '#fff', fontWeight: 700, letterSpacing: 1,
-            textShadow: '0 2px 12px rgba(0,0,0,0.3)', textAlign: 'center', px: 2
-          }}>
-            Dashboard KPI SG01
-          </Typography>
-
-          {/* Spinner */}
-          <CircularProgress size={48} thickness={3} sx={{ color: 'rgba(255,255,255,0.85)', mt: 1 }} />
-
-          {/* Loading text */}
-          <Typography sx={{ color: 'rgba(255,255,255,0.8)', fontSize: 14, fontWeight: 500 }}>
-            Đang tải dữ liệu từ máy chủ...
-          </Typography>
-
-          {/* Branding */}
-          <Typography sx={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, position: 'absolute', bottom: 24 }}>
-            FPT Telecom SG01 • KPI Management System
-          </Typography>
-
-          <style>{`
-            @keyframes pulse {
-              from { transform: scale(1); opacity: 0.04; }
-              to   { transform: scale(1.15); opacity: 0.12; }
-            }
-          `}</style>
-        </Box>
+        <SOPLoadingScreen
+          slides={loadingSlides}
+          loadingProgress={loadingProgress}
+          currentStatusText={loadingStatusText}
+          onSkip={() => setAppInitializing(false)}
+        />
       )}
 
       <Box sx={{ display: 'flex', minHeight: '100vh', backgroundColor: '#f4f6f9' }}>
@@ -4865,6 +5138,15 @@ export default function App() {
                       gradient: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
                       activeColor: '#0284c7',
                       badge: 'Sửa Lịch Trực'
+                    },
+                    {
+                      id: 5,
+                      title: '6. Slide Chờ & Quy Trình',
+                      subtitle: 'Cấu hình popup SOP & thông điệp loading',
+                      icon: <SpeedIcon sx={{ fontSize: 28 }} />,
+                      gradient: 'linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)',
+                      activeColor: '#0ea5e9',
+                      badge: `${adminLoadingSlides.length || 0} Slides`
                     }
                   ].map((topic) => {
                     const isSelected = adminSubTab === topic.id;
@@ -4880,6 +5162,7 @@ export default function App() {
                           if (topic.id === 2) fetchDbCounts();
                           if (topic.id === 3) fetchLuongList();
                           if (topic.id === 4) fetchLichTrucChiTiet();
+                          if (topic.id === 5) fetchAdminLoadingSlides();
                         }}
                         sx={{
                           p: 2,
@@ -5884,6 +6167,186 @@ export default function App() {
                     </Box>
                   )}
 
+                  {/* TOPIC 5: QUẢN LÝ SLIDE CHỜ (SOP LOADING BANNER) */}
+                  {adminSubTab === 5 && (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                        <Box>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 900, color: '#0ea5e9' }}>
+                            🚀 Quản Lý Slide Chờ & Quy Trình SOP Kỹ Thuật (Loading Banner)
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#64748b' }}>
+                            Các slide này luân phiên hiển thị sinh động trong 20-30 giây đầu khi người dùng mở app và nạp dữ liệu, giúp truyền tải tiêu chuẩn FPT SG01.
+                          </Typography>
+                        </Box>
+
+                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={<ViewIcon />}
+                            onClick={() => setPreviewLoadingModalOpen(true)}
+                            sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 700, borderColor: '#0ea5e9', color: '#0284c7' }}
+                          >
+                            👁️ Xem Thử Màn Hình Chờ
+                          </Button>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            color="warning"
+                            startIcon={<RefreshIcon />}
+                            onClick={handleResetLoadingSlides}
+                            sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 700 }}
+                          >
+                            Khôi Phục Mặc Định
+                          </Button>
+                          <Button
+                            variant="contained"
+                            size="small"
+                            startIcon={<AddIcon />}
+                            onClick={() => {
+                              setEditingSlide(null);
+                              setAdminSlideModalOpen(true);
+                            }}
+                            sx={{
+                              borderRadius: 2,
+                              textTransform: 'none',
+                              fontWeight: 800,
+                              background: 'linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%)',
+                              boxShadow: '0 4px 12px rgba(14,165,233,0.35)'
+                            }}
+                          >
+                            ➕ Thêm Slide Mới
+                          </Button>
+                        </Box>
+                      </Box>
+
+                      {/* Slides Grid */}
+                      <Grid container spacing={2}>
+                        {adminLoadingSlides.map((slide, idx) => (
+                          <Grid item xs={12} md={6} key={slide.id || idx}>
+                            <Card
+                              elevation={0}
+                              sx={{
+                                borderRadius: 3,
+                                border: '1px solid',
+                                borderColor: slide.is_active === false ? '#e2e8f0' : `${slide.badgeColor || '#0284c7'}50`,
+                                opacity: slide.is_active === false ? 0.6 : 1,
+                                transition: 'all 0.2s ease',
+                                '&:hover': {
+                                  boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
+                                  transform: 'translateY(-2px)'
+                                }
+                              }}
+                            >
+                              <Box sx={{
+                                p: 2,
+                                background: slide.colorGradient || 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
+                                color: '#fff',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center'
+                              }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Chip
+                                    label={slide.tag || 'SOP'}
+                                    size="small"
+                                    sx={{
+                                      backgroundColor: 'rgba(255,255,255,0.25)',
+                                      color: '#fff',
+                                      fontWeight: 800,
+                                      backdropFilter: 'blur(4px)'
+                                    }}
+                                  />
+                                  <Typography variant="body2" sx={{ fontWeight: 600, opacity: 0.9 }}>
+                                    {slide.category || ''}
+                                  </Typography>
+                                </Box>
+
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                  <Switch
+                                    size="small"
+                                    checked={slide.is_active !== false}
+                                    onChange={() => handleToggleSlideActive(slide.id)}
+                                    sx={{
+                                      '& .MuiSwitch-switchBase.Mui-checked': { color: '#22c55e' },
+                                      '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: '#22c55e' }
+                                    }}
+                                  />
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => {
+                                      setEditingSlide(slide);
+                                      setAdminSlideModalOpen(true);
+                                    }}
+                                    sx={{ color: '#fff', backgroundColor: 'rgba(255,255,255,0.15)', '&:hover': { backgroundColor: 'rgba(255,255,255,0.3)' } }}
+                                  >
+                                    <EditIcon fontSize="small" />
+                                  </IconButton>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => handleDeleteSlide(slide.id)}
+                                    sx={{ color: '#fca5a5', backgroundColor: 'rgba(239,68,68,0.2)', '&:hover': { backgroundColor: 'rgba(239,68,68,0.4)' } }}
+                                  >
+                                    <DeleteIcon fontSize="small" />
+                                  </IconButton>
+                                </Box>
+                              </Box>
+
+                              <CardContent sx={{ p: 2.5 }}>
+                                <Typography variant="h6" sx={{ fontWeight: 800, color: '#0f172a', fontSize: '1.05rem', mb: 0.8 }}>
+                                  {slide.title}
+                                </Typography>
+
+                                {slide.target && (
+                                  <Box sx={{
+                                    display: 'inline-block',
+                                    backgroundColor: '#f1f5f9',
+                                    px: 1.5,
+                                    py: 0.5,
+                                    borderRadius: 1.5,
+                                    borderLeft: `4px solid ${slide.badgeColor || '#0284c7'}`,
+                                    mb: 1.5
+                                  }}>
+                                    <Typography variant="caption" sx={{ fontWeight: 800, color: '#334155' }}>
+                                      🎯 {slide.target}
+                                    </Typography>
+                                  </Box>
+                                )}
+
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.6, mb: 1.5 }}>
+                                  {(slide.steps || []).slice(0, 3).map((step, sIdx) => (
+                                    <Typography key={sIdx} variant="body2" sx={{ color: '#475569', fontSize: '0.85rem' }}>
+                                      {step}
+                                    </Typography>
+                                  ))}
+                                  {(slide.steps || []).length > 3 && (
+                                    <Typography variant="caption" sx={{ color: '#94a3b8', fontStyle: 'italic' }}>
+                                      + {(slide.steps || []).length - 3} bước khác...
+                                    </Typography>
+                                  )}
+                                </Box>
+
+                                {slide.note && (
+                                  <Box sx={{
+                                    backgroundColor: '#fffbeb',
+                                    border: '1px dashed #fcd34d',
+                                    borderRadius: 2,
+                                    p: 1.2
+                                  }}>
+                                    <Typography variant="caption" sx={{ color: '#b45309', fontWeight: 600, display: 'block' }}>
+                                      {slide.note}
+                                    </Typography>
+                                  </Box>
+                                )}
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        ))}
+                      </Grid>
+                    </Box>
+                  )}
+
                 </Paper>
               </Box>
             )}
@@ -6644,6 +7107,50 @@ function doGet(e) {
               Đóng
             </Button>
           </DialogActions>
+        </Dialog>
+
+        {/* ADMIN SLIDE EDIT / ADD MODAL */}
+        <AdminSlideEditModal
+          open={adminSlideModalOpen}
+          onClose={() => {
+            setAdminSlideModalOpen(false);
+            setEditingSlide(null);
+          }}
+          initialData={editingSlide}
+          onSave={handleSaveSlideForm}
+        />
+
+        {/* FULLSCREEN PREVIEW LOADING SCREEN MODAL */}
+        <Dialog
+          fullScreen
+          open={previewLoadingModalOpen}
+          onClose={() => setPreviewLoadingModalOpen(false)}
+        >
+          <Box sx={{ position: 'relative', width: '100%', height: '100%' }}>
+            <SOPLoadingScreen
+              slides={adminLoadingSlides}
+              loadingProgress={78}
+              currentStatusText="[Chế độ Xem Thử] Đang mô phỏng giao diện màn hình chờ SOP của FPT SG01..."
+              onSkip={() => setPreviewLoadingModalOpen(false)}
+            />
+            <Button
+              variant="contained"
+              color="error"
+              size="small"
+              onClick={() => setPreviewLoadingModalOpen(false)}
+              sx={{
+                position: 'fixed',
+                top: 16,
+                right: 16,
+                zIndex: 10000,
+                fontWeight: 800,
+                borderRadius: 2,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+              }}
+            >
+              ✕ Đóng Xem Thử
+            </Button>
+          </Box>
         </Dialog>
 
       </Box>

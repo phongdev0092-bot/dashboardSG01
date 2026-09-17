@@ -377,6 +377,20 @@ def get_admin_luong_list(
     return engine.get_luong_list(search=search, block=block, team_lead=team_lead)
 
 
+@app.get("/api/admin/loading-slides")
+def get_admin_loading_slides():
+    return engine.get_loading_slides()
+
+@app.post("/api/admin/loading-slides")
+def save_admin_loading_slides(payload: dict):
+    slides = payload.get('slides', [])
+    return engine.save_loading_slides(slides)
+
+@app.post("/api/admin/loading-slides/reset")
+def reset_admin_loading_slides():
+    return engine.reset_loading_slides()
+
+
 # Serve frontend build if dist directory exists
 frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(frontend_dist):
