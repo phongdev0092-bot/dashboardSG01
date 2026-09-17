@@ -755,6 +755,18 @@ class KPIEngine:
                 hr_df = sp_hr
                 self._save_pickle(hr_df, "hr.pkl.gz")
 
+        self.hr_df = hr_df
+        self.lt_df = lt_df
+        self.ton_tk_df = ton_tk_df
+        self.ton_bt_df = ton_bt_df
+
+        if not self.hr_df.empty:
+            self._process_metadata()
+
+        # On Vercel serverless functions, defer loading big tables until requested to keep cold start fast (<1s)
+        if IS_VERCEL:
+            return
+
         if tk_df.empty and not self._is_cleared('tk'):
             sp_tk = self._load_df_from_supabase("tk")
             if not sp_tk.empty:
@@ -780,25 +792,14 @@ class KPIEngine:
                 cll30n_df = sp_cll
                 self._save_pickle(cll30n_df, "cll30n.pkl.gz")
 
-        self.hr_df = hr_df
         self.tk_df = tk_df
         self.bt_df = bt_df
-        self.lt_df = lt_df
-        self.ton_tk_df = ton_tk_df
-        self.ton_bt_df = ton_bt_df
         self.kh_cls_df = kh_cls_df
         self.cll30n_df = cll30n_df
-
-        if not self.hr_df.empty:
-            self._process_metadata()
 
         mtime = hr_path.stat().st_mtime if hr_path else time.time()
         self.last_sync_time = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
         print(f"Cache/Supabase data loaded successfully! Sync time: {self.last_sync_time}", flush=True)
-
-        # On Vercel serverless functions, do not run long external sheet syncing during cold start
-        if IS_VERCEL:
-            return
 
         if hr_df.empty or tk_df.empty or bt_df.empty:
             self.sync_live_data()
