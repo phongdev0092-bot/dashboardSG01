@@ -866,6 +866,7 @@ export default function App() {
   const [endDate, setEndDate] = useState(() => localStorage.getItem('kpi_endDate') || initialDates.end);
   const [selectedTeamLead, setSelectedTeamLead] = useState(() => localStorage.getItem('kpi_teamLead') || '');
   const [selectedRegion, setSelectedRegion] = useState(() => localStorage.getItem('kpi_region') || '');
+  const [selectedBlock, setSelectedBlock] = useState(() => localStorage.getItem('kpi_block') || '');
   const [searchQuery, setSearchQuery] = useState('');
   const [datePreset, setDatePreset] = useState(() => localStorage.getItem('kpi_datePreset') || 'month_to_yesterday');
 
@@ -876,8 +877,9 @@ export default function App() {
       localStorage.setItem('kpi_datePreset', datePreset || '');
       localStorage.setItem('kpi_teamLead', selectedTeamLead || '');
       localStorage.setItem('kpi_region', selectedRegion || '');
+      localStorage.setItem('kpi_block', selectedBlock || '');
     } catch (e) {}
-  }, [startDate, endDate, datePreset, selectedTeamLead, selectedRegion]);
+  }, [startDate, endDate, datePreset, selectedTeamLead, selectedRegion, selectedBlock]);
 
   // KPI Data State
   const [reportData, setReportData] = useState(null);
@@ -1546,6 +1548,7 @@ export default function App() {
       if (endDate) params.end_date = endDate;
       if (selectedTeamLead) params.team_lead = selectedTeamLead;
       if (selectedRegion) params.region = selectedRegion;
+      if (selectedBlock) params.block = selectedBlock;
       if (searchQuery) params.search = searchQuery;
 
       const res = await axios.get(`${API_BASE}/report`, { params });
@@ -1623,7 +1626,7 @@ export default function App() {
 
   useEffect(() => {
     fetchReport();
-  }, [startDate, endDate, selectedTeamLead, selectedRegion, searchQuery]);
+  }, [startDate, endDate, selectedTeamLead, selectedRegion, selectedBlock, searchQuery]);
 
   useEffect(() => {
     if (currentNav === 'lich_truc') {
@@ -3098,9 +3101,9 @@ export default function App() {
                   </Box>
 
                   {/* Filter Input Grid */}
-                  <Grid container spacing={2.5} alignItems="flex-end">
+                  <Grid container spacing={2} alignItems="flex-end">
                     
-                    <Grid item xs={12} sm={6} md={2.5}>
+                    <Grid item xs={12} sm={6} md={2}>
                       <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
                         Từ Ngày (TG Hoàn tất)
                       </FormLabel>
@@ -3114,7 +3117,7 @@ export default function App() {
                       />
                     </Grid>
 
-                    <Grid item xs={12} sm={6} md={2.5}>
+                    <Grid item xs={12} sm={6} md={2}>
                       <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
                         Đến Ngày (TG Hoàn tất)
                       </FormLabel>
@@ -3128,7 +3131,7 @@ export default function App() {
                       />
                     </Grid>
 
-                    <Grid item xs={12} sm={6} md={2.5}>
+                    <Grid item xs={12} sm={6} md={2}>
                       <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
                         Lọc Theo Đội Trưởng
                       </FormLabel>
@@ -3147,7 +3150,7 @@ export default function App() {
                       </TextField>
                     </Grid>
 
-                    <Grid item xs={12} sm={6} md={2}>
+                    <Grid item xs={12} sm={6} md={1.75}>
                       <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
                         Lọc Theo Vùng
                       </FormLabel>
@@ -3166,7 +3169,26 @@ export default function App() {
                       </TextField>
                     </Grid>
 
-                    <Grid item xs={12} sm={12} md={2.5}>
+                    <Grid item xs={12} sm={6} md={2}>
+                      <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
+                        Lọc Theo Block
+                      </FormLabel>
+                      <TextField
+                        select
+                        fullWidth
+                        size="small"
+                        value={selectedBlock}
+                        onChange={(e) => setSelectedBlock(e.target.value)}
+                        sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#fafafa' } }}
+                      >
+                        <MenuItem value="">-- Tất cả Block --</MenuItem>
+                        {(options.blocks || []).map((b) => (
+                          <MenuItem key={b} value={b}>{b}</MenuItem>
+                        ))}
+                      </TextField>
+                    </Grid>
+
+                    <Grid item xs={12} sm={12} md={2.25}>
                       <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
                         Tìm Inside Acc / NV
                       </FormLabel>
@@ -3209,12 +3231,12 @@ export default function App() {
                     <TableContainer sx={{ maxHeight: 720 }}>
                       <Table stickyHeader size="medium">
                         <TableHead>
-                          <TableRow>
-                            <TableCell rowSpan={2} sx={{ fontWeight: 700, backgroundColor: '#f1f3f4', color: '#3c4043', borderRight: '1px solid #e0e0e0', width: 60, textAlign: 'center' }}>
+                          <TableRow sx={{ height: '38px' }}>
+                            <TableCell rowSpan={2} sx={{ top: 0, zIndex: 12, verticalAlign: 'middle', fontWeight: 700, backgroundColor: '#f1f3f4', color: '#3c4043', borderRight: '1px solid #e0e0e0', borderBottom: '2px solid #cbd5e1', width: 60, textAlign: 'center' }}>
                               STT
                             </TableCell>
                             
-                            <TableCell rowSpan={2} sx={{ fontWeight: 700, backgroundColor: '#f1f3f4', color: '#3c4043', borderRight: '1px solid #e0e0e0', minWidth: 200 }}>
+                            <TableCell rowSpan={2} sx={{ top: 0, zIndex: 12, verticalAlign: 'middle', fontWeight: 700, backgroundColor: '#f1f3f4', color: '#3c4043', borderRight: '1px solid #e0e0e0', borderBottom: '2px solid #cbd5e1', minWidth: 200 }}>
                               <TableSortLabel
                                 active={orderBy === 'name' || orderBy === 'account'}
                                 direction={orderBy === 'name' || orderBy === 'account' ? order : 'asc'}
@@ -3224,39 +3246,39 @@ export default function App() {
                               </TableSortLabel>
                             </TableCell>
 
-                            <TableCell rowSpan={2} sx={{ fontWeight: 700, backgroundColor: '#f1f3f4', color: '#3c4043', borderRight: '1px solid #e0e0e0', minWidth: 160 }}>
+                            <TableCell rowSpan={2} sx={{ top: 0, zIndex: 12, verticalAlign: 'middle', fontWeight: 700, backgroundColor: '#f1f3f4', color: '#3c4043', borderRight: '1px solid #e0e0e0', borderBottom: '2px solid #cbd5e1', minWidth: 170 }}>
                               <TableSortLabel
                                 active={orderBy === 'team_lead'}
                                 direction={orderBy === 'team_lead' ? order : 'asc'}
                                 onClick={() => handleRequestSort('team_lead')}
                               >
-                                Đội Trưởng / Vùng
+                                Đội Trưởng / Vùng / Block
                               </TableSortLabel>
                             </TableCell>
 
-                            <TableCell colSpan={3} align="center" sx={{ fontWeight: 800, backgroundColor: '#e8f0fe', color: '#1a73e8', borderRight: '1px solid #d2e3fc', borderBottom: '1px solid #d2e3fc', fontSize: '13px', py: 1 }}>
+                            <TableCell colSpan={3} align="center" sx={{ top: 0, zIndex: 11, height: '38px', py: '6px', boxSizing: 'border-box', fontWeight: 800, backgroundColor: '#e8f0fe', color: '#1a73e8', borderRight: '1px solid #d2e3fc', borderBottom: '1px solid #d2e3fc', fontSize: '13px' }}>
                               KHỐI LƯỢNG CÔNG VIỆC
                             </TableCell>
 
-                            <TableCell colSpan={2} align="center" sx={{ fontWeight: 800, backgroundColor: '#fff3e0', color: '#e65100', borderRight: '1px solid #ffe0b2', borderBottom: '1px solid #ffe0b2', fontSize: '13px', py: 1 }}>
+                            <TableCell colSpan={2} align="center" sx={{ top: 0, zIndex: 11, height: '38px', py: '6px', boxSizing: 'border-box', fontWeight: 800, backgroundColor: '#fff3e0', color: '#e65100', borderRight: '1px solid #ffe0b2', borderBottom: '1px solid #ffe0b2', fontSize: '13px' }}>
                               TIẾN ĐỘ (RT)
                             </TableCell>
 
-                            <TableCell colSpan={2} align="center" sx={{ fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7', borderBottom: '1px solid #e1bee7', fontSize: '13px', py: 1 }}>
+                            <TableCell colSpan={2} align="center" sx={{ top: 0, zIndex: 11, height: '38px', py: '6px', boxSizing: 'border-box', fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7', borderBottom: '1px solid #e1bee7', fontSize: '13px' }}>
                               CHẤT LƯỢNG (CLL)
                             </TableCell>
 
-                            <TableCell colSpan={3} align="center" sx={{ fontWeight: 800, backgroundColor: '#e6f4ea', color: '#1e8e3e', borderRight: '1px solid #ceead6', borderBottom: '1px solid #ceead6', fontSize: '13px', py: 1 }}>
+                            <TableCell colSpan={3} align="center" sx={{ top: 0, zIndex: 11, height: '38px', py: '6px', boxSizing: 'border-box', fontWeight: 800, backgroundColor: '#e6f4ea', color: '#1e8e3e', borderRight: '1px solid #ceead6', borderBottom: '1px solid #ceead6', fontSize: '13px' }}>
                               CAM KẾT TIẾN ĐỘ
                             </TableCell>
 
-                            <TableCell rowSpan={2} align="center" sx={{ fontWeight: 700, backgroundColor: '#f1f3f4', color: '#3c4043', width: 100 }}>
+                            <TableCell rowSpan={2} align="center" sx={{ top: 0, zIndex: 12, verticalAlign: 'middle', fontWeight: 700, backgroundColor: '#f1f3f4', color: '#3c4043', borderBottom: '2px solid #cbd5e1', width: 100 }}>
                               Thao Tác
                             </TableCell>
                           </TableRow>
 
-                          <TableRow>
-                            <TableCell align="center" sx={{ fontWeight: 700, backgroundColor: '#f4f8fe', color: '#1a73e8' }}>
+                          <TableRow sx={{ height: '44px' }}>
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#f4f8fe', color: '#1a73e8' }}>
                               <TableSortLabel
                                 active={orderBy === 'tk_kpi_volume'}
                                 direction={orderBy === 'tk_kpi_volume' ? order : 'asc'}
@@ -3266,7 +3288,7 @@ export default function App() {
                               </TableSortLabel>
                             </TableCell>
 
-                            <TableCell align="center" sx={{ fontWeight: 700, backgroundColor: '#f4f8fe', color: '#1a73e8' }}>
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#f4f8fe', color: '#1a73e8' }}>
                               <TableSortLabel
                                 active={orderBy === 'bt_volume'}
                                 direction={orderBy === 'bt_volume' ? order : 'asc'}
@@ -3276,7 +3298,7 @@ export default function App() {
                               </TableSortLabel>
                             </TableCell>
 
-                            <TableCell align="center" sx={{ fontWeight: 700, backgroundColor: '#f4f8fe', color: '#1a73e8', borderRight: '1px solid #d2e3fc' }}>
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#f4f8fe', color: '#1a73e8', borderRight: '1px solid #d2e3fc' }}>
                               <TableSortLabel
                                 active={orderBy === 'tk_swap_volume'}
                                 direction={orderBy === 'tk_swap_volume' ? order : 'asc'}
@@ -3286,7 +3308,7 @@ export default function App() {
                               </TableSortLabel>
                             </TableCell>
 
-                            <TableCell align="center" sx={{ fontWeight: 700, backgroundColor: '#fff8e1', color: '#b06000' }}>
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#fff8e1', color: '#b06000' }}>
                               <TableSortLabel
                                 active={orderBy === 'rt_tk_hours'}
                                 direction={orderBy === 'rt_tk_hours' ? order : 'asc'}
@@ -3296,7 +3318,7 @@ export default function App() {
                               </TableSortLabel>
                             </TableCell>
 
-                            <TableCell align="center" sx={{ fontWeight: 700, backgroundColor: '#fff8e1', color: '#b06000', borderRight: '1px solid #ffe0b2' }}>
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#fff8e1', color: '#b06000', borderRight: '1px solid #ffe0b2' }}>
                               <TableSortLabel
                                 active={orderBy === 'rt_bt_hours'}
                                 direction={orderBy === 'rt_bt_hours' ? order : 'asc'}
@@ -3306,7 +3328,7 @@ export default function App() {
                               </TableSortLabel>
                             </TableCell>
 
-                            <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7' }}>
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7' }}>
                               <TableSortLabel
                                 active={orderBy === 'cll30n_pct'}
                                 direction={orderBy === 'cll30n_pct' ? order : 'asc'}
@@ -3316,7 +3338,7 @@ export default function App() {
                               </TableSortLabel>
                             </TableCell>
 
-                            <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7' }}>
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7' }}>
                               <TableSortLabel
                                 active={orderBy === 'clps7n_pct'}
                                 direction={orderBy === 'clps7n_pct' ? order : 'asc'}
@@ -3326,7 +3348,7 @@ export default function App() {
                               </TableSortLabel>
                             </TableCell>
 
-                            <TableCell align="center" sx={{ fontWeight: 800, backgroundColor: '#e6f4ea', color: '#1e8e3e' }}>
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 800, backgroundColor: '#e6f4ea', color: '#1e8e3e' }}>
                               <TableSortLabel
                                 active={orderBy === 'total_dung_hen_pct'}
                                 direction={orderBy === 'total_dung_hen_pct' ? order : 'asc'}
@@ -3336,7 +3358,7 @@ export default function App() {
                               </TableSortLabel>
                             </TableCell>
 
-                            <TableCell align="center" sx={{ fontWeight: 700, backgroundColor: '#e6f4ea', color: '#1e8e3e' }}>
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#e6f4ea', color: '#1e8e3e' }}>
                               <TableSortLabel
                                 active={orderBy === 'tk_dung_hen_pct'}
                                 direction={orderBy === 'tk_dung_hen_pct' ? order : 'asc'}
@@ -3346,7 +3368,7 @@ export default function App() {
                               </TableSortLabel>
                             </TableCell>
 
-                            <TableCell align="center" sx={{ fontWeight: 700, backgroundColor: '#e6f4ea', color: '#1e8e3e', borderRight: '1px solid #ceead6' }}>
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#e6f4ea', color: '#1e8e3e', borderRight: '1px solid #ceead6' }}>
                               <TableSortLabel
                                 active={orderBy === 'bt_dung_hen_pct'}
                                 direction={orderBy === 'bt_dung_hen_pct' ? order : 'asc'}
@@ -3370,7 +3392,10 @@ export default function App() {
 
                               <TableCell sx={{ borderRight: '1px solid #f0f0f0' }}>
                                 <Typography variant="body2" sx={{ fontWeight: 600, color: '#3c4043' }}>{emp.team_lead}</Typography>
-                                <Chip label={emp.region} size="small" sx={{ height: 18, fontSize: '10px', backgroundColor: '#e8f0fe', color: '#1a73e8' }} />
+                                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.25, alignItems: 'center' }}>
+                                  {emp.region && <Chip label={emp.region} size="small" sx={{ height: 18, fontSize: '10px', backgroundColor: '#e8f0fe', color: '#1a73e8' }} />}
+                                  {emp.block && <Chip label={emp.block} size="small" sx={{ height: 18, fontSize: '10px', backgroundColor: '#f1f5f9', color: '#475569' }} />}
+                                </Box>
                               </TableCell>
 
                               {/* Volume Columns */}
