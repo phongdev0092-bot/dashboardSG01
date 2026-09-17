@@ -28,6 +28,8 @@ engine = KPIEngine()
 
 @app.get("/api/kpi/options")
 def get_filter_options():
+    if not engine.team_leads:
+        engine._ensure_kpi_datasets_loaded()
     return {
         "team_leads": engine.team_leads,
         "regions": engine.regions,

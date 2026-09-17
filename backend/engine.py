@@ -207,18 +207,22 @@ class KPIEngine:
     def _set_cleared_flag(self, name: str):
         self._manually_cleared_datasets.add(name)
         self._save_cleared_flags()  # fast local save
-        # Persist to Supabase in background thread so API call returns immediately
-        import threading
-        t = threading.Thread(target=self._save_cleared_flags_to_supabase, daemon=True)
-        t.start()
+        if IS_VERCEL:
+            self._save_cleared_flags_to_supabase()
+        else:
+            import threading
+            t = threading.Thread(target=self._save_cleared_flags_to_supabase, daemon=True)
+            t.start()
 
     def _clear_cleared_flag(self, name: str):
         self._manually_cleared_datasets.discard(name)
         self._save_cleared_flags()  # fast local save
-        # Persist to Supabase in background thread
-        import threading
-        t = threading.Thread(target=self._save_cleared_flags_to_supabase, daemon=True)
-        t.start()
+        if IS_VERCEL:
+            self._save_cleared_flags_to_supabase()
+        else:
+            import threading
+            t = threading.Thread(target=self._save_cleared_flags_to_supabase, daemon=True)
+            t.start()
 
     def _is_cleared(self, name: str) -> bool:
         try:
@@ -680,9 +684,12 @@ class KPIEngine:
             # kh_cls, cll30n, tk, bt are 100% on Supabase — ZERO connection with Google Sheet.
             # No data is pushed to Google Sheet.
 
-        t = threading.Thread(target=_do_sync, daemon=True)
-        t.start()
-        print(f"[Import] Background sync started for '{target_name}' ({len(df_target) if df_target is not None else 0} rows)", flush=True)
+        if IS_VERCEL:
+            _do_sync()
+        else:
+            t = threading.Thread(target=_do_sync, daemon=True)
+            t.start()
+        print(f"[Import] Sync completed/started for '{target_name}' ({len(df_target) if df_target is not None else 0} rows)", flush=True)
 
 
     def _is_custom_ton_imported(self, name: str) -> bool:
@@ -742,6 +749,12 @@ class KPIEngine:
         kh_cls_path, kh_cls_df = _get_df("kh_cls")
 
         # If local cache is empty (e.g. cold start on Vercel/Render), load from Supabase fallback
+        if hr_df.empty:
+            sp_hr = self._load_df_from_supabase("hr")
+            if not sp_hr.empty:
+                hr_df = sp_hr
+                self._save_pickle(hr_df, "hr.pkl.gz")
+
         if tk_df.empty and not self._is_cleared('tk'):
             sp_tk = self._load_df_from_supabase("tk")
             if not sp_tk.empty:
@@ -767,31 +780,28 @@ class KPIEngine:
                 cll30n_df = sp_cll
                 self._save_pickle(cll30n_df, "cll30n.pkl.gz")
 
-        if not hr_df.empty and not tk_df.empty and not bt_df.empty:
-            try:
-                print("Loading data from local cache...", flush=True)
-                self.hr_df = hr_df
-                self.tk_df = tk_df
-                self.bt_df = bt_df
-                self.lt_df = lt_df
-                self.ton_tk_df = ton_tk_df
-                self.ton_bt_df = ton_bt_df
-                self.kh_cls_df = kh_cls_df
-                self.cll30n_df = cll30n_df
+        self.hr_df = hr_df
+        self.tk_df = tk_df
+        self.bt_df = bt_df
+        self.lt_df = lt_df
+        self.ton_tk_df = ton_tk_df
+        self.ton_bt_df = ton_bt_df
+        self.kh_cls_df = kh_cls_df
+        self.cll30n_df = cll30n_df
 
-                mtime = hr_path.stat().st_mtime if hr_path else time.time()
-                self.last_sync_time = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
-                self._process_metadata()
-                print(f"Cache loaded successfully! Sync time: {self.last_sync_time}", flush=True)
+        if not self.hr_df.empty:
+            self._process_metadata()
 
-                if getattr(self, 'ton_tk_df', pd.DataFrame()).empty or getattr(self, 'ton_bt_df', pd.DataFrame()).empty:
-                    self._refresh_lt_from_sheet(force=True)
+        mtime = hr_path.stat().st_mtime if hr_path else time.time()
+        self.last_sync_time = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"Cache/Supabase data loaded successfully! Sync time: {self.last_sync_time}", flush=True)
 
-                return
-            except Exception as e:
-                print(f"Cache load failed: {e}. Fetching live data...", flush=True)
+        # On Vercel serverless functions, do not run long external sheet syncing during cold start
+        if IS_VERCEL:
+            return
 
-        self.sync_live_data()
+        if hr_df.empty or tk_df.empty or bt_df.empty:
+            self.sync_live_data()
 
     def sync_live_data(self):
         if self.is_syncing:
@@ -1005,8 +1015,68 @@ class KPIEngine:
             return None
         return s
 
+    def _ensure_kpi_datasets_loaded(self):
+        """Ensure HR metadata and database-backed datasets are loaded in memory."""
+        # 1. HR
+        if self.hr_df is None or self.hr_df.empty:
+            if (CACHE_DIR / "hr.pkl.gz").exists():
+                try: self.hr_df = pd.read_pickle(CACHE_DIR / "hr.pkl.gz")
+                except Exception: pass
+            if (self.hr_df is None or self.hr_df.empty):
+                sp_hr = self._load_df_from_supabase("hr")
+                if sp_hr is not None and not sp_hr.empty:
+                    self.hr_df = sp_hr
+                    self._save_pickle(self.hr_df, "hr.pkl.gz")
+            if self.hr_df is not None and not self.hr_df.empty:
+                self._process_metadata()
+
+        # 2. TK
+        if (self.tk_df is None or self.tk_df.empty) and not self._is_cleared('tk'):
+            if (CACHE_DIR / "tk.pkl.gz").exists():
+                try: self.tk_df = pd.read_pickle(CACHE_DIR / "tk.pkl.gz")
+                except Exception: pass
+            if (self.tk_df is None or self.tk_df.empty):
+                sp_tk = self._load_df_from_supabase("tk")
+                if not sp_tk.empty:
+                    self.tk_df = self._enrich_tk_df(sp_tk)
+                    self._save_pickle(self.tk_df, "tk.pkl.gz")
+
+        # 3. BT
+        if (self.bt_df is None or self.bt_df.empty) and not self._is_cleared('bt'):
+            if (CACHE_DIR / "bt.pkl.gz").exists():
+                try: self.bt_df = pd.read_pickle(CACHE_DIR / "bt.pkl.gz")
+                except Exception: pass
+            if (self.bt_df is None or self.bt_df.empty):
+                sp_bt = self._load_df_from_supabase("bt")
+                if not sp_bt.empty:
+                    self.bt_df = self._enrich_bt_df(sp_bt)
+                    self._save_pickle(self.bt_df, "bt.pkl.gz")
+
+        # 4. KH_CLS
+        if (self.kh_cls_df is None or self.kh_cls_df.empty) and not self._is_cleared('kh_cls'):
+            if (CACHE_DIR / "kh_cls.pkl.gz").exists():
+                try: self.kh_cls_df = pd.read_pickle(CACHE_DIR / "kh_cls.pkl.gz")
+                except Exception: pass
+            if (self.kh_cls_df is None or self.kh_cls_df.empty):
+                sp_kh = self._load_df_from_supabase("kh_cls")
+                if not sp_kh.empty:
+                    self.kh_cls_df = sp_kh
+                    self._save_pickle(self.kh_cls_df, "kh_cls.pkl.gz")
+
+        # 5. CLL30N
+        if (self.cll30n_df is None or self.cll30n_df.empty) and not self._is_cleared('cll30n'):
+            if (CACHE_DIR / "cll30n.pkl.gz").exists():
+                try: self.cll30n_df = pd.read_pickle(CACHE_DIR / "cll30n.pkl.gz")
+                except Exception: pass
+            if (self.cll30n_df is None or self.cll30n_df.empty):
+                sp_cll = self._load_df_from_supabase("cll30n")
+                if not sp_cll.empty:
+                    self.cll30n_df = sp_cll
+                    self._save_pickle(self.cll30n_df, "cll30n.pkl.gz")
+
     def get_kpi_report(self, start_date=None, end_date=None, team_lead=None, region=None, partner=None, block=None, search=None):
         t0 = time.time()
+        self._ensure_kpi_datasets_loaded()
         
         team_lead = self._clean_str_param(team_lead)
         region = self._clean_str_param(region)
@@ -2454,7 +2524,7 @@ class KPIEngine:
         }
 
     def get_dataset_counts(self):
-        # Ensure dataset dataframes are loaded from cache if empty
+        counts = {}
         for target, cache_name, attr in [
             ("kh_cls", "kh_cls.pkl.gz", "kh_cls_df"),
             ("cll30n", "cll30n.pkl.gz", "cll30n_df"),
@@ -2464,36 +2534,38 @@ class KPIEngine:
             ("ton_bt", "ton_bt.pkl.gz", "ton_bt_df")
         ]:
             if self._is_cleared(target):
-                setattr(self, attr, pd.DataFrame())
+                counts[target] = 0
                 continue
             df = getattr(self, attr, pd.DataFrame())
-            if (df is None or df.empty) and (CACHE_DIR / cache_name).exists():
+            if df is not None and not df.empty:
+                counts[target] = len(df)
+                continue
+            if (CACHE_DIR / cache_name).exists():
                 try:
                     df = pd.read_pickle(CACHE_DIR / cache_name)
                     setattr(self, attr, df)
+                    counts[target] = len(df)
+                    continue
                 except Exception:
                     pass
-            # If still empty and not cleared, load from Supabase for database-backed datasets
-            if (df is None or df.empty) and target in ("kh_cls", "cll30n", "tk", "bt"):
+            # Fast count from Supabase for database-backed datasets
+            if target in ("kh_cls", "cll30n", "tk", "bt"):
                 try:
-                    sp_df = self._load_df_from_supabase(target)
-                    if sp_df is not None and not sp_df.empty:
-                        df = sp_df
-                        setattr(self, attr, df)
-                        self._save_pickle(df, cache_name)
-                except Exception:
-                    pass
+                    from sqlalchemy import text
+                    engine_db = self.get_db_engine()
+                    if engine_db:
+                        with engine_db.connect() as conn:
+                            res = conn.execute(text(f'SELECT count(*) FROM "{target}"')).fetchone()
+                            cnt = int(res[0]) if res else 0
+                            counts[target] = cnt
+                            continue
+                except Exception as e:
+                    print(f"Fast count error for {target}: {e}", flush=True)
+            counts[target] = 0
 
         return {
             "ok": True,
-            "counts": {
-                "kh_cls": 0 if self._is_cleared('kh_cls') else len(getattr(self, 'kh_cls_df', pd.DataFrame())),
-                "cll30n": 0 if self._is_cleared('cll30n') else len(getattr(self, 'cll30n_df', pd.DataFrame())),
-                "tk": 0 if self._is_cleared('tk') else len(getattr(self, 'tk_df', pd.DataFrame())),
-                "bt": 0 if self._is_cleared('bt') else len(getattr(self, 'bt_df', pd.DataFrame())),
-                "ton_tk": 0 if self._is_cleared('ton_tk') else len(getattr(self, 'ton_tk_df', pd.DataFrame())),
-                "ton_bt": 0 if self._is_cleared('ton_bt') else len(getattr(self, 'ton_bt_df', pd.DataFrame()))
-            }
+            "counts": counts
         }
 
     def _enrich_tk_df(self, df_tk: pd.DataFrame) -> pd.DataFrame:
