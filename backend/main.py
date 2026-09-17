@@ -48,15 +48,22 @@ def get_kpi_report(
     block: Optional[str] = Query(default=None),
     search: Optional[str] = Query(default=None)
 ):
-    return engine.get_kpi_report(
-        start_date=start_date,
-        end_date=end_date,
-        team_lead=team_lead,
-        region=region,
-        partner=partner,
-        block=block,
-        search=search
-    )
+    try:
+        report = engine.get_kpi_report(
+            start_date=start_date,
+            end_date=end_date,
+            team_lead=team_lead,
+            region=region,
+            partner=partner,
+            block=block,
+            search=search
+        )
+        return report
+    except Exception as e:
+        import traceback
+        trace = traceback.format_exc()
+        print(f"Error in /api/kpi/report: {e}\n{trace}", flush=True)
+        return JSONResponse(status_code=500, content={"error": str(e), "traceback": trace})
 
 @app.get("/api/kpi/employee/{account}")
 def get_employee_details(
@@ -78,7 +85,13 @@ async def import_ton_tk_bt(file: UploadFile = File(...), mode: Optional[str] = F
 
 @app.get("/api/admin/dataset-counts")
 def get_dataset_counts():
-    return engine.get_dataset_counts()
+    try:
+        return engine.get_dataset_counts()
+    except Exception as e:
+        import traceback
+        trace = traceback.format_exc()
+        print(f"Error in /api/admin/dataset-counts: {e}\n{trace}", flush=True)
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e), "traceback": trace})
 
 @app.post("/api/admin/import-dataset")
 async def import_database_dataset(
@@ -217,28 +230,12 @@ def start_lt_milestone_scheduler():
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
 
-def start_kpi_sheet_auto_scheduler():
-    def auto_sync_loop():
-        print("KPI Google Sheets 3-minute auto-sync scheduler started...", flush=True)
-        time.sleep(10)
-        while True:
-            try:
-                if not engine.is_syncing:
-                    print("Auto-syncing KPI data from Google Sheets to Supabase...", flush=True)
-                    engine.sync_live_data()
-            except Exception as e:
-                print(f"Auto-sync loop error: {e}", flush=True)
-            time.sleep(180)
-
-    t = threading.Thread(target=auto_sync_loop, daemon=True)
-    t.start()
-
-# Start background schedulers
-try:
-    start_lt_milestone_scheduler()
-    start_kpi_sheet_auto_scheduler()
-except Exception as e_sched:
-    print(f"Warning starting schedulers: {e_sched}", flush=True)
+# Start background scheduler for Lịch Trực snapshots (only on persistent servers, not on Vercel Serverless)
+if not os.environ.get("VERCEL") and not os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    try:
+        start_lt_milestone_scheduler()
+    except Exception as e_sched:
+        print(f"Warning starting LT milestone scheduler: {e_sched}", flush=True)
 
 
 # =========================================================================

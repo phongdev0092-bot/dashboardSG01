@@ -21,7 +21,17 @@ GIDS = {
     'BT': '1109348771'
 }
 
-CACHE_DIR = Path(__file__).parent / "data_cache"
+IS_VERCEL = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+if IS_VERCEL:
+    CACHE_DIR = Path("/tmp/data_cache")
+else:
+    CACHE_DIR = Path(__file__).parent / "data_cache"
+
+try:
+    CACHE_DIR.mkdir(exist_ok=True, parents=True)
+except Exception:
+    CACHE_DIR = Path("/tmp/data_cache")
+    CACHE_DIR.mkdir(exist_ok=True, parents=True)
 
 class KPIEngine:
     def __init__(self):
@@ -211,6 +221,14 @@ class KPIEngine:
         t.start()
 
     def _is_cleared(self, name: str) -> bool:
+        try:
+            p = self._cleared_flags_path()
+            if p.exists():
+                with open(p, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self._manually_cleared_datasets = set(data.get('cleared', []))
+        except Exception:
+            pass
         return name in self._manually_cleared_datasets
 
     def get_db_engine(self):
@@ -235,19 +253,18 @@ class KPIEngine:
 
         try:
             from sqlalchemy import create_engine
-            return create_engine(db_url, pool_pre_ping=True, connect_args={"connect_timeout": 10})
+            from sqlalchemy.pool import NullPool
+            return create_engine(
+                db_url,
+                poolclass=NullPool,
+                connect_args={"connect_timeout": 15}
+            )
         except Exception as e:
             print(f"Warning: Failed to create SQLAlchemy DB engine: {e}", flush=True)
             return None
 
     def _save_df_to_supabase(self, df: pd.DataFrame, table_name: str) -> bool:
-        """Save DataFrame to Supabase using fast TRUNCATE + bulk INSERT.
-        
-        Strategy:
-        - TRUNCATE (instant) instead of DROP+CREATE (slow, loses schema)
-        - Bulk INSERT via executemany in chunks of 500 for maximum throughput
-        - Falls back to to_sql on any error
-        """
+        """Save DataFrame to Supabase cleanly using to_sql with if_exists='replace'."""
         if df is None or df.empty:
             return False
         engine = self.get_db_engine()
@@ -277,42 +294,12 @@ class KPIEngine:
                 df_to_save[c] = df_to_save[c].astype(str)
 
             total_rows = len(df_to_save)
-            CHUNK_SIZE = 500
+            CHUNK_SIZE = 1000
 
-            # --- Attempt 1: Fast TRUNCATE + bulk INSERT ---
-            try:
-                from sqlalchemy import text
-                with engine.begin() as conn:
-                    # Try TRUNCATE (fast). If table doesn't exist, fall through to to_sql.
-                    try:
-                        conn.execute(text(f'TRUNCATE TABLE "{table_name}"'))
-                    except Exception:
-                        # Table doesn't exist yet → create it via to_sql then return
-                        df_to_save.to_sql(table_name, conn, if_exists='replace', index=False, chunksize=CHUNK_SIZE)
-                        print(f"[Supabase] Created+inserted {total_rows} rows into '{table_name}'", flush=True)
-                        return True
-
-                    # Bulk INSERT in chunks
-                    cols_quoted = ", ".join(f'"{c}"' for c in df_to_save.columns)
-                    placeholders = ", ".join(f":{c}" for c in df_to_save.columns)
-                    insert_sql = text(f'INSERT INTO "{table_name}" ({cols_quoted}) VALUES ({placeholders})')
-
-                    records = df_to_save.to_dict(orient='records')
-                    for i in range(0, len(records), CHUNK_SIZE):
-                        chunk = records[i:i + CHUNK_SIZE]
-                        conn.execute(insert_sql, chunk)
-
-                print(f"[Supabase] Fast-saved {total_rows} rows to '{table_name}' (TRUNCATE+bulk INSERT)", flush=True)
-                return True
-
-            except Exception as e_fast:
-                print(f"[Supabase] Fast-save failed for '{table_name}': {e_fast} — falling back to to_sql", flush=True)
-
-            # --- Attempt 2: Standard to_sql fallback ---
             for attempt in range(2):
                 try:
                     df_to_save.to_sql(table_name, engine, if_exists='replace', index=False, chunksize=CHUNK_SIZE)
-                    print(f"[Supabase] to_sql saved {total_rows} rows to '{table_name}'", flush=True)
+                    print(f"[Supabase] Successfully saved {total_rows} rows to '{table_name}'", flush=True)
                     return True
                 except Exception as e:
                     if attempt == 0:
@@ -2593,7 +2580,6 @@ class KPIEngine:
                 }
 
             if target == "kh_cls":
-                # Mẫu số: kh_cls_df contains ALL rows from df_inc_processed
                 inc_cls = df_inc_processed.copy()
                 existing_cls = getattr(self, 'kh_cls_df', pd.DataFrame())
                 if existing_cls.empty and (CACHE_DIR / "kh_cls.pkl.gz").exists():
@@ -2610,14 +2596,21 @@ class KPIEngine:
                 self.kh_cls_df = merged_cls
                 self._clear_cleared_flag('kh_cls')
                 self._async_sync_after_import("kh_cls", merged_cls)
+                db_total = len(merged_cls)
 
-                # Tử số: cll30n_df contains rows from df_inc_processed where is_cll30n == True
-                inc_cll = df_inc_processed[df_inc_processed['is_cll30n'] == True]
+            else: # target == "cll30n"
+                inc_cll = df_inc_processed.copy()
+                # If file has non-CLL rows (e.g. user imported a full raw sheet into CLL30N), filter only CLL30N rows
+                if 'is_cll30n' in inc_cll.columns and inc_cll['is_cll30n'].any() and not inc_cll['is_cll30n'].all():
+                    inc_cll = inc_cll[inc_cll['is_cll30n'] == True]
+
                 existing_cll = getattr(self, 'cll30n_df', pd.DataFrame())
                 if existing_cll.empty and (CACHE_DIR / "cll30n.pkl.gz").exists():
                     try: existing_cll = pd.read_pickle(CACHE_DIR / "cll30n.pkl.gz")
                     except Exception: existing_cll = pd.DataFrame()
 
+                added_count = len(inc_cll)
+                skipped_count = total_incoming - added_count
                 if rule == "OVERWRITE" or existing_cll.empty:
                     merged_cll = inc_cll.drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
                 else:
@@ -2625,24 +2618,6 @@ class KPIEngine:
                 self._save_pickle(merged_cll, "cll30n.pkl.gz")
                 self.cll30n_df = merged_cll
                 self._clear_cleared_flag('cll30n')
-                self._async_sync_after_import("cll30n", merged_cll)
-                db_total = len(merged_cls)
-
-            else: # target == "cll30n"
-                existing_cll = getattr(self, 'cll30n_df', pd.DataFrame())
-                if existing_cll.empty and (CACHE_DIR / "cll30n.pkl.gz").exists():
-                    try: existing_cll = pd.read_pickle(CACHE_DIR / "cll30n.pkl.gz")
-                    except Exception: existing_cll = pd.DataFrame()
-
-                added_count = total_incoming
-                skipped_count = 0
-                if rule == "OVERWRITE" or existing_cll.empty:
-                    merged_cll = df_inc_processed.drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
-                else:
-                    merged_cll = pd.concat([existing_cll, df_inc_processed], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
-                self._save_pickle(merged_cll, "cll30n.pkl.gz")
-                self.cll30n_df = merged_cll
-                self._clear_cleared_flag('cll30n')  # IMPORTANT: clear flag so card shows data
                 self._async_sync_after_import("cll30n", merged_cll)
                 db_total = len(merged_cll)
 
