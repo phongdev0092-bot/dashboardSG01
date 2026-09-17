@@ -9,6 +9,8 @@ __pycache__/
 backend/__pycache__/
 backend/data_cache/*.json
 backend/data_cache/*.pkl
+backend/data_cache/*.pkl.gz
+backend/data_cache/*.tmp
 
 # IDE & OS
 .vscode/
