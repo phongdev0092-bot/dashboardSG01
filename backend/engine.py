@@ -45,8 +45,8 @@ class KPIEngine:
         self.lt_snapshot_map = {}
         self.admin_users_df = pd.DataFrame()
         # Tracks datasets that were manually cleared (so auto-sync won't overwrite them)
+        # NOTE: _load_cleared_flags() is called AFTER DATABASE_URL is set (see below)
         self._manually_cleared_datasets: set = set()
-        self._load_cleared_flags()
         # Auto-load .env file if present
         for env_path in [Path(__file__).parent / ".env", Path(__file__).parent.parent / ".env"]:
             if env_path.exists():
@@ -110,42 +110,105 @@ class KPIEngine:
                         self.DATABASE_URL = str(cfg['DATABASE_URL']).strip()
         except Exception:
             pass
+        # Load cleared flags AFTER DATABASE_URL is fully set, so Supabase fallback works
+        self._load_cleared_flags()
         self._load_lt_history_and_snapshot()
         self.load_cache_or_fetch()
 
     # -------------------------------------------------------------------------
     # Cleared-dataset flag helpers
+    # Flags are persisted to BOTH local JSON and Supabase _system_flags table
+    # so they survive container restarts on cloud deployments (Render/Vercel).
     # -------------------------------------------------------------------------
     def _cleared_flags_path(self):
         return CACHE_DIR / "cleared_datasets.json"
 
     def _load_cleared_flags(self):
+        """Load cleared flags: local JSON first, then fallback to Supabase."""
+        loaded = set()
+        # 1. Try local JSON
         try:
             p = self._cleared_flags_path()
             if p.exists():
                 with open(p, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    self._manually_cleared_datasets = set(data.get('cleared', []))
-                    print(f"Loaded cleared-dataset flags: {self._manually_cleared_datasets}", flush=True)
+                    loaded = set(data.get('cleared', []))
+                    print(f"Loaded cleared-dataset flags from local file: {loaded}", flush=True)
         except Exception:
-            self._manually_cleared_datasets = set()
+            pass
+
+        # 2. Fallback / supplement from Supabase _system_flags table
+        try:
+            db_engine = self.get_db_engine()
+            if db_engine:
+                from sqlalchemy import text
+                with db_engine.connect() as conn:
+                    result = conn.execute(text(
+                        "SELECT flag_name FROM _system_flags WHERE flag_type = 'cleared_dataset'"
+                    ))
+                    for row in result:
+                        loaded.add(row[0])
+                print(f"Loaded cleared-dataset flags from Supabase: {loaded}", flush=True)
+        except Exception as e:
+            # Table may not exist yet — that is OK
+            print(f"Info: Could not load cleared flags from Supabase (may not exist yet): {e}", flush=True)
+
+        self._manually_cleared_datasets = loaded
 
     def _save_cleared_flags(self):
+        """Persist cleared flags to local JSON (synchronous, fast)."""
         try:
             CACHE_DIR.mkdir(exist_ok=True, parents=True)
             p = self._cleared_flags_path()
             with open(p, 'w', encoding='utf-8') as f:
                 json.dump({'cleared': list(self._manually_cleared_datasets)}, f)
         except Exception as e:
-            print(f"Warning: could not save cleared-dataset flags: {e}", flush=True)
+            print(f"Warning: could not save cleared-dataset flags to file: {e}", flush=True)
+
+    def _save_cleared_flags_to_supabase(self):
+        """Persist cleared flags to Supabase _system_flags table (async-safe helper)."""
+        try:
+            db_engine = self.get_db_engine()
+            if not db_engine:
+                return
+            from sqlalchemy import text
+            with db_engine.connect() as conn:
+                # Ensure table exists
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS _system_flags (
+                        flag_type TEXT NOT NULL,
+                        flag_name TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT NOW(),
+                        PRIMARY KEY (flag_type, flag_name)
+                    )
+                """))
+                # Remove all cleared_dataset flags then re-insert current set
+                conn.execute(text("DELETE FROM _system_flags WHERE flag_type = 'cleared_dataset'"))
+                for name in self._manually_cleared_datasets:
+                    conn.execute(text(
+                        "INSERT INTO _system_flags (flag_type, flag_name) VALUES ('cleared_dataset', :name)"
+                        " ON CONFLICT (flag_type, flag_name) DO NOTHING"
+                    ), {"name": name})
+                conn.commit()
+            print(f"Saved cleared-dataset flags to Supabase: {self._manually_cleared_datasets}", flush=True)
+        except Exception as e:
+            print(f"Warning: could not save cleared flags to Supabase: {e}", flush=True)
 
     def _set_cleared_flag(self, name: str):
         self._manually_cleared_datasets.add(name)
-        self._save_cleared_flags()
+        self._save_cleared_flags()  # fast local save
+        # Persist to Supabase in background thread so API call returns immediately
+        import threading
+        t = threading.Thread(target=self._save_cleared_flags_to_supabase, daemon=True)
+        t.start()
 
     def _clear_cleared_flag(self, name: str):
         self._manually_cleared_datasets.discard(name)
-        self._save_cleared_flags()
+        self._save_cleared_flags()  # fast local save
+        # Persist to Supabase in background thread
+        import threading
+        t = threading.Thread(target=self._save_cleared_flags_to_supabase, daemon=True)
+        t.start()
 
     def _is_cleared(self, name: str) -> bool:
         return name in self._manually_cleared_datasets
@@ -178,36 +241,78 @@ class KPIEngine:
             return None
 
     def _save_df_to_supabase(self, df: pd.DataFrame, table_name: str) -> bool:
+        """Save DataFrame to Supabase using fast TRUNCATE + bulk INSERT.
+        
+        Strategy:
+        - TRUNCATE (instant) instead of DROP+CREATE (slow, loses schema)
+        - Bulk INSERT via executemany in chunks of 500 for maximum throughput
+        - Falls back to to_sql on any error
+        """
         if df is None or df.empty:
             return False
         engine = self.get_db_engine()
         if engine is None:
             return False
-        
+
         if not hasattr(self, '_sp_save_lock'):
             import threading
             self._sp_save_lock = threading.Lock()
 
         with self._sp_save_lock:
+            # --- Prepare DataFrame ---
+            df_to_save = df.copy()
+            clean_cols = []
+            seen = set()
+            for c in df_to_save.columns:
+                c_clean = str(c).strip().replace(".", "_").replace(" ", "_")
+                base = c_clean
+                idx = 1
+                while c_clean in seen:
+                    c_clean = f"{base}_{idx}"
+                    idx += 1
+                seen.add(c_clean)
+                clean_cols.append(c_clean)
+            df_to_save.columns = clean_cols
+            for c in df_to_save.columns:
+                df_to_save[c] = df_to_save[c].astype(str)
+
+            total_rows = len(df_to_save)
+            CHUNK_SIZE = 500
+
+            # --- Attempt 1: Fast TRUNCATE + bulk INSERT ---
+            try:
+                from sqlalchemy import text
+                with engine.begin() as conn:
+                    # Try TRUNCATE (fast). If table doesn't exist, fall through to to_sql.
+                    try:
+                        conn.execute(text(f'TRUNCATE TABLE "{table_name}"'))
+                    except Exception:
+                        # Table doesn't exist yet → create it via to_sql then return
+                        df_to_save.to_sql(table_name, conn, if_exists='replace', index=False, chunksize=CHUNK_SIZE)
+                        print(f"[Supabase] Created+inserted {total_rows} rows into '{table_name}'", flush=True)
+                        return True
+
+                    # Bulk INSERT in chunks
+                    cols_quoted = ", ".join(f'"{c}"' for c in df_to_save.columns)
+                    placeholders = ", ".join(f":{c}" for c in df_to_save.columns)
+                    insert_sql = text(f'INSERT INTO "{table_name}" ({cols_quoted}) VALUES ({placeholders})')
+
+                    records = df_to_save.to_dict(orient='records')
+                    for i in range(0, len(records), CHUNK_SIZE):
+                        chunk = records[i:i + CHUNK_SIZE]
+                        conn.execute(insert_sql, chunk)
+
+                print(f"[Supabase] Fast-saved {total_rows} rows to '{table_name}' (TRUNCATE+bulk INSERT)", flush=True)
+                return True
+
+            except Exception as e_fast:
+                print(f"[Supabase] Fast-save failed for '{table_name}': {e_fast} — falling back to to_sql", flush=True)
+
+            # --- Attempt 2: Standard to_sql fallback ---
             for attempt in range(2):
                 try:
-                    df_to_save = df.copy()
-                    clean_cols = []
-                    seen = set()
-                    for c in df_to_save.columns:
-                        c_clean = str(c).strip().replace(".", "_").replace(" ", "_")
-                        base = c_clean
-                        idx = 1
-                        while c_clean in seen:
-                            c_clean = f"{base}_{idx}"
-                            idx += 1
-                        seen.add(c_clean)
-                        clean_cols.append(c_clean)
-                    df_to_save.columns = clean_cols
-                    for c in df_to_save.columns:
-                        df_to_save[c] = df_to_save[c].astype(str)
-                    df_to_save.to_sql(table_name, engine, if_exists='replace', index=False, chunksize=1000)
-                    print(f"Successfully saved {len(df_to_save)} rows to Supabase table '{table_name}'", flush=True)
+                    df_to_save.to_sql(table_name, engine, if_exists='replace', index=False, chunksize=CHUNK_SIZE)
+                    print(f"[Supabase] to_sql saved {total_rows} rows to '{table_name}'", flush=True)
                     return True
                 except Exception as e:
                     if attempt == 0:
@@ -244,6 +349,10 @@ class KPIEngine:
                 for dt_col in ['dt_complete', 'dt_created', 'sort_dt', 'date_complete']:
                     if dt_col in df.columns:
                         df[dt_col] = pd.to_datetime(df[dt_col], errors='coerce')
+                # Normalize boolean columns
+                for bool_col in ['is_clps_7n_bt', 'is_cll30n', 'is_gsafe', 'is_swap']:
+                    if bool_col in df.columns:
+                        df[bool_col] = df[bool_col].astype(str).str.strip().str.lower().isin(['true', '1', 't'])
                 return df
         except Exception as e:
             print(f"Info: Could not load table '{table_name}' from Supabase: {e}", flush=True)
@@ -571,14 +680,24 @@ class KPIEngine:
             return False
 
     def _async_sync_after_import(self, target_name: str, df_target: pd.DataFrame):
-        try:
-            self._save_df_to_supabase(df_target, target_name)
-        except Exception as e:
-            print(f"Post-import Supabase save warning for '{target_name}': {e}", flush=True)
-        try:
-            self._push_dataset_to_google_sheet(target_name, df_target)
-        except Exception as e:
-            print(f"Post-import Google Sheet push warning for '{target_name}': {e}", flush=True)
+        """Trigger Supabase + Google Sheet sync in a true background thread.
+        The import API call returns immediately; upload happens asynchronously.
+        """
+        import threading
+
+        def _do_sync():
+            try:
+                self._save_df_to_supabase(df_target, target_name)
+            except Exception as e:
+                print(f"Post-import Supabase save warning for '{target_name}': {e}", flush=True)
+            try:
+                self._push_dataset_to_google_sheet(target_name, df_target)
+            except Exception as e:
+                print(f"Post-import Google Sheet push warning for '{target_name}': {e}", flush=True)
+
+        t = threading.Thread(target=_do_sync, daemon=True)
+        t.start()
+        print(f"[Import] Background sync started for '{target_name}' ({len(df_target) if df_target is not None else 0} rows)", flush=True)
 
 
     def _is_custom_ton_imported(self, name: str) -> bool:
@@ -641,22 +760,27 @@ class KPIEngine:
         if tk_df.empty and not self._is_cleared('tk'):
             sp_tk = self._load_df_from_supabase("tk")
             if not sp_tk.empty:
-                tk_df = sp_tk
+                tk_df = self._enrich_tk_df(sp_tk)
+                self._save_pickle(tk_df, "tk.pkl.gz")
 
         if bt_df.empty and not self._is_cleared('bt'):
             sp_bt = self._load_df_from_supabase("bt")
             if not sp_bt.empty:
-                bt_df = sp_bt
+                bt_df = self._enrich_bt_df(sp_bt)
+                self._save_pickle(bt_df, "bt.pkl.gz")
 
+        # If local cache is empty for kh_cls and cll30n, load from Supabase (unless manually cleared)
         if kh_cls_df.empty and not self._is_cleared('kh_cls'):
             sp_kh_cls = self._load_df_from_supabase("kh_cls")
             if not sp_kh_cls.empty:
                 kh_cls_df = sp_kh_cls
+                self._save_pickle(kh_cls_df, "kh_cls.pkl.gz")
 
         if cll30n_df.empty and not self._is_cleared('cll30n'):
-            sp_cll30n = self._load_df_from_supabase("cll30n")
-            if not sp_cll30n.empty:
-                cll30n_df = sp_cll30n
+            sp_cll = self._load_df_from_supabase("cll30n")
+            if not sp_cll.empty:
+                cll30n_df = sp_cll
+                self._save_pickle(cll30n_df, "cll30n.pkl.gz")
 
         if not hr_df.empty and not tk_df.empty and not bt_df.empty:
             try:
@@ -719,24 +843,19 @@ class KPIEngine:
             df_cll30n = pd.DataFrame() if self._is_cleared('cll30n') else (self.cll30n_df if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else _get_df_local("cll30n"))
             df_kh_cls = pd.DataFrame() if self._is_cleared('kh_cls') else (self.kh_cls_df if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else _get_df_local("kh_cls"))
 
-            # kh_cls & cll30n are import-only. On cold start (no local pickle), fall back to Supabase.
+            # kh_cls & cll30n are IMPORT-ONLY datasets.
+            # If empty and NOT cleared, load from Supabase fallback (e.g. cold restart)
             if df_cll30n.empty and not self._is_cleared('cll30n'):
-                try:
-                    sp = self._load_df_from_supabase("cll30n")
-                    if not sp.empty:
-                        df_cll30n = sp
-                        print(f"Loaded cll30n from Supabase ({len(df_cll30n)} rows) as fallback.", flush=True)
-                except Exception as e:
-                    print(f"Warning: cll30n Supabase fallback failed: {e}", flush=True)
+                sp_cll = self._load_df_from_supabase("cll30n")
+                if not sp_cll.empty:
+                    df_cll30n = sp_cll
+                    self._save_pickle(df_cll30n, "cll30n.pkl.gz")
 
             if df_kh_cls.empty and not self._is_cleared('kh_cls'):
-                try:
-                    sp = self._load_df_from_supabase("kh_cls")
-                    if not sp.empty:
-                        df_kh_cls = sp
-                        print(f"Loaded kh_cls from Supabase ({len(df_kh_cls)} rows) as fallback.", flush=True)
-                except Exception as e:
-                    print(f"Warning: kh_cls Supabase fallback failed: {e}", flush=True)
+                sp_kh_cls = self._load_df_from_supabase("kh_cls")
+                if not sp_kh_cls.empty:
+                    df_kh_cls = sp_kh_cls
+                    self._save_pickle(df_kh_cls, "kh_cls.pkl.gz")
 
             # Fetch live data from designated Google Sheets for Dashboard KPIs & Lịch trực
             try:
@@ -747,27 +866,19 @@ class KPIEngine:
             except Exception as e_hr:
                 print(f"Warning: HR sheet fetch failed: {e_hr}", flush=True)
 
-            # 1. Khối Lượng Công Việc Triển Khai (TK): Sheet ID 1UhOfDJ99n01nYr577fQC-LPlMd8ByP5APJcBXSUXyoQ (GID 0)
-            try:
-                print("Fetching live TK data from Sheet...", flush=True)
-                res_tk = requests.get(self._get_tk_sheet_url(), timeout=30)
-                if res_tk.status_code == 200 and not res_tk.text.strip().startswith('<!DOCTYPE'):
-                    df_tk_fetched = pd.read_csv(io.BytesIO(res_tk.content), encoding='utf-8', low_memory=False)
-                    if not df_tk_fetched.empty:
-                        df_tk = df_tk_fetched
-            except Exception as e_tk:
-                print(f"Warning: TK sheet fetch failed: {e_tk}", flush=True)
+            # Data Triển Khai (TK) and Bảo Trì (BT) are managed via Supabase (Phương Án B).
+            # They are loaded from Supabase and NOT fetched from Google Sheet.
+            if df_tk.empty and not self._is_cleared('tk'):
+                sp_tk = self._load_df_from_supabase("tk")
+                if not sp_tk.empty:
+                    df_tk = self._enrich_tk_df(sp_tk)
+                    self._save_pickle(df_tk, "tk.pkl.gz")
 
-            # 2. Khối Lượng Công Việc Bảo Trì (BT): Sheet ID 1GC7Z4nmLf6fFr-eE6epazkan8mJ2QcUv5ThUdT4usI0 (GID 0)
-            try:
-                print("Fetching live BT data from Sheet...", flush=True)
-                res_bt = requests.get(self._get_bt_sheet_url(), timeout=30)
-                if res_bt.status_code == 200 and not res_bt.text.strip().startswith('<!DOCTYPE'):
-                    df_bt_fetched = pd.read_csv(io.BytesIO(res_bt.content), encoding='utf-8', low_memory=False)
-                    if not df_bt_fetched.empty:
-                        df_bt = df_bt_fetched
-            except Exception as e_bt:
-                print(f"Warning: BT sheet fetch failed: {e_bt}", flush=True)
+            if df_bt.empty and not self._is_cleared('bt'):
+                sp_bt = self._load_df_from_supabase("bt")
+                if not sp_bt.empty:
+                    df_bt = self._enrich_bt_df(sp_bt)
+                    self._save_pickle(df_bt, "bt.pkl.gz")
 
             # kh_cls and cll30n are IMPORT-ONLY datasets.
             # They must NOT be auto-fetched from Google Sheets during sync.
@@ -834,13 +945,8 @@ class KPIEngine:
             self._save_pickle(df_tk, "tk.pkl.gz")
             self._save_pickle(df_bt, "bt.pkl.gz")
 
-            # Save to Supabase (TK and BT only – fetched from Sheet during sync)
-            # kh_cls and cll30n: already saved to Supabase by import operations; no re-save needed here
+            # TK, BT, kh_cls, cll30n are managed via Supabase (saved during import operations)
             # lt, ton_tk, ton_bt: Google Sheet is source of truth – no Supabase persistence
-            if not df_tk.empty and not self._is_cleared('tk'):
-                self._save_df_to_supabase(df_tk, "tk")
-            if not df_bt.empty and not self._is_cleared('bt'):
-                self._save_df_to_supabase(df_bt, "bt")
 
             self.hr_df = df_hr
             self.tk_df = df_tk
@@ -2382,6 +2488,16 @@ class KPIEngine:
                     setattr(self, attr, df)
                 except Exception:
                     pass
+            # If still empty and not cleared, load from Supabase for database-backed datasets
+            if (df is None or df.empty) and target in ("kh_cls", "cll30n", "tk", "bt"):
+                try:
+                    sp_df = self._load_df_from_supabase(target)
+                    if sp_df is not None and not sp_df.empty:
+                        df = sp_df
+                        setattr(self, attr, df)
+                        self._save_pickle(df, cache_name)
+                except Exception:
+                    pass
 
         return {
             "ok": True,
@@ -2528,6 +2644,7 @@ class KPIEngine:
                     merged_cll = pd.concat([existing_cll, df_inc_processed], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
                 self._save_pickle(merged_cll, "cll30n.pkl.gz")
                 self.cll30n_df = merged_cll
+                self._clear_cleared_flag('cll30n')  # IMPORTANT: clear flag so card shows data
                 self._async_sync_after_import("cll30n", merged_cll)
                 db_total = len(merged_cll)
 
