@@ -690,10 +690,8 @@ class KPIEngine:
                 self._save_df_to_supabase(df_target, target_name)
             except Exception as e:
                 print(f"Post-import Supabase save warning for '{target_name}': {e}", flush=True)
-            try:
-                self._push_dataset_to_google_sheet(target_name, df_target)
-            except Exception as e:
-                print(f"Post-import Google Sheet push warning for '{target_name}': {e}", flush=True)
+            # kh_cls, cll30n, tk, bt are 100% on Supabase — ZERO connection with Google Sheet.
+            # No data is pushed to Google Sheet.
 
         t = threading.Thread(target=_do_sync, daemon=True)
         t.start()
@@ -2918,28 +2916,24 @@ class KPIEngine:
             self.kh_cls_df = pd.DataFrame()
             _safe_remove_cache("kh_cls.pkl.gz")
             _drop_sp_table("kh_cls")
-            self._push_dataset_to_google_sheet("kh_cls", pd.DataFrame())
             self._set_cleared_flag('kh_cls')
             label = "KH Có Cls (Data Base)"
         elif target_clean == "cll30n":
             self.cll30n_df = pd.DataFrame()
             _safe_remove_cache("cll30n.pkl.gz")
             _drop_sp_table("cll30n")
-            self._push_dataset_to_google_sheet("cll30n", pd.DataFrame())
             self._set_cleared_flag('cll30n')
             label = "CLL30N (Data Base)"
         elif target_clean == "tk":
             self.tk_df = pd.DataFrame()
             _safe_remove_cache("tk.pkl.gz")
             _drop_sp_table("tk")
-            self._push_dataset_to_google_sheet("tk", pd.DataFrame())
             self._set_cleared_flag('tk')
             label = "Data Triển Khai (TK)"
         elif target_clean == "bt":
             self.bt_df = pd.DataFrame()
             _safe_remove_cache("bt.pkl.gz")
             _drop_sp_table("bt")
-            self._push_dataset_to_google_sheet("bt", pd.DataFrame())
             self._set_cleared_flag('bt')
             label = "Data Bảo Trì (BT)"
         elif target_clean == "ton_tk":
@@ -2973,7 +2967,6 @@ class KPIEngine:
                 _safe_remove_cache(fname)
             for tbl in ["kh_cls", "cll30n", "tk", "bt", "ton_tk", "ton_bt"]:
                 _drop_sp_table(tbl)
-                self._push_dataset_to_google_sheet(tbl, pd.DataFrame())
             # Set cleared flags for all datasets so auto-sync won't refetch
             for ds in ['kh_cls', 'cll30n', 'tk', 'bt', 'ton_tk', 'ton_bt']:
                 self._set_cleared_flag(ds)
