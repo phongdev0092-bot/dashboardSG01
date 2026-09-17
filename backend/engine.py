@@ -955,6 +955,7 @@ class KPIEngine:
             self.last_sync_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
             self._process_metadata()
+            self._auto_enrich_hr_from_tickets()
             elapsed = time.time() - t0
             print(f"Synced live data in {elapsed:.2f}s!", flush=True)
             self.is_syncing = False
@@ -969,26 +970,223 @@ class KPIEngine:
     def _process_metadata(self):
         # Build employee metadata map
         self.emp_map = {}
+        if self.hr_df is None or self.hr_df.empty:
+            self.team_leads = []
+            self.regions = []
+            self.partners = []
+            self.blocks = []
+            return
+
+        col_acc = self._find_col(self.hr_df, ['Inside Account', 'account', 'inside'], default_idx=6 if len(self.hr_df.columns) > 6 else None) or 'Inside Account'
+        col_name = self._find_col(self.hr_df, ['Họ Tên NV', 'name', 'ho_ten'], default_idx=4 if len(self.hr_df.columns) > 4 else None) or 'Họ Tên NV'
+        col_code = self._find_col(self.hr_df, ['Mã NV', 'code', 'ma_nv'], default_idx=5 if len(self.hr_df.columns) > 5 else None) or 'Mã NV'
+        col_tl = self._find_col(self.hr_df, ['Họ tên Đội trưởng', 'team_lead', 'doi_truong'], default_idx=24 if len(self.hr_df.columns) > 24 else None) or 'Họ tên Đội trưởng'
+        col_reg = self._find_col(self.hr_df, ['Vùng', 'region', 'vung'], default_idx=1 if len(self.hr_df.columns) > 1 else None) or 'Vùng'
+        col_part = self._find_col(self.hr_df, ['Đối tác', 'partner', 'doi_tac'], default_idx=2 if len(self.hr_df.columns) > 2 else None) or 'Đối tác'
+        col_blk = self._find_col(self.hr_df, ['Block', 'block'], default_idx=3 if len(self.hr_df.columns) > 3 else None) or 'Block'
+        col_pos = self._find_col(self.hr_df, ['Chức danh', 'position', 'chuc_danh'], default_idx=14 if len(self.hr_df.columns) > 14 else None) or 'Chức danh'
+        col_stat = self._find_col(self.hr_df, ['Tình trạng Hợp đồng', 'status'], default_idx=13 if len(self.hr_df.columns) > 13 else None) or 'Tình trạng Hợp đồng'
+
         for _, row in self.hr_df.iterrows():
-            acc = row.get('Inside Account', '')
-            if acc and acc != 'NAN':
+            acc = str(row.get(col_acc, '') or '').strip()
+            if acc and acc.upper() != 'NAN':
+                tl = str(row.get(col_tl, '') or '').strip()
+                if not tl or tl.lower() in ('nan', 'none', '-', '', 'null'):
+                    tl = 'Chưa xác nhận'
                 self.emp_map[acc] = {
                     'account': acc,
-                    'name': row.get('Họ Tên NV', acc),
-                    'code': row.get('Mã NV', ''),
-                    'team_lead': row.get('Họ tên Đội trưởng', ''),
-                    'region': row.get('Vùng', ''),
-                    'partner': row.get('Đối tác', ''),
-                    'block': row.get('Block', ''),
-                    'position': row.get('Chức danh', ''),
-                    'status': row.get('Tình trạng Hợp đồng', '')
+                    'name': str(row.get(col_name, acc) or acc).strip(),
+                    'code': str(row.get(col_code, '') or '').strip(),
+                    'team_lead': tl,
+                    'region': str(row.get(col_reg, '') or '').strip(),
+                    'partner': str(row.get(col_part, '') or '').strip(),
+                    'block': str(row.get(col_blk, '') or '').strip(),
+                    'position': str(row.get(col_pos, '') or '').strip(),
+                    'status': str(row.get(col_stat, '') or '').strip()
                 }
 
         # Dynamic dropdown options
-        self.team_leads = sorted([x for x in self.hr_df['Họ tên Đội trưởng'].dropna().unique() if str(x).strip() and str(x) != 'nan'])
-        self.regions = sorted([x for x in self.hr_df['Vùng'].dropna().unique() if str(x).strip() and str(x) != 'nan'])
-        self.partners = sorted([x for x in self.hr_df['Đối tác'].dropna().unique() if str(x).strip() and str(x) != 'nan'])
-        self.blocks = sorted([x for x in self.hr_df['Block'].dropna().unique() if str(x).strip() and str(x) != 'nan'])
+        tl_list = [
+            str(x).strip() 
+            for x in self.hr_df[col_tl].dropna().unique() 
+            if str(x).strip() and str(x).strip().lower() not in ('nan', 'none', '-', '', 'null')
+        ]
+        has_unconfirmed = any(v.get('team_lead') == 'Chưa xác nhận' for v in self.emp_map.values())
+        if has_unconfirmed and 'Chưa xác nhận' not in tl_list:
+            tl_list.append('Chưa xác nhận')
+        self.team_leads = sorted(list(set(tl_list)))
+        self.regions = sorted([str(x).strip() for x in self.hr_df[col_reg].dropna().unique() if str(x).strip() and str(x).strip().lower() not in ('nan', 'none', '-', '', 'null')])
+        self.partners = sorted([str(x).strip() for x in self.hr_df[col_part].dropna().unique() if str(x).strip() and str(x).strip().lower() not in ('nan', 'none', '-', '', 'null')])
+        self.blocks = sorted([str(x).strip() for x in self.hr_df[col_blk].dropna().unique() if str(x).strip() and str(x).strip().lower() not in ('nan', 'none', '-', '', 'null')])
+
+    def _auto_enrich_hr_from_tickets(self):
+        """
+        Tự động phát hiện và bổ sung nhân sự kỹ thuật từ các ca hoàn tất TK / BT vào dữ liệu HR.
+        Quy tắc nghiệp vụ FPT SG01:
+        1. Mỗi Đội Trưởng quản lý các Block tương ứng cố định (1 block chỉ có 1 đội trưởng).
+        2. Nếu một nhân sự có ca hoàn tất TK/BT nhưng chưa có trong danh sách HR:
+           - Xác định Block từ phiếu thi công / bảo trì của nhân sự đó.
+           - Tra cứu Đội Trưởng quản lý Block đó trong dữ liệu HR:
+             + Nếu Block chỉ gắn với đúng 1 Đội Trưởng: tự động gán Đội Trưởng đó cho nhân sự.
+             + Nếu Block gắn nhiều hơn 1 Đội Trưởng (hoặc Block mới chưa có Đội Trưởng): gán Đội Trưởng = 'Chưa xác nhận'.
+           - Tự động thêm Inside Account, Block, Đội Trưởng vào HR data, lưu cache và đồng bộ Supabase.
+        3. Tự động đưa 'Chưa xác nhận' vào danh sách filter Đội Trưởng để người dùng lọc và quản lý đầy đủ.
+        """
+        if self.hr_df is None or self.hr_df.empty:
+            return
+
+        col_blk_hr = self._find_col(self.hr_df, ['Block', 'block'], default_idx=3 if len(self.hr_df.columns) > 3 else None)
+        col_tl_hr = self._find_col(self.hr_df, ['Họ tên Đội trưởng', 'team_lead', 'doi_truong'], default_idx=24 if len(self.hr_df.columns) > 24 else None)
+        col_acc_hr = self._find_col(self.hr_df, ['Inside Account', 'account', 'inside'], default_idx=6 if len(self.hr_df.columns) > 6 else None) or 'Inside Account'
+
+        if not col_blk_hr or not col_tl_hr:
+            return
+
+        # 1. Build mapping Block -> Đội Trưởng từ dữ liệu HR hiện hữu
+        block_to_tls = {}
+        for _, row in self.hr_df.iterrows():
+            blk = str(row.get(col_blk_hr, '') or '').strip()
+            tl = str(row.get(col_tl_hr, '') or '').strip()
+            if not blk or blk.lower() in ('nan', 'none', '-', '', 'null'):
+                continue
+            if not tl or tl.lower() in ('nan', 'none', '-', '', 'null', 'chưa xác nhận', 'chua xac nhan'):
+                continue
+            if blk not in block_to_tls:
+                block_to_tls[blk] = set()
+            block_to_tls[blk].add(tl)
+
+        block_to_single_tl = {}
+        for blk, tls in block_to_tls.items():
+            if len(tls) == 1:
+                block_to_single_tl[blk] = list(tls)[0]
+            else:
+                # 1 block nhiều đội trưởng -> coi như Chưa xác nhận
+                block_to_single_tl[blk] = 'Chưa xác nhận'
+
+        # 2. Danh sách Inside Account hiện có trong HR
+        existing_accs = {
+            str(x).strip().upper() 
+            for x in self.hr_df[col_acc_hr].dropna() 
+            if str(x).strip() and str(x).strip().upper() not in ('NAN', 'NONE', '-', 'NULL')
+        }
+
+        # 3. Quét các dataset ca vụ (TK, BT, KH_CLS, CLL30N)
+        candidate_datasets = []
+        if self.tk_df is not None and not self.tk_df.empty:
+            candidate_datasets.append(('tk', self.tk_df))
+        if self.bt_df is not None and not self.bt_df.empty:
+            candidate_datasets.append(('bt', self.bt_df))
+        if hasattr(self, 'kh_cls_df') and self.kh_cls_df is not None and not self.kh_cls_df.empty:
+            candidate_datasets.append(('kh_cls', self.kh_cls_df))
+        if hasattr(self, 'cll30n_df') and self.cll30n_df is not None and not self.cll30n_df.empty:
+            candidate_datasets.append(('cll30n', self.cll30n_df))
+
+        new_staff_info = {}
+
+        for ds_name, df in candidate_datasets:
+            col_nv = self._get_required_col(df, ['Nhân viên', 'Nhân sự', 'nhan_vien', 'Account hoàn tất', 'Inside Account'])
+            if not col_nv or col_nv not in df.columns:
+                continue
+
+            col_blk = self._find_col(df, ['Block', 'Block quản lý', 'block'])
+            col_dt = self._find_col(df, ['Đối tác', 'Đối tác quản lý', 'doi_tac'])
+            col_vung = self._find_col(df, ['Vùng', 'vung', 'Chi nhánh', 'chi_nhanh'])
+
+            for _, row in df.iterrows():
+                acc = str(row.get(col_nv, '') or '').strip().upper()
+                if not acc or acc in ('NAN', 'NONE', '-', '', 'NULL'):
+                    continue
+                if acc in existing_accs:
+                    continue
+
+                blk = str(row.get(col_blk, '') or '').strip() if col_blk else ''
+                dt = str(row.get(col_dt, '') or '').strip() if col_dt else ''
+                vung = str(row.get(col_vung, '') or '').strip() if col_vung else 'SG01'
+
+                if acc not in new_staff_info:
+                    new_staff_info[acc] = {
+                        'blocks': {},
+                        'partners': {},
+                        'regions': {}
+                    }
+                
+                if blk and blk.lower() not in ('nan', 'none', '-', 'null'):
+                    new_staff_info[acc]['blocks'][blk] = new_staff_info[acc]['blocks'].get(blk, 0) + 1
+                if dt and dt.lower() not in ('nan', 'none', '-', 'null'):
+                    new_staff_info[acc]['partners'][dt] = new_staff_info[acc]['partners'].get(dt, 0) + 1
+                if vung and vung.lower() not in ('nan', 'none', '-', 'null'):
+                    new_staff_info[acc]['regions'][vung] = new_staff_info[acc]['regions'].get(vung, 0) + 1
+
+        has_changes = False
+
+        # 4. Bổ sung nhân viên mới phát sinh
+        if new_staff_info:
+            print(f"[Auto-Enrich HR] Phát hiện {len(new_staff_info)} nhân sự kỹ thuật từ ca vụ TK/BT chưa có trong HR data!", flush=True)
+            new_rows = []
+            for acc, info in new_staff_info.items():
+                best_blk = '-'
+                if info['blocks']:
+                    best_blk = max(info['blocks'].items(), key=lambda x: x[1])[0]
+
+                best_dt = ''
+                if info['partners']:
+                    best_dt = max(info['partners'].items(), key=lambda x: x[1])[0]
+                if not best_dt:
+                    if acc.startswith('PNC01'): best_dt = 'Phương Nam-01'
+                    elif acc.startswith('PNC03'): best_dt = 'Phương Nam-03'
+                    elif acc.startswith('PNC04'): best_dt = 'Phương Nam-04'
+                    elif acc.startswith('PNFTI'): best_dt = 'PN-FTI'
+                    else: best_dt = 'Phương Nam'
+
+                best_vung = 'SG01'
+                if info['regions']:
+                    best_vung = max(info['regions'].items(), key=lambda x: x[1])[0]
+
+                # Quy tắc: Nếu Block đó gán nhiều đội trưởng thì xem như chưa xác nhận đội trưởng -> 'Chưa xác nhận'
+                assigned_tl = block_to_single_tl.get(best_blk, 'Chưa xác nhận')
+
+                new_record = {col: '' for col in self.hr_df.columns}
+                new_record[col_acc_hr] = acc
+                if 'Họ Tên NV' in self.hr_df.columns:
+                    new_record['Họ Tên NV'] = acc
+                if col_blk_hr in self.hr_df.columns:
+                    new_record[col_blk_hr] = best_blk
+                if col_tl_hr in self.hr_df.columns:
+                    new_record[col_tl_hr] = assigned_tl
+                if 'Đối tác' in self.hr_df.columns:
+                    new_record['Đối tác'] = best_dt
+                if 'Vùng' in self.hr_df.columns:
+                    new_record['Vùng'] = best_vung
+                if 'Chức danh' in self.hr_df.columns:
+                    new_record['Chức danh'] = 'Kỹ thuật viên'
+                if 'Tình trạng Hợp đồng' in self.hr_df.columns:
+                    new_record['Tình trạng Hợp đồng'] = 'Đang hoạt động'
+                if 'Tình trạng Tài khoản' in self.hr_df.columns:
+                    new_record['Tình trạng Tài khoản'] = 'Active'
+                if 'Phân công' in self.hr_df.columns:
+                    new_record['Phân công'] = 'Tính lương'
+
+                new_rows.append(new_record)
+                existing_accs.add(acc)
+
+            if new_rows:
+                self.hr_df = pd.concat([self.hr_df, pd.DataFrame(new_rows)], ignore_index=True)
+                has_changes = True
+
+        # 5. Rà soát lại các nhân sự HR hiện có nhưng bị trống Đội Trưởng
+        for idx, row in self.hr_df.iterrows():
+            current_tl = str(row.get(col_tl_hr, '') or '').strip()
+            blk = str(row.get(col_blk_hr, '') or '').strip()
+            if not current_tl or current_tl.lower() in ('nan', 'none', '-', '', 'null'):
+                new_tl = block_to_single_tl.get(blk, 'Chưa xác nhận')
+                self.hr_df.at[idx, col_tl_hr] = new_tl
+                has_changes = True
+
+        if has_changes:
+            self._save_pickle(self.hr_df, "hr.pkl.gz")
+            self._async_sync_after_import("hr", self.hr_df)
+            self._process_metadata()
+            print(f"[Auto-Enrich HR] Đã hoàn tất đồng bộ HR: {len(self.hr_df)} nhân sự!", flush=True)
 
     def format_rt(self, val_hours):
         if pd.isna(val_hours) or val_hours is None or val_hours < 0:
@@ -1074,6 +1272,9 @@ class KPIEngine:
                 if not sp_cll.empty:
                     self.cll30n_df = sp_cll
                     self._save_pickle(self.cll30n_df, "cll30n.pkl.gz")
+
+        # 6. Auto-enrich missing staff from tickets into HR data
+        self._auto_enrich_hr_from_tickets()
 
     def get_kpi_report(self, start_date=None, end_date=None, team_lead=None, region=None, partner=None, block=None, search=None):
         t0 = time.time()
@@ -2907,6 +3108,10 @@ class KPIEngine:
             # ton_bt uses Google Sheet as source of truth; no Supabase persistence needed
         else:
             return {"ok": False, "error": "Bảng dữ liệu mục tiêu không hợp lệ."}
+
+        # Auto-enrich HR metadata if imported ticket datasets
+        if target in ("tk", "bt", "kh_cls", "cll30n"):
+            self._auto_enrich_hr_from_tickets()
 
         return {
             "ok": True,

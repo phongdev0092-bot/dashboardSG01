@@ -3664,7 +3664,11 @@ export default function App() {
                               </TableCell>
 
                               <TableCell sx={{ borderRight: '1px solid #f0f0f0' }}>
-                                <Typography variant="body2" sx={{ fontWeight: 600, color: '#3c4043' }}>{emp.team_lead}</Typography>
+                                {emp.team_lead === 'Chưa xác nhận' ? (
+                                  <Chip label="⚠️ Chưa xác nhận" size="small" sx={{ height: 22, fontSize: '11px', fontWeight: 800, backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }} />
+                                ) : (
+                                  <Typography variant="body2" sx={{ fontWeight: 600, color: '#3c4043' }}>{emp.team_lead}</Typography>
+                                )}
                                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.25, alignItems: 'center' }}>
                                   {emp.region && <Chip label={emp.region} size="small" sx={{ height: 18, fontSize: '10px', backgroundColor: '#e8f0fe', color: '#1a73e8' }} />}
                                   {emp.block && <Chip label={emp.block} size="small" sx={{ height: 18, fontSize: '10px', backgroundColor: '#f1f5f9', color: '#475569' }} />}
@@ -5393,8 +5397,13 @@ export default function App() {
                                       </TableCell>
                                       <TableCell sx={{ fontSize: '12px' }}>{row.mail}</TableCell>
                                       <TableCell sx={{ fontSize: '12px' }}>{row.phone}</TableCell>
-                                      <TableCell sx={{ fontWeight: 700, color: '#334155' }}>{row.block}</TableCell>
-                                      <TableCell sx={{ fontSize: '12px' }}>{row.team_lead}</TableCell>
+                                      <TableCell sx={{ fontSize: '12px' }}>
+                                        {row.team_lead === 'Chưa xác nhận' ? (
+                                          <Chip label="⚠️ Chưa xác nhận" size="small" sx={{ height: 20, fontSize: '10px', fontWeight: 800, backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }} />
+                                        ) : (
+                                          row.team_lead
+                                        )}
+                                      </TableCell>
                                       <TableCell sx={{ fontSize: '12px' }}>{row.title}</TableCell>
                                       <TableCell>
                                         <Chip
