@@ -1061,6 +1061,7 @@ export default function App() {
     regions: [],
     partners: [],
     blocks: [],
+    blocks_by_teamlead: {},
     last_sync_time: null,
     is_syncing: false
   });
@@ -1105,6 +1106,15 @@ export default function App() {
       }, 500);
     }
   };
+
+  // Computed: Danh sách Block phụ thuộc vào Đội trưởng đang chọn
+  // Nếu chọn Đội trưởng A thì chỉ hiện blocks của A, không hiện tất cả
+  const filteredBlocks = useMemo(() => {
+    if (!selectedTeamLead) return options.blocks || [];
+    const byTl = options.blocks_by_teamlead || {};
+    return byTl[selectedTeamLead] || options.blocks || [];
+  }, [selectedTeamLead, options.blocks, options.blocks_by_teamlead]);
+
 
   // Sorting & Pagination
   const [orderBy, setOrderBy] = useState('total_dung_hen_pct');
@@ -1160,6 +1170,7 @@ export default function App() {
   // Tồn TK-BT System States
   const [tonTkBtData, setTonTkBtData] = useState(null);
   const [tonTkBtLoading, setTonTkBtLoading] = useState(false);
+  const [tonSyncing, setTonSyncing] = useState(false);
   const [tonTkBtSubTab, setTonTkBtSubTab] = useState('summary'); // 'summary' | 'details'
   const [tonTkBtDoiTruong, setTonTkBtDoiTruong] = useState('__ALL__');
   const [tonTkBtBlockFilter, setTonTkBtBlockFilter] = useState('__ALL__');
@@ -1264,6 +1275,21 @@ export default function App() {
   const [dbUploading, setDbUploading] = useState(false);
   const [dbResult, setDbResult] = useState(null);
   const dbInputRef = useRef(null);
+
+  // ===== PERMISSION HELPERS =====
+  // hasApp: kiểm tra user có quyền truy cập app/feature cụ thể không
+  // Admin có tất cả quyền. User thường chỉ có quyền trong allowed_apps
+  const isAdmin = currentUser?.role === 'admin';
+  const hasApp = (app) => {
+    if (!currentUser) return false;
+    if (isAdmin) return true; // admin luôn có tất cả quyền
+    const apps = currentUser.allowed_apps || [];
+    return apps.some(a => a.toLowerCase() === app.toLowerCase() || a.toLowerCase() === 'all');
+  };
+  // canImport: chỉ admin hoặc user có quyền ImportDB mới được import
+  const canImport = hasApp('ImportDB');
+  // canManageUsers: chỉ admin hoặc user có quyền UserMgmt
+  const canManageUsers = isAdmin || hasApp('UserMgmt');
 
   // Clear Dataset Modal States
   const [clearModalOpen, setClearModalOpen] = useState(false);
@@ -1966,6 +1992,10 @@ export default function App() {
       return () => clearInterval(timer);
     } else if (currentNav === 'ton_tk_bt') {
       fetchTonTkBtDashboard();
+      const tonTimer = setInterval(() => {
+        fetchTonTkBtDashboard();
+      }, 60000);
+      return () => clearInterval(tonTimer);
     } else if (currentNav === 'admin') {
       fetchAdminUsers();
       fetchAdminHrList();
@@ -2046,6 +2076,8 @@ export default function App() {
       await fetchReport();
       if (currentNav === 'lich_truc') {
         fetchLichTrucDashboard();
+      } else if (currentNav === 'ton_tk_bt') {
+        fetchTonTkBtDashboard(true);
       }
     } catch (err) {
       console.error("Sync error:", err);
@@ -2210,10 +2242,12 @@ export default function App() {
   };
 
   // Fetch Tồn TK-BT Dashboard Data
-  const fetchTonTkBtDashboard = async () => {
+  const fetchTonTkBtDashboard = async (force = false) => {
     setTonTkBtLoading(true);
     try {
-      const res = await axios.get('/api/kpi/ton-tk-bt/dashboard');
+      const res = await axios.get('/api/kpi/ton-tk-bt/dashboard', {
+        params: force ? { force: true } : {}
+      });
       setTonTkBtData(res.data);
     } catch (err) {
       console.error("Failed to fetch Tồn TK-BT dashboard:", err);
@@ -2222,11 +2256,23 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    if (currentNav === 'ton_tk_bt' && !tonTkBtData) {
-      fetchTonTkBtDashboard();
+  // Explicit sync Tồn TK-BT from Supabase Cloud / Remote
+  const handleSyncTonTkBt = async () => {
+    setTonSyncing(true);
+    try {
+      const res = await axios.post('/api/kpi/ton-tk-bt/sync');
+      if (res.data && res.data.dashboard) {
+        setTonTkBtData(res.data.dashboard);
+      } else {
+        await fetchTonTkBtDashboard(true);
+      }
+    } catch (err) {
+      console.error("Sync Tồn TK-BT error:", err);
+      await fetchTonTkBtDashboard(true);
+    } finally {
+      setTonSyncing(false);
     }
-  }, [currentNav]);
+  };
 
   // Dynamic Top Stat Cards Metrics based on Active Filters (Đội Trưởng & Block)
   const dynamicTonTkBtMetrics = useMemo(() => {
@@ -3087,6 +3133,38 @@ export default function App() {
                 Xuất Excel
               </Button>
             )}
+
+            {currentNav === 'ton_tk_bt' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                {tonTkBtData?.lastSyncTime && (
+                  <Chip
+                    size="small"
+                    label={`Cập nhật: ${tonTkBtData.lastSyncTime}`}
+                    variant="outlined"
+                    sx={{ fontWeight: 600, fontSize: '11px', display: { xs: 'none', sm: 'inline-flex' }, borderColor: '#cbd5e1' }}
+                  />
+                )}
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  startIcon={tonSyncing ? <CircularProgress size={14} color="inherit" /> : <RefreshIcon sx={{ fontSize: '18px' }} />}
+                  onClick={handleSyncTonTkBt}
+                  disabled={tonSyncing}
+                  sx={{
+                    borderRadius: '18px',
+                    textTransform: 'none',
+                    px: 2,
+                    fontWeight: 700,
+                    fontSize: '13px',
+                    backgroundColor: '#1a73e8',
+                    boxShadow: '0 2px 6px rgba(26,115,232,0.3)'
+                  }}
+                >
+                  {tonSyncing ? 'Đang kéo data...' : '🔄 Đồng Bộ Tồn'}
+                </Button>
+              </Box>
+            )}
           </Paper>
 
           {/* VIEW CONTENT CONTAINER */}
@@ -3111,12 +3189,12 @@ export default function App() {
                         <AssignmentIcon sx={{ color: '#1a73e8', fontSize: 22 }} />
                       </Box>
                       <Typography variant="h4" sx={{ fontWeight: 800, color: '#1a73e8', letterSpacing: '-1px' }}>
-                        {summary.tk_volume_kpi || 0}
+                        {summary.tk_total_volume ?? ((summary.tk_volume_kpi || 0) + (summary.tk_swap_volume || 0) + (summary.tk_gsafe_volume || 0))}
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.5 }}>
-                        ✅ Đúng: <strong>{summary.tk_dung_hen_1 || 0}</strong> | ❌ Trễ: <strong>{summary.tk_dung_hen_0 || 0}</strong>
+                        Tính KPI: <strong>{summary.tk_volume_kpi || 0}</strong> (✅ {summary.tk_dung_hen_1 || 0} | ❌ {summary.tk_dung_hen_0 || 0})
                       </Typography>
-                      <Box sx={{ mt: 0.5 }}>
+                      <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.8, flexWrap: 'wrap' }}>
                         <Chip
                           label={`🔥 >72H: ${summary.tk_gt_72h || 0} phiếu`}
                           size="small"
@@ -3128,7 +3206,24 @@ export default function App() {
                             color: (summary.tk_gt_72h || 0) > 0 ? '#ffffff' : '#616161'
                           }}
                         />
+                        {(summary.tk_swap_volume || 0) > 0 && (
+                          <Chip
+                            label={`Swap: ${summary.tk_swap_volume}`}
+                            size="small"
+                            sx={{
+                              fontWeight: 700,
+                              fontSize: '11px',
+                              height: 22,
+                              backgroundColor: '#f3e8ff',
+                              color: '#7c3aed',
+                              border: '1px solid #d8b4fe'
+                            }}
+                          />
+                        )}
                       </Box>
+                      <Typography variant="caption" sx={{ color: '#1a73e8', fontWeight: 700, display: 'block', mt: 0.8 }}>
+                        Đúng hẹn TK: {summary.tk_dung_hen_pct || 0}%
+                      </Typography>
 
                       <Button
                         size="small"
@@ -3413,7 +3508,11 @@ export default function App() {
                         fullWidth
                         size="small"
                         value={selectedTeamLead}
-                        onChange={(e) => setSelectedTeamLead(e.target.value)}
+                        onChange={(e) => {
+                          setSelectedTeamLead(e.target.value);
+                          // Reset block khi đổi đội trưởng để tránh chọn block không thuộc đội
+                          setSelectedBlock('');
+                        }}
                         sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#fafafa' } }}
                       >
                         <MenuItem value="">-- Tất cả Đội Trưởng --</MenuItem>
@@ -3454,8 +3553,8 @@ export default function App() {
                         onChange={(e) => setSelectedBlock(e.target.value)}
                         sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#fafafa' } }}
                       >
-                        <MenuItem value="">-- Tất cả Block --</MenuItem>
-                        {(options.blocks || []).map((b) => (
+                        <MenuItem value="">-- Tất cả Block {selectedTeamLead ? `(${filteredBlocks.length})` : ''} --</MenuItem>
+                        {filteredBlocks.map((b) => (
                           <MenuItem key={b} value={b}>{b}</MenuItem>
                         ))}
                       </TextField>
@@ -4506,7 +4605,19 @@ export default function App() {
                       <Typography variant="h6" sx={{ fontWeight: 800, color: '#202124' }}>
                         BẢNG TỔNG HỢP TỒN THEO BLOCK & ĐỘI TRƯỜNG
                       </Typography>
-                      <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          color="primary"
+                          startIcon={tonSyncing ? <CircularProgress size={14} color="inherit" /> : <RefreshIcon sx={{ fontSize: '16px' }} />}
+                          onClick={handleSyncTonTkBt}
+                          disabled={tonSyncing}
+                          sx={{ borderRadius: 2, fontWeight: 700, textTransform: 'none', px: 1.5, py: 0.5, fontSize: '12px' }}
+                          title="Kéo data tồn mới nhất từ Supabase Cloud / Vercel"
+                        >
+                          {tonSyncing ? 'Đang kéo...' : 'Đồng bộ Tồn'}
+                        </Button>
                         <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043' }}>Đội Trưởng:</FormLabel>
                         <TextField
                           select
@@ -4670,18 +4781,29 @@ export default function App() {
                           </TextField>
                         </Grid>
 
-                        <Grid item xs={12} sm={6} md={2.5}>
+                        <Grid item xs={12} sm={6} md={2}>
                           <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>Tìm Kiếm</FormLabel>
                           <TextField
                             fullWidth
                             size="small"
-                            placeholder="Nhập SHD, Tên KH, Block, KTV..."
+                            placeholder="Nhập SHD, Tên KH..."
                             value={tonTkBtSearch}
                             onChange={(e) => setTonTkBtSearch(e.target.value)}
                           />
                         </Grid>
 
-                        <Grid item xs={12} sm={6} md={3} sx={{ display: 'flex', gap: 1, mt: 2.5 }}>
+                        <Grid item xs={12} sm={6} md={3.5} sx={{ display: 'flex', gap: 1, mt: 2.5 }}>
+                          <Button
+                            variant="outlined"
+                            color="primary"
+                            startIcon={tonSyncing ? <CircularProgress size={14} color="inherit" /> : <RefreshIcon sx={{ fontSize: '18px' }} />}
+                            onClick={handleSyncTonTkBt}
+                            disabled={tonSyncing}
+                            sx={{ borderRadius: 2, height: 40, fontWeight: 700, minWidth: '105px', px: 1.5, textTransform: 'none' }}
+                            title="Kéo data tồn mới nhất từ Supabase Cloud / Vercel"
+                          >
+                            {tonSyncing ? 'Đang kéo...' : 'Đồng bộ'}
+                          </Button>
                           <Button
                             variant="contained"
                             color="primary"
@@ -5152,7 +5274,12 @@ export default function App() {
                       activeColor: '#0ea5e9',
                       badge: `${adminLoadingSlides.length || 0} Slides`
                     }
-                  ].map((topic) => {
+                  ].filter((topic) => {
+                    // An cac tab yeu cau quyen: id=1 (Phan Quyen) chi admin, id=2 (Import) can ImportDB
+                    if (topic.id === 1 && !isAdmin) return false;
+                    if (topic.id === 2 && !canImport) return false;
+                    return true;
+                  }).map((topic) => {
                     const isSelected = adminSubTab === topic.id;
 
                     return (

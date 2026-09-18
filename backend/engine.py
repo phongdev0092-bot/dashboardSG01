@@ -757,6 +757,20 @@ class KPIEngine:
 
         self.hr_df = hr_df
         self.lt_df = lt_df
+
+        # If local cache is empty for ton_tk/ton_bt, load from Supabase
+        if ton_tk_df.empty and not self._is_cleared('ton_tk'):
+            sp_ton_tk = self._load_df_from_supabase("ton_tk")
+            if not sp_ton_tk.empty:
+                ton_tk_df = sp_ton_tk
+                self._save_pickle(ton_tk_df, "ton_tk.pkl.gz")
+
+        if ton_bt_df.empty and not self._is_cleared('ton_bt'):
+            sp_ton_bt = self._load_df_from_supabase("ton_bt")
+            if not sp_ton_bt.empty:
+                ton_bt_df = sp_ton_bt
+                self._save_pickle(ton_bt_df, "ton_bt.pkl.gz")
+
         self.ton_tk_df = ton_tk_df
         self.ton_bt_df = ton_bt_df
 
@@ -926,13 +940,9 @@ class KPIEngine:
                 if 'Đối tác' in df_hr.columns: df_hr['Đối tác'] = df_hr['Đối tác'].astype(str).str.strip()
                 if 'Block' in df_hr.columns: df_hr['Block'] = df_hr['Block'].astype(str).str.strip()
 
-            # Process TK
-            if not df_tk.empty:
-                df_tk = self._enrich_tk_df(df_tk)
-
-            # Process BT
-            if not df_bt.empty:
-                df_bt = self._enrich_bt_df(df_bt)
+            # NOTE: TK and BT are already enriched when loaded from Supabase (lines above).
+            # Do NOT call _enrich_tk_df / _enrich_bt_df again here to avoid double-processing
+            # (which corrupts is_gsafe, is_swap, dung_hen, rt_hours).
 
             # Save to Cache
             self._save_pickle(df_cll30n, "cll30n.pkl.gz")
@@ -1018,6 +1028,17 @@ class KPIEngine:
         self.regions = sorted([str(x).strip() for x in self.hr_df[col_reg].dropna().unique() if str(x).strip() and str(x).strip().lower() not in ('nan', 'none', '-', '', 'null')])
         self.partners = sorted([str(x).strip() for x in self.hr_df[col_part].dropna().unique() if str(x).strip() and str(x).strip().lower() not in ('nan', 'none', '-', '', 'null')])
         self.blocks = sorted([str(x).strip() for x in self.hr_df[col_blk].dropna().unique() if str(x).strip() and str(x).strip().lower() not in ('nan', 'none', '-', '', 'null')])
+
+        # Build blocks_by_teamlead map: team_lead -> sorted list of blocks they manage
+        btl = {}
+        for v in self.emp_map.values():
+            tl = v.get('team_lead', '')
+            blk = v.get('block', '')
+            if tl and blk and blk.lower() not in ('nan', 'none', '-', '', 'null'):
+                if tl not in btl:
+                    btl[tl] = set()
+                btl[tl].add(blk)
+        self.blocks_by_teamlead = {tl: sorted(list(blks)) for tl, blks in btl.items()}
 
     def _auto_enrich_hr_from_tickets(self):
         """
@@ -1304,8 +1325,10 @@ class KPIEngine:
             bt = bt[bt['date_complete'] >= s_d]
 
         if e_d:
-            tk = tk[tk['date_complete'] <= e_d]
-            bt = bt[bt['date_complete'] <= e_d]
+            # Include the full end day (up to 23:59:59) so tickets completed on end_date are included
+            e_d_end = e_d + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            tk = tk[tk['date_complete'] <= e_d_end]
+            bt = bt[bt['date_complete'] <= e_d_end]
 
         # Filter KH Co Cls by date range
         cls = self.kh_cls_df.copy() if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else pd.DataFrame()
@@ -1315,7 +1338,8 @@ class KPIEngine:
             if s_d:
                 cls = cls[cls['date_complete'] >= s_d]
             if e_d:
-                cls = cls[cls['date_complete'] <= e_d]
+                e_d_end_cls = e_d + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                cls = cls[cls['date_complete'] <= e_d_end_cls]
 
         # Get list of accounts matching metadata filters
         allowed_accounts = set(self.emp_map.keys())
@@ -1349,7 +1373,8 @@ class KPIEngine:
             if s_d:
                 cll = cll[cll['date_complete'] >= s_d]
             if e_d:
-                cll = cll[cll['date_complete'] <= e_d]
+                e_d_end_cll = e_d + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                cll = cll[cll['date_complete'] <= e_d_end_cll]
 
         if team_lead or region or partner or block or search:
             if not cll.empty and 'Nhân viên' in cll.columns:
@@ -1429,9 +1454,11 @@ class KPIEngine:
         tot_all = tk_tot + bt_tot
         total_dh_pct = round((tot_1 / tot_all * 100), 2) if tot_all > 0 else 0.0
 
-        # CLL30N % Aggregation (Tử số: cll_tot, CLPS 7N BT: clps7n_tot, Mẫu số: cls_tot if loaded, else cll_tot)
-        cll_tot = len(cll)
-        cls_tot = len(cls) if not cls.empty else cll_tot
+        # CLL30N % Aggregation
+        # Tử số CLL30N: chỉ đếm rows có is_cll30n=True (ca lặp thực sự ≤30 ngày)
+        # Mẫu số: tổng KH Có Cls (kh_cls dataset), fallback sang len(cll) nếu kh_cls trống
+        cll_tot = int((cll['is_cll30n'] == True).sum()) if not cll.empty and 'is_cll30n' in cll.columns else 0
+        cls_tot = len(cls) if not cls.empty else (len(cll) if not cll.empty else 0)
         clps7n_tot = int((cll['is_clps_7n_bt'] == True).sum()) if not cll.empty and 'is_clps_7n_bt' in cll.columns else 0
         cll30n_pct = round((cll_tot / cls_tot * 100), 2) if cls_tot > 0 else 0.0
         clps7n_pct = round((clps7n_tot / cls_tot * 100), 2) if cls_tot > 0 else 0.0
@@ -1507,8 +1534,16 @@ class KPIEngine:
                 'total': len(group)
             }
 
-        cll_dict = {acc: len(group) for acc, group in cll_grp} if not isinstance(cll_grp, dict) else {}
-        clps7n_dict = {acc: int((group['is_clps_7n_bt'] == True).sum()) for acc, group in cll_grp} if not isinstance(cll_grp, dict) else {}
+        # Employee CLL30N: đếm chỉ rows is_cll30n=True (ca lặp thực sự), không đếm tất cả rows
+        if not isinstance(cll_grp, dict):
+            cll_dict = {
+                acc: int((group['is_cll30n'] == True).sum()) if 'is_cll30n' in group.columns else len(group)
+                for acc, group in cll_grp
+            }
+            clps7n_dict = {acc: int((group['is_clps_7n_bt'] == True).sum()) for acc, group in cll_grp}
+        else:
+            cll_dict = {}
+            clps7n_dict = {}
         cls_dict = {acc: len(group) for acc, group in cls_grp} if not isinstance(cls_grp, dict) else {}
 
         for acc in sorted(active_accs):
@@ -1647,6 +1682,7 @@ class KPIEngine:
                 'total_nv_active': len(emp_rows),
                 
                 # TK
+                'tk_total_volume': len(tk),
                 'tk_volume_kpi': tk_tot,
                 'tk_dung_hen_pct': tk_dh_pct,
                 'tk_dung_hen_1': tk_1,
@@ -2462,7 +2498,82 @@ class KPIEngine:
         self._save_lt_history_and_snapshot()
         return {"ok": True}
 
-    def get_ton_tk_bt_dashboard(self):
+    def sync_ton_tk_bt(self, force=False):
+        """
+        Sync Tồn TK & BT datasets between Local, Supabase Cloud, and Google Sheet fallback.
+        Ensures updates made on Vercel are immediately pulled when running locally.
+        """
+        now_str = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+        sources = []
+
+        # 1. Check Supabase for Tồn TK
+        if not self._is_cleared('ton_tk'):
+            try:
+                sp_tk = self._load_df_from_supabase("ton_tk")
+                if sp_tk is not None and not sp_tk.empty:
+                    self.ton_tk_df = sp_tk
+                    self._save_pickle(self.ton_tk_df, "ton_tk.pkl.gz")
+                    self._set_custom_ton_imported("ton_tk")
+                    sources.append(f"Supabase Tồn TK ({len(sp_tk)} phiếu)")
+            except Exception as e_sp_tk:
+                print(f"Warning loading ton_tk from Supabase: {e_sp_tk}", flush=True)
+
+        # 2. Check Supabase for Tồn BT
+        if not self._is_cleared('ton_bt'):
+            try:
+                sp_bt = self._load_df_from_supabase("ton_bt")
+                if sp_bt is not None and not sp_bt.empty:
+                    self.ton_bt_df = sp_bt
+                    self._save_pickle(self.ton_bt_df, "ton_bt.pkl.gz")
+                    self._set_custom_ton_imported("ton_bt")
+                    sources.append(f"Supabase Tồn BT ({len(sp_bt)} phiếu)")
+            except Exception as e_sp_bt:
+                print(f"Warning loading ton_bt from Supabase: {e_sp_bt}", flush=True)
+
+        # 3. If Tồn TK is still empty (or force and no Supabase data), fallback to Google Sheet
+        if (getattr(self, 'ton_tk_df', pd.DataFrame()).empty or (force and not any('Tồn TK' in s for s in sources))) and not self._is_cleared('ton_tk'):
+            try:
+                res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
+                if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_tk_fetched = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
+                    if not df_ton_tk_fetched.empty:
+                        self.ton_tk_df = df_ton_tk_fetched
+                        self._save_pickle(self.ton_tk_df, "ton_tk.pkl.gz")
+                        sources.append(f"Google Sheet Tồn TK ({len(df_ton_tk_fetched)} phiếu)")
+            except Exception as e_sheet_tk:
+                print(f"Fallback Tồn TK Sheet error: {e_sheet_tk}", flush=True)
+
+        # 4. If Tồn BT is still empty (or force and no Supabase data), fallback to Google Sheet
+        if (getattr(self, 'ton_bt_df', pd.DataFrame()).empty or (force and not any('Tồn BT' in s for s in sources))) and not self._is_cleared('ton_bt'):
+            try:
+                res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
+                if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
+                    df_ton_bt_fetched = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
+                    if not df_ton_bt_fetched.empty:
+                        self.ton_bt_df = df_ton_bt_fetched
+                        self._save_pickle(self.ton_bt_df, "ton_bt.pkl.gz")
+                        sources.append(f"Google Sheet Tồn BT ({len(df_ton_bt_fetched)} phiếu)")
+            except Exception as e_sheet_bt:
+                print(f"Fallback Tồn BT Sheet error: {e_sheet_bt}", flush=True)
+
+        self.ton_last_sync_time = now_str
+        self.ton_sync_source = ", ".join(sources) if sources else "Local Cache"
+        return {
+            "ok": True,
+            "message": f"Đồng bộ thành công lúc {now_str} [{self.ton_sync_source}]",
+            "lastSyncTime": self.ton_last_sync_time,
+            "syncSource": self.ton_sync_source,
+            "totalTK": len(getattr(self, 'ton_tk_df', pd.DataFrame())),
+            "totalBT": len(getattr(self, 'ton_bt_df', pd.DataFrame()))
+        }
+
+    def get_ton_tk_bt_dashboard(self, force=False):
+        now = time.time()
+        last_fetch = getattr(self, '_last_ton_fetch_time', 0)
+        if force or (now - last_fetch > 60) or getattr(self, 'ton_tk_df', pd.DataFrame()).empty or getattr(self, 'ton_bt_df', pd.DataFrame()).empty:
+            self.sync_ton_tk_bt(force=force)
+            self._last_ton_fetch_time = now
+
         self._refresh_lt_from_sheet()
         ns_by_block, hr_map = self._get_nhan_su_by_block()
         import unicodedata
@@ -2654,7 +2765,9 @@ class KPIEngine:
             })
 
         return {
-            'generatedAt': datetime.datetime.now().strftime('%d/%m/%Y %H:%M'),
+            'generatedAt': datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S'),
+            'lastSyncTime': getattr(self, 'ton_last_sync_time', None) or datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S'),
+            'syncSource': getattr(self, 'ton_sync_source', 'Local Cache'),
             'totalAll': count_all,
             'totalTK': count_tk_total,
             'totalBT': count_bt_total,
@@ -2688,10 +2801,12 @@ class KPIEngine:
                 detected_mode = "TK"
 
         imported_count = len(df)
+        now_str = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
 
         if detected_mode == "TK":
             self.ton_tk_df = df
             self._set_custom_ton_imported("ton_tk")
+            self._clear_cleared_flag('ton_tk')
             try:
                 df.to_pickle(CACHE_DIR / "ton_tk.pkl.gz")
             except Exception as e:
@@ -2705,18 +2820,27 @@ class KPIEngine:
             except Exception as e_w:
                 print(f"Warning: WebApp background sync error: {e_w}", flush=True)
             label = "Tồn Triển Khai (TK)"
+            self.ton_last_sync_time = now_str
+            self.ton_sync_source = f"Import TK File ({imported_count} phiếu)"
         else:
             self.ton_bt_df = df
             self._set_custom_ton_imported("ton_bt")
+            self._clear_cleared_flag('ton_bt')
             try:
                 df.to_pickle(CACHE_DIR / "ton_bt.pkl.gz")
             except Exception as e:
                 print(f"Warning saving ton_bt cache: {e}", flush=True)
             try:
+                self._save_df_to_supabase(df, "ton_bt")
+            except Exception as e_sp:
+                print(f"Warning saving ton_bt to Supabase: {e_sp}", flush=True)
+            try:
                 self._sync_ton_dataset_to_webapp("ton_bt", df)
             except Exception as e_w:
                 print(f"Warning: WebApp background sync error: {e_w}", flush=True)
             label = "Tồn Bảo Trì (BT)"
+            self.ton_last_sync_time = now_str
+            self.ton_sync_source = f"Import BT File ({imported_count} phiếu)"
 
         return {
             "ok": True,
@@ -2900,9 +3024,26 @@ class KPIEngine:
             col_hd = self._get_required_col(df_incoming, ['Số hợp đồng', 'Số HĐ', 'so_hd'])
             col_nv = self._get_required_col(df_incoming, ['Nhân viên', 'Nhân sự', 'nhan_vien'])
 
+            # Cross-dataset guard: reject BT file khi import vào TK
+            # BT files thường có cột TG Tạo/TG Hoàn Tất nhưng KHÔNG có TG tạo PTC
+            bt_signature_cols = ['ttscbđ', 'tg hoàn tất', 'tg tạo', 'tồn giờ', 'hạn còn lại']
+            tk_signature_cols = ['tg tạo ptc', 'ngày tạo ptc', 'tg hoàn tất ptc', 'loại triển khai', 'tin/pnc', 'ptc']
+            has_bt_sig = any(m in cols_lower for m in bt_signature_cols)
+            has_tk_sig = any(m in cols_lower for m in tk_signature_cols)
+            if has_bt_sig and not has_tk_sig:
+                return {
+                    "ok": False,
+                    "error": f"❌ Sai Loại File! File có vẻ là dữ liệu Bảo Trì (BT) (phát hiện cột: TG Tạo/TG Hoàn Tất) nhưng bạn đang import vào Triển Khai (TK). Vui lòng chọn đúng loại dataset!"
+                }
+
             missing_cols = []
             if not col_hd: missing_cols.append("Số hợp đồng")
             if not col_nv: missing_cols.append("Nhân viên")
+
+            # Kiểm tra cột Đúng hẹn (bắt buộc để tính KPI)
+            col_dh = self._find_col(df_incoming, ['Đúng hẹn', 'dung_hen', 'Đúng Hẹn'])
+            if not col_dh:
+                missing_cols.append("Đúng hẹn (cột xác định kết quả đúng/trễ hẹn)")
 
             if missing_cols:
                 return {
@@ -2951,9 +3092,25 @@ class KPIEngine:
             col_hd = self._get_required_col(df_incoming, ['Số HĐ', 'Số hợp đồng', 'so_hd'])
             col_nv = self._get_required_col(df_incoming, ['Nhân viên', 'Nhân sự', 'nhan_vien'])
 
+            # Cross-dataset guard: reject TK file khi import vào BT
+            tk_signature_cols = ['tg tạo ptc', 'ngày tạo ptc', 'tg hoàn tất ptc', 'loại triển khai', 'tin/pnc']
+            bt_signature_cols = ['ttscbđ', 'tg hoàn tất', 'tg tạo']
+            has_tk_sig = any(m in cols_lower for m in tk_signature_cols)
+            has_bt_sig = any(m in cols_lower for m in bt_signature_cols)
+            if has_tk_sig and not has_bt_sig:
+                return {
+                    "ok": False,
+                    "error": f"❌ Sai Loại File! File có vẻ là dữ liệu Triển Khai (TK) (phát hiện cột: TG tạo PTC/Loại triển khai) nhưng bạn đang import vào Bảo Trì (BT). Vui lòng chọn đúng loại dataset!"
+                }
+
             missing_cols = []
             if not col_hd: missing_cols.append("Số HĐ")
             if not col_nv: missing_cols.append("Nhân viên")
+
+            # Kiểm tra cột Đúng hẹn (bắt buộc để tính KPI)
+            col_dh = self._find_col(df_incoming, ['Đúng hẹn', 'dung_hen', 'Đúng Hẹn'])
+            if not col_dh:
+                missing_cols.append("Đúng hẹn (cột xác định kết quả đúng/trễ hẹn)")
 
             if missing_cols:
                 return {
@@ -3050,7 +3207,12 @@ class KPIEngine:
             self._save_pickle(merged_df, "ton_tk.pkl.gz")
             self.ton_tk_df = merged_df
             db_total = len(merged_df)
-            # ton_tk uses Google Sheet as source of truth; no Supabase persistence needed
+            self._set_custom_ton_imported("ton_tk")
+            self._clear_cleared_flag('ton_tk')
+            try:
+                self._save_df_to_supabase(merged_df, "ton_tk")
+            except Exception as e_sp:
+                print(f"Warning saving ton_tk to Supabase in import_database_dataset: {e_sp}", flush=True)
 
         elif target == "ton_bt":
             target_label = "Tồn Bảo Trì (BT)"
@@ -3105,7 +3267,12 @@ class KPIEngine:
             self._save_pickle(merged_df, "ton_bt.pkl.gz")
             self.ton_bt_df = merged_df
             db_total = len(merged_df)
-            # ton_bt uses Google Sheet as source of truth; no Supabase persistence needed
+            self._set_custom_ton_imported("ton_bt")
+            self._clear_cleared_flag('ton_bt')
+            try:
+                self._save_df_to_supabase(merged_df, "ton_bt")
+            except Exception as e_sp:
+                print(f"Warning saving ton_bt to Supabase in import_database_dataset: {e_sp}", flush=True)
         else:
             return {"ok": False, "error": "Bảng dữ liệu mục tiêu không hợp lệ."}
 

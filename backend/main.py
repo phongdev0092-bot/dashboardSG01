@@ -35,6 +35,7 @@ def get_filter_options():
         "regions": engine.regions,
         "partners": engine.partners,
         "blocks": engine.blocks,
+        "blocks_by_teamlead": getattr(engine, 'blocks_by_teamlead', {}),
         "last_sync_time": engine.last_sync_time,
         "is_syncing": engine.is_syncing,
         "sync_error": engine.sync_error
@@ -111,8 +112,18 @@ def get_employee_details(
     return engine.get_employee_details(account, start_date=start_date, end_date=end_date)
 
 @app.get("/api/kpi/ton-tk-bt/dashboard")
-def get_ton_tk_bt_dashboard():
-    return engine.get_ton_tk_bt_dashboard()
+def get_ton_tk_bt_dashboard(force: bool = Query(default=False)):
+    return engine.get_ton_tk_bt_dashboard(force=force)
+
+@app.post("/api/kpi/ton-tk-bt/sync")
+def sync_ton_tk_bt(force: bool = Query(default=True)):
+    res = engine.sync_ton_tk_bt(force=force)
+    dashboard = engine.get_ton_tk_bt_dashboard(force=False)
+    return {
+        "ok": True,
+        "sync_info": res,
+        "dashboard": dashboard
+    }
 
 @app.post("/api/kpi/ton-tk-bt/import")
 async def import_ton_tk_bt(file: UploadFile = File(...), mode: Optional[str] = Form("AUTO")):
@@ -129,6 +140,33 @@ def get_dataset_counts():
         trace = traceback.format_exc()
         print(f"Error in /api/admin/dataset-counts: {e}\n{trace}", flush=True)
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e), "traceback": trace})
+
+@app.get("/api/debug/data-status")
+def get_debug_data_status():
+    """Public endpoint to diagnose why KPIs might be empty (no auth required)."""
+    try:
+        counts = engine.get_dataset_counts()
+        tk_cols = list(engine.tk_df.columns)[:10] if engine.tk_df is not None and not engine.tk_df.empty else []
+        bt_cols = list(engine.bt_df.columns)[:10] if engine.bt_df is not None and not engine.bt_df.empty else []
+        return {
+            "ok": True,
+            "dataset_counts": counts.get("counts", {}),
+            "in_memory": {
+                "tk": len(engine.tk_df) if engine.tk_df is not None and not engine.tk_df.empty else 0,
+                "bt": len(engine.bt_df) if engine.bt_df is not None and not engine.bt_df.empty else 0,
+                "kh_cls": len(engine.kh_cls_df) if engine.kh_cls_df is not None and not engine.kh_cls_df.empty else 0,
+                "cll30n": len(engine.cll30n_df) if engine.cll30n_df is not None and not engine.cll30n_df.empty else 0,
+                "hr": len(engine.hr_df) if engine.hr_df is not None and not engine.hr_df.empty else 0,
+            },
+            "tk_sample_columns": tk_cols,
+            "bt_sample_columns": bt_cols,
+            "emp_map_size": len(engine.emp_map),
+            "last_sync_time": engine.last_sync_time,
+            "has_db_connection": engine.get_db_engine() is not None,
+        }
+    except Exception as e:
+        import traceback
+        return {"ok": False, "error": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/api/admin/import-dataset")
 async def import_database_dataset(
