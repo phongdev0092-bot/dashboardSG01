@@ -104,7 +104,11 @@ import {
   Visibility as ViewIcon,
   VisibilityOff as VisibilityOffIcon,
   Save as SaveIcon,
-  CheckCircleOutlined as CheckCircleOutlineIcon
+  CheckCircleOutlined as CheckCircleOutlineIcon,
+  ReceiptLong as ReceiptLongIcon,
+  Paid as PaidIcon,
+  TrendingDown as TrendingDownIcon,
+  Percent as PercentIcon
 } from '@mui/icons-material';
 
 import axios from 'axios';
@@ -1090,6 +1094,10 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
+
+  // KPI Dịch Vụ State
+  const [dichVuData, setDichVuData] = useState(null);
+  const [dichVuLoading, setDichVuLoading] = useState(false);
   // Global app initialization loading state (SOP Showcase)
   const [appInitializing, setAppInitializing] = useState(true);
   const appInitRef = useRef({ optionsDone: false, reportDone: false });
@@ -1829,6 +1837,21 @@ export default function App() {
     }
   };
 
+  // Fetch KPI Dịch Vụ from Google Sheet
+  const fetchDichVu = async () => {
+    setDichVuLoading(true);
+    try {
+      const res = await axios.get('/api/dich-vu/report');
+      if (res.data && res.data.ok) {
+        setDichVuData(res.data.rows || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch KPI Dịch Vụ:', err);
+    } finally {
+      setDichVuLoading(false);
+    }
+  };
+
   // Lịch Trực API Calls
   const fetchLichTrucDashboard = async (targetDate = ltDate) => {
     setLtLoading(true);
@@ -1961,6 +1984,7 @@ export default function App() {
     fetchOptions();
     fetchTonTkBtDashboard();
     fetchAdminLoadingSlides();
+    fetchDichVu();
   }, []);
 
   // Smooth loading progress animation
@@ -3456,6 +3480,220 @@ export default function App() {
                     </CardContent>
                   </Card>
 
+                </Box>
+
+                {/* ========================================================================= */}
+                {/* KPI DỊCH VỤ SECTION                                                       */}
+                {/* ========================================================================= */}
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {/* Section Header */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box sx={{ width: 5, height: 28, borderRadius: 2, backgroundColor: '#0277bd' }} />
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#01579b', letterSpacing: '0.5px' }}>
+                        📊 KPIs DỊCH VỤ
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500 }}>
+                        (Công nợ & Rời mạng — từ Sheet theo dõi dịch vụ)
+                      </Typography>
+                    </Box>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={fetchDichVu}
+                      disabled={dichVuLoading}
+                      sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 700, fontSize: '12px', color: '#0277bd', borderColor: '#0277bd' }}
+                    >
+                      {dichVuLoading ? '⏳ Đang tải...' : '🔄 Cập nhật'}
+                    </Button>
+                  </Box>
+
+                  {/* 5 Metric Cards */}
+                  {(() => {
+                    // Tính tổng / trung bình từ dichVuData
+                    const dvRows = dichVuData || [];
+                    const validRows = dvRows.filter(r => r.tong_hoa_don !== null);
+                    const tongHD = validRows.reduce((s, r) => s + (r.tong_hoa_don || 0), 0);
+                    const tiLeDaTTArr = dvRows.filter(r => r.ti_le_da_tt !== null).map(r => r.ti_le_da_tt);
+                    const avgTiLeDaTT = tiLeDaTTArr.length > 0 ? (tiLeDaTTArr.reduce((a, b) => a + b, 0) / tiLeDaTTArr.length) : null;
+                    const rmKHTotal = dvRows.filter(r => r.roi_mang_kh !== null).reduce((s, r) => s + (r.roi_mang_kh || 0), 0);
+                    const rmDKTotal = dvRows.filter(r => r.roi_mang_du_kien !== null).reduce((s, r) => s + (r.roi_mang_du_kien || 0), 0);
+                    const pctRMArr = dvRows.filter(r => r.pct_rm_hien_tai !== null).map(r => r.pct_rm_hien_tai);
+                    const avgPctRM = pctRMArr.length > 0 ? (pctRMArr.reduce((a, b) => a + b, 0) / pctRMArr.length) : null;
+
+                    const cardBase = {
+                      elevation: 0,
+                      sx: { borderRadius: 3, backgroundColor: '#ffffff', height: '100%' }
+                    };
+
+                    return (
+                      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(5, 1fr)' }, gap: 2 }}>
+
+                        {/* Card: Tổng Hóa Đơn */}
+                        <Card {...cardBase} sx={{ ...cardBase.sx, border: '1px solid #b3e5fc', borderLeft: '6px solid #0288d1' }}>
+                          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                              <Typography variant="overline" sx={{ color: '#0288d1', fontWeight: 800, fontSize: '10px' }}>
+                                TỔNG HÓA ĐƠN (F)
+                              </Typography>
+                              <ReceiptLongIcon sx={{ color: '#0288d1', fontSize: 20 }} />
+                            </Box>
+                            <Typography variant="h5" sx={{ fontWeight: 800, color: '#01579b', letterSpacing: '-0.5px' }}>
+                              {dichVuLoading ? '...' : validRows.length > 0 ? tongHD.toLocaleString('vi-VN') : '—'}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
+                              Tổng số hóa đơn ({validRows.length} KTV)
+                            </Typography>
+                          </CardContent>
+                        </Card>
+
+                        {/* Card: Tỉ lệ Đã Thanh Toán */}
+                        <Card {...cardBase} sx={{ ...cardBase.sx, border: `1px solid ${avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? '#c8e6c9' : '#ffccbc'}`, borderLeft: `6px solid ${avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? '#2e7d32' : '#bf360c'}` }}>
+                          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                              <Typography variant="overline" sx={{ color: '#0288d1', fontWeight: 800, fontSize: '10px' }}>
+                                TỈ LỆ ĐÃ TT (J)
+                              </Typography>
+                              <PaidIcon sx={{ color: avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? '#2e7d32' : '#bf360c', fontSize: 20 }} />
+                            </Box>
+                            <Typography variant="h5" sx={{ fontWeight: 800, color: avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? '#1b5e20' : '#bf360c', letterSpacing: '-0.5px' }}>
+                              {dichVuLoading ? '...' : avgTiLeDaTT !== null ? `${avgTiLeDaTT.toFixed(2)}%` : '—'}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
+                              Trung bình tỉ lệ HĐ đã thanh toán
+                            </Typography>
+                            <Chip
+                              label={avgTiLeDaTT !== null ? (avgTiLeDaTT >= 95 ? 'ĐẠT (≥ 95%)' : 'CHƯA ĐẠT (< 95%)') : 'Chưa có dữ liệu'}
+                              size="small"
+                              color={avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? 'success' : 'error'}
+                              sx={{ fontWeight: 800, fontSize: '10px', height: 20, mt: 0.8 }}
+                            />
+                          </CardContent>
+                        </Card>
+
+                        {/* Card: Rời Mạng Kế Hoạch */}
+                        <Card {...cardBase} sx={{ ...cardBase.sx, border: '1px solid #fff9c4', borderLeft: '6px solid #f9a825' }}>
+                          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                              <Typography variant="overline" sx={{ color: '#f57f17', fontWeight: 800, fontSize: '10px' }}>
+                                RM KẾ HOẠCH (M)
+                              </Typography>
+                              <TrendingDownIcon sx={{ color: '#f9a825', fontSize: 20 }} />
+                            </Box>
+                            <Typography variant="h5" sx={{ fontWeight: 800, color: '#e65100', letterSpacing: '-0.5px' }}>
+                              {dichVuLoading ? '...' : dvRows.length > 0 ? rmKHTotal.toLocaleString('vi-VN') : '—'}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
+                              Tổng rời mạng kế hoạch
+                            </Typography>
+                          </CardContent>
+                        </Card>
+
+                        {/* Card: Rời Mạng Dự Kiến */}
+                        <Card {...cardBase} sx={{ ...cardBase.sx, border: '1px solid #fce4ec', borderLeft: '6px solid #c62828' }}>
+                          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                              <Typography variant="overline" sx={{ color: '#c62828', fontWeight: 800, fontSize: '10px' }}>
+                                RM DỰ KIẾN (T)
+                              </Typography>
+                              <TrendingDownIcon sx={{ color: '#c62828', fontSize: 20 }} />
+                            </Box>
+                            <Typography variant="h5" sx={{ fontWeight: 800, color: '#b71c1c', letterSpacing: '-0.5px' }}>
+                              {dichVuLoading ? '...' : dvRows.length > 0 ? rmDKTotal.toLocaleString('vi-VN') : '—'}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
+                              Tổng rời mạng dự kiến
+                            </Typography>
+                            {dvRows.length > 0 && rmKHTotal > 0 && (
+                              <Typography variant="caption" sx={{ color: rmDKTotal > rmKHTotal ? '#d32f2f' : '#2e7d32', fontWeight: 700, display: 'block', mt: 0.3 }}>
+                                {rmDKTotal > rmKHTotal ? `⬆️ Vượt KH: +${(rmDKTotal - rmKHTotal).toLocaleString('vi-VN')}` : `✅ Trong KH: ${(rmKHTotal - rmDKTotal).toLocaleString('vi-VN')} buffer`}
+                              </Typography>
+                            )}
+                          </CardContent>
+                        </Card>
+
+                        {/* Card: %RM Hiện Tại */}
+                        <Card {...cardBase} sx={{ ...cardBase.sx, border: `1px solid ${avgPctRM !== null && avgPctRM <= 1.5 ? '#c8e6c9' : '#ffcdd2'}`, borderLeft: `6px solid ${avgPctRM !== null && avgPctRM <= 1.5 ? '#2e7d32' : '#d32f2f'}` }}>
+                          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                              <Typography variant="overline" sx={{ color: '#0288d1', fontWeight: 800, fontSize: '10px' }}>
+                                %RM HIỆN TẠI (U)
+                              </Typography>
+                              <PercentIcon sx={{ color: avgPctRM !== null && avgPctRM <= 1.5 ? '#2e7d32' : '#d32f2f', fontSize: 20 }} />
+                            </Box>
+                            <Typography variant="h5" sx={{ fontWeight: 800, color: avgPctRM !== null && avgPctRM <= 1.5 ? '#1b5e20' : '#b71c1c', letterSpacing: '-0.5px' }}>
+                              {dichVuLoading ? '...' : avgPctRM !== null ? `${avgPctRM.toFixed(2)}%` : '—'}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
+                              Trung bình %RM hiện tại
+                            </Typography>
+                            <Chip
+                              label={avgPctRM !== null ? (avgPctRM <= 1.5 ? 'ĐẠT (≤ 1.5%)' : 'CHƯA ĐẠT (> 1.5%)') : 'Chưa có dữ liệu'}
+                              size="small"
+                              color={avgPctRM !== null && avgPctRM <= 1.5 ? 'success' : 'error'}
+                              sx={{ fontWeight: 800, fontSize: '10px', height: 20, mt: 0.8 }}
+                            />
+                          </CardContent>
+                        </Card>
+
+                      </Box>
+                    );
+                  })()}
+
+                  {/* Bảng chi tiết từng KTV */}
+                  {dichVuData && dichVuData.length > 0 && (
+                    <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid #e3f2fd', overflow: 'hidden' }}>
+                      <Box sx={{ px: 2.5, py: 1.5, backgroundColor: '#e3f2fd', borderBottom: '1px solid #b3d9f7', display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#01579b' }}>
+                          Chi tiết KPI Dịch Vụ theo Kỹ Thuật Viên
+                        </Typography>
+                        <Chip label={`${dichVuData.length} KTV`} size="small" sx={{ backgroundColor: '#0288d1', color: '#fff', fontWeight: 700, fontSize: '11px', height: 20 }} />
+                      </Box>
+                      <Box sx={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#f5f9ff' }}>
+                              {['KTV (Account)', 'Tổng HĐ (F)', 'Tỉ lệ Đã TT (J)', 'RM Kế Hoạch (M)', 'RM Dự Kiến (T)', '%RM Hiện Tại (U)'].map((h, i) => (
+                                <th key={i} style={{ padding: '8px 14px', textAlign: i === 0 ? 'left' : 'right', fontWeight: 700, color: '#01579b', borderBottom: '2px solid #b3d9f7', whiteSpace: 'nowrap' }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dichVuData.map((row, idx) => (
+                              <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fbff', transition: 'background 0.15s' }}
+                                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#e3f2fd'}
+                                onMouseLeave={e => e.currentTarget.style.backgroundColor = idx % 2 === 0 ? '#ffffff' : '#f8fbff'}>
+                                <td style={{ padding: '7px 14px', fontWeight: 600, color: '#1a237e', borderBottom: '1px solid #e3f2fd' }}>
+                                  {row.ktv_raw}
+                                </td>
+                                <td style={{ padding: '7px 14px', textAlign: 'right', borderBottom: '1px solid #e3f2fd', fontWeight: 500 }}>
+                                  {row.tong_hoa_don !== null ? row.tong_hoa_don.toLocaleString('vi-VN') : '—'}
+                                </td>
+                                <td style={{ padding: '7px 14px', textAlign: 'right', borderBottom: '1px solid #e3f2fd', fontWeight: 700, color: row.ti_le_da_tt !== null ? (row.ti_le_da_tt >= 95 ? '#2e7d32' : '#d32f2f') : '#9e9e9e' }}>
+                                  {row.ti_le_da_tt !== null ? `${row.ti_le_da_tt.toFixed(2)}%` : '—'}
+                                </td>
+                                <td style={{ padding: '7px 14px', textAlign: 'right', borderBottom: '1px solid #e3f2fd', color: '#e65100', fontWeight: 500 }}>
+                                  {row.roi_mang_kh !== null ? row.roi_mang_kh.toLocaleString('vi-VN') : '—'}
+                                </td>
+                                <td style={{ padding: '7px 14px', textAlign: 'right', borderBottom: '1px solid #e3f2fd', color: '#b71c1c', fontWeight: 500 }}>
+                                  {row.roi_mang_du_kien !== null ? row.roi_mang_du_kien.toLocaleString('vi-VN') : '—'}
+                                </td>
+                                <td style={{ padding: '7px 14px', textAlign: 'right', borderBottom: '1px solid #e3f2fd', fontWeight: 700, color: row.pct_rm_hien_tai !== null ? (row.pct_rm_hien_tai <= 1.5 ? '#2e7d32' : '#d32f2f') : '#9e9e9e' }}>
+                                  {row.pct_rm_hien_tai !== null ? `${row.pct_rm_hien_tai.toFixed(2)}%` : '—'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </Box>
+                    </Paper>
+                  )}
+
+                  {!dichVuData && !dichVuLoading && (
+                    <Box sx={{ textAlign: 'center', py: 2, color: '#9e9e9e' }}>
+                      <Typography variant="body2">Chưa có dữ liệu KPI Dịch Vụ. Nhấn "Cập nhật" để tải.</Typography>
+                    </Box>
+                  )}
                 </Box>
 
                 {/* FILTER BAR PANEL */}

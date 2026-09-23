@@ -429,6 +429,90 @@ def reset_admin_loading_slides():
     return engine.reset_loading_slides()
 
 
+
+# =========================================================================
+# KPI DỊCH VỤ API ENDPOINTS
+# =========================================================================
+import io as _io
+import urllib.request as _urllib_req
+import csv as _csv
+
+DICH_VU_SHEET_ID = "1Uj4oO7cNIB-ha4FnDmL1_g0ziJXTWmqv_kyUCtTtn9Y"
+DICH_VU_GID = "673112371"
+
+def _fetch_dich_vu_sheet():
+    """Đọc Google Sheet KPI Dịch Vụ, trả về list dict theo từng KTV."""
+    url = f"https://docs.google.com/spreadsheets/d/{DICH_VU_SHEET_ID}/export?format=csv&gid={DICH_VU_GID}"
+    try:
+        req = _urllib_req.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        resp = _urllib_req.urlopen(req, timeout=15)
+        raw = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        raise RuntimeError(f"Không thể tải Google Sheet Dịch Vụ: {e}")
+
+    reader = list(_csv.reader(_io.StringIO(raw)))
+    # Rows 0,1,2 là header (merged cells 2 tầng + row tổng SG1)
+    # Data bắt đầu từ row index 3 (row 4 trong sheet)
+    data_rows = reader[3:]
+
+    def _parse_num(val: str):
+        """Convert '1.234' hoặc '97,51%' sang float."""
+        if not val or val.strip() in ('-', ''):
+            return None
+        v = val.strip().replace('%', '').replace('.', '').replace(',', '.')
+        try:
+            return float(v)
+        except Exception:
+            return None
+
+    results = []
+    for row in data_rows:
+        if len(row) < 21:
+            continue
+        # Cột C (idx 2): account nhân viên — lấy phần sau dấu '.'
+        ktv_raw = row[2].strip() if row[2].strip() else ''
+        if not ktv_raw:
+            continue
+        # Lấy phần sau dấu chấm cuối cùng để match với inside account
+        if '.' in ktv_raw:
+            account_suffix = ktv_raw.split('.')[-1].upper()
+        else:
+            account_suffix = ktv_raw.upper()
+
+        tong_hoa_don   = _parse_num(row[5])   # Cột F
+        ti_le_da_tt    = _parse_num(row[9])   # Cột J — Tỉ lệ CN (đã thanh toán)
+        roi_mang_kh    = _parse_num(row[12])  # Cột M — Rời mạng kế hoạch
+        roi_mang_du_kien = _parse_num(row[19]) # Cột T — Rời mạng dự kiến
+        pct_rm_hien_tai  = _parse_num(row[20]) # Cột U — %RM Hiện tại
+
+        results.append({
+            "ktv_raw": ktv_raw,
+            "account_suffix": account_suffix,
+            "tong_hoa_don": tong_hoa_don,
+            "ti_le_da_tt": ti_le_da_tt,
+            "roi_mang_kh": roi_mang_kh,
+            "roi_mang_du_kien": roi_mang_du_kien,
+            "pct_rm_hien_tai": pct_rm_hien_tai,
+        })
+    return results
+
+@app.get("/api/dich-vu/report")
+def get_dich_vu_report(account: Optional[str] = Query(default=None)):
+    """
+    Trả về KPI Dịch Vụ từ Google Sheet.
+    - Nếu có param `account` (inside account, vd: PNC01.DUYPT) → lọc theo phần sau dấu chấm.
+    - Không có → trả tất cả rows.
+    """
+    try:
+        rows = _fetch_dich_vu_sheet()
+        if account:
+            suffix = account.strip().split('.')[-1].upper()
+            rows = [r for r in rows if r['account_suffix'] == suffix]
+        return JSONResponse(content={"ok": True, "rows": rows, "total": len(rows)})
+    except Exception as e:
+        import traceback
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e), "traceback": traceback.format_exc()})
+
 # Serve frontend build if dist directory exists
 frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(frontend_dist):
