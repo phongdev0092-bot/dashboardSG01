@@ -2166,6 +2166,10 @@ export default function App() {
       'Họ và Tên': emp.name,
       'Đội Trưởng': emp.team_lead,
       'Vùng': emp.region,
+      '% Công Nợ': emp.dv_ti_le_da_tt !== null && emp.dv_ti_le_da_tt !== undefined ? `${emp.dv_ti_le_da_tt.toFixed(2)}%` : '',
+      'RM Kế Hoạch Tháng': emp.dv_roi_mang_kh ?? '',
+      'Rời Mạng Dự Kiến': emp.dv_roi_mang_du_kien ?? '',
+      '% RM Hiện Tại': emp.dv_pct_rm_hien_tai !== null && emp.dv_pct_rm_hien_tai !== undefined ? `${emp.dv_pct_rm_hien_tai.toFixed(2)}%` : '',
       'Triển Khai (Không Swap)': emp.tk_kpi_volume,
       'TK Đúng Hẹn': emp.tk_dung_hen_1,
       'TK Trễ Hẹn': emp.tk_dung_hen_0,
@@ -3483,7 +3487,7 @@ export default function App() {
                 </Box>
 
                 {/* ========================================================================= */}
-                {/* KPI DỊCH VỤ SECTION                                                       */}
+                {/* CHĂM SÓC KHÁCH HÀNG SECTION                                               */}
                 {/* ========================================================================= */}
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {/* Section Header */}
@@ -3491,7 +3495,7 @@ export default function App() {
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Box sx={{ width: 5, height: 28, borderRadius: 2, backgroundColor: '#0277bd' }} />
                       <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#01579b', letterSpacing: '0.5px' }}>
-                        📊 KPIs DỊCH VỤ
+                        📡 CHĂM SÓC KHÁCH HÀNG
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500 }}>
                         (Công nợ & Rời mạng — từ Sheet theo dõi dịch vụ)
@@ -3508,12 +3512,10 @@ export default function App() {
                     </Button>
                   </Box>
 
-                  {/* 5 Metric Cards */}
+                  {/* 4 Metric Cards */}
                   {(() => {
                     // Tính tổng / trung bình từ dichVuData
                     const dvRows = dichVuData || [];
-                    const validRows = dvRows.filter(r => r.tong_hoa_don !== null);
-                    const tongHD = validRows.reduce((s, r) => s + (r.tong_hoa_don || 0), 0);
                     const tiLeDaTTArr = dvRows.filter(r => r.ti_le_da_tt !== null).map(r => r.ti_le_da_tt);
                     const avgTiLeDaTT = tiLeDaTTArr.length > 0 ? (tiLeDaTTArr.reduce((a, b) => a + b, 0) / tiLeDaTTArr.length) : null;
                     const rmKHTotal = dvRows.filter(r => r.roi_mang_kh !== null).reduce((s, r) => s + (r.roi_mang_kh || 0), 0);
@@ -3527,32 +3529,15 @@ export default function App() {
                     };
 
                     return (
-                      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(5, 1fr)' }, gap: 2 }}>
+                      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }, gap: 2 }}>
 
-                        {/* Card: Tổng Hóa Đơn */}
-                        <Card {...cardBase} sx={{ ...cardBase.sx, border: '1px solid #b3e5fc', borderLeft: '6px solid #0288d1' }}>
-                          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                              <Typography variant="overline" sx={{ color: '#0288d1', fontWeight: 800, fontSize: '10px' }}>
-                                TỔNG HÓA ĐƠN (F)
-                              </Typography>
-                              <ReceiptLongIcon sx={{ color: '#0288d1', fontSize: 20 }} />
-                            </Box>
-                            <Typography variant="h5" sx={{ fontWeight: 800, color: '#01579b', letterSpacing: '-0.5px' }}>
-                              {dichVuLoading ? '...' : validRows.length > 0 ? tongHD.toLocaleString('vi-VN') : '—'}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                              Tổng số hóa đơn ({validRows.length} KTV)
-                            </Typography>
-                          </CardContent>
-                        </Card>
 
-                        {/* Card: Tỉ lệ Đã Thanh Toán */}
+                        {/* Card: % Công Nợ */}
                         <Card {...cardBase} sx={{ ...cardBase.sx, border: `1px solid ${avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? '#c8e6c9' : '#ffccbc'}`, borderLeft: `6px solid ${avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? '#2e7d32' : '#bf360c'}` }}>
                           <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                               <Typography variant="overline" sx={{ color: '#0288d1', fontWeight: 800, fontSize: '10px' }}>
-                                TỈ LỆ ĐÃ TT (J)
+                                % CÔNG NỢ (J)
                               </Typography>
                               <PaidIcon sx={{ color: avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? '#2e7d32' : '#bf360c', fontSize: 20 }} />
                             </Box>
@@ -3560,7 +3545,7 @@ export default function App() {
                               {dichVuLoading ? '...' : avgTiLeDaTT !== null ? `${avgTiLeDaTT.toFixed(2)}%` : '—'}
                             </Typography>
                             <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                              Trung bình tỉ lệ HĐ đã thanh toán
+                              Trung bình % công nợ
                             </Typography>
                             <Chip
                               label={avgTiLeDaTT !== null ? (avgTiLeDaTT >= 95 ? 'ĐẠT (≥ 95%)' : 'CHƯA ĐẠT (< 95%)') : 'Chưa có dữ liệu'}
@@ -3571,12 +3556,12 @@ export default function App() {
                           </CardContent>
                         </Card>
 
-                        {/* Card: Rời Mạng Kế Hoạch */}
+                        {/* Card: RM Kế Hoạch Tháng */}
                         <Card {...cardBase} sx={{ ...cardBase.sx, border: '1px solid #fff9c4', borderLeft: '6px solid #f9a825' }}>
                           <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                               <Typography variant="overline" sx={{ color: '#f57f17', fontWeight: 800, fontSize: '10px' }}>
-                                RM KẾ HOẠCH (M)
+                                RM KẾ HOẠCH THÁNG (M)
                               </Typography>
                               <TrendingDownIcon sx={{ color: '#f9a825', fontSize: 20 }} />
                             </Box>
@@ -3584,7 +3569,7 @@ export default function App() {
                               {dichVuLoading ? '...' : dvRows.length > 0 ? rmKHTotal.toLocaleString('vi-VN') : '—'}
                             </Typography>
                             <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                              Tổng rời mạng kế hoạch
+                              Tổng RM kế hoạch tháng
                             </Typography>
                           </CardContent>
                         </Card>
@@ -3594,7 +3579,7 @@ export default function App() {
                           <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                               <Typography variant="overline" sx={{ color: '#c62828', fontWeight: 800, fontSize: '10px' }}>
-                                RM DỰ KIẾN (T)
+                                RỜI MẠNG DỰ KIẾN (T)
                               </Typography>
                               <TrendingDownIcon sx={{ color: '#c62828', fontSize: 20 }} />
                             </Box>
@@ -3612,12 +3597,12 @@ export default function App() {
                           </CardContent>
                         </Card>
 
-                        {/* Card: %RM Hiện Tại */}
+                        {/* Card: % RM Hiện Tại */}
                         <Card {...cardBase} sx={{ ...cardBase.sx, border: `1px solid ${avgPctRM !== null && avgPctRM <= 1.5 ? '#c8e6c9' : '#ffcdd2'}`, borderLeft: `6px solid ${avgPctRM !== null && avgPctRM <= 1.5 ? '#2e7d32' : '#d32f2f'}` }}>
                           <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                               <Typography variant="overline" sx={{ color: '#0288d1', fontWeight: 800, fontSize: '10px' }}>
-                                %RM HIỆN TẠI (U)
+                                % RM HIỆN TẠI (U)
                               </Typography>
                               <PercentIcon sx={{ color: avgPctRM !== null && avgPctRM <= 1.5 ? '#2e7d32' : '#d32f2f', fontSize: 20 }} />
                             </Box>
@@ -3625,7 +3610,7 @@ export default function App() {
                               {dichVuLoading ? '...' : avgPctRM !== null ? `${avgPctRM.toFixed(2)}%` : '—'}
                             </Typography>
                             <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                              Trung bình %RM hiện tại
+                              Trung bình % RM hiện tại
                             </Typography>
                             <Chip
                               label={avgPctRM !== null ? (avgPctRM <= 1.5 ? 'ĐẠT (≤ 1.5%)' : 'CHƯA ĐẠT (> 1.5%)') : 'Chưa có dữ liệu'}
@@ -3640,58 +3625,9 @@ export default function App() {
                     );
                   })()}
 
-                  {/* Bảng chi tiết từng KTV */}
-                  {dichVuData && dichVuData.length > 0 && (
-                    <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid #e3f2fd', overflow: 'hidden' }}>
-                      <Box sx={{ px: 2.5, py: 1.5, backgroundColor: '#e3f2fd', borderBottom: '1px solid #b3d9f7', display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#01579b' }}>
-                          Chi tiết KPI Dịch Vụ theo Kỹ Thuật Viên
-                        </Typography>
-                        <Chip label={`${dichVuData.length} KTV`} size="small" sx={{ backgroundColor: '#0288d1', color: '#fff', fontWeight: 700, fontSize: '11px', height: 20 }} />
-                      </Box>
-                      <Box sx={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                          <thead>
-                            <tr style={{ backgroundColor: '#f5f9ff' }}>
-                              {['KTV (Account)', 'Tổng HĐ (F)', 'Tỉ lệ Đã TT (J)', 'RM Kế Hoạch (M)', 'RM Dự Kiến (T)', '%RM Hiện Tại (U)'].map((h, i) => (
-                                <th key={i} style={{ padding: '8px 14px', textAlign: i === 0 ? 'left' : 'right', fontWeight: 700, color: '#01579b', borderBottom: '2px solid #b3d9f7', whiteSpace: 'nowrap' }}>{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {dichVuData.map((row, idx) => (
-                              <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fbff', transition: 'background 0.15s' }}
-                                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#e3f2fd'}
-                                onMouseLeave={e => e.currentTarget.style.backgroundColor = idx % 2 === 0 ? '#ffffff' : '#f8fbff'}>
-                                <td style={{ padding: '7px 14px', fontWeight: 600, color: '#1a237e', borderBottom: '1px solid #e3f2fd' }}>
-                                  {row.ktv_raw}
-                                </td>
-                                <td style={{ padding: '7px 14px', textAlign: 'right', borderBottom: '1px solid #e3f2fd', fontWeight: 500 }}>
-                                  {row.tong_hoa_don !== null ? row.tong_hoa_don.toLocaleString('vi-VN') : '—'}
-                                </td>
-                                <td style={{ padding: '7px 14px', textAlign: 'right', borderBottom: '1px solid #e3f2fd', fontWeight: 700, color: row.ti_le_da_tt !== null ? (row.ti_le_da_tt >= 95 ? '#2e7d32' : '#d32f2f') : '#9e9e9e' }}>
-                                  {row.ti_le_da_tt !== null ? `${row.ti_le_da_tt.toFixed(2)}%` : '—'}
-                                </td>
-                                <td style={{ padding: '7px 14px', textAlign: 'right', borderBottom: '1px solid #e3f2fd', color: '#e65100', fontWeight: 500 }}>
-                                  {row.roi_mang_kh !== null ? row.roi_mang_kh.toLocaleString('vi-VN') : '—'}
-                                </td>
-                                <td style={{ padding: '7px 14px', textAlign: 'right', borderBottom: '1px solid #e3f2fd', color: '#b71c1c', fontWeight: 500 }}>
-                                  {row.roi_mang_du_kien !== null ? row.roi_mang_du_kien.toLocaleString('vi-VN') : '—'}
-                                </td>
-                                <td style={{ padding: '7px 14px', textAlign: 'right', borderBottom: '1px solid #e3f2fd', fontWeight: 700, color: row.pct_rm_hien_tai !== null ? (row.pct_rm_hien_tai <= 1.5 ? '#2e7d32' : '#d32f2f') : '#9e9e9e' }}>
-                                  {row.pct_rm_hien_tai !== null ? `${row.pct_rm_hien_tai.toFixed(2)}%` : '—'}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </Box>
-                    </Paper>
-                  )}
-
                   {!dichVuData && !dichVuLoading && (
                     <Box sx={{ textAlign: 'center', py: 2, color: '#9e9e9e' }}>
-                      <Typography variant="body2">Chưa có dữ liệu KPI Dịch Vụ. Nhấn "Cập nhật" để tải.</Typography>
+                      <Typography variant="body2">Chưa có dữ liệu Chăm Sóc Khách Hàng. Nhấn "Cập nhật" để tải.</Typography>
                     </Box>
                   )}
                 </Box>
@@ -3885,6 +3821,11 @@ export default function App() {
                               </TableSortLabel>
                             </TableCell>
 
+                            {/* CHĂM SÓC KHÁCH HÀNG (4 cột: % Công Nợ, RM KH Tháng, RM Dự Kiến, % RM Hiện Tại) */}
+                            <TableCell colSpan={4} align="center" sx={{ top: 0, zIndex: 11, height: '38px', py: '6px', boxSizing: 'border-box', fontWeight: 800, backgroundColor: '#fce4ec', color: '#c62828', borderRight: '1px solid #f8bbd0', borderBottom: '1px solid #f8bbd0', fontSize: '13px' }}>
+                              CHĂM SÓC KHÁCH HÀNG
+                            </TableCell>
+
                             <TableCell colSpan={3} align="center" sx={{ top: 0, zIndex: 11, height: '38px', py: '6px', boxSizing: 'border-box', fontWeight: 800, backgroundColor: '#e8f0fe', color: '#1a73e8', borderRight: '1px solid #d2e3fc', borderBottom: '1px solid #d2e3fc', fontSize: '13px' }}>
                               KHỐI LƯỢNG CÔNG VIỆC
                             </TableCell>
@@ -3907,6 +3848,47 @@ export default function App() {
                           </TableRow>
 
                           <TableRow sx={{ height: '44px' }}>
+                            {/* CHĂM SÓC KHÁCH HÀNG - 4 sub-columns */}
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#fff5f8', color: '#c2185b', px: 1, minWidth: 80 }}>
+                              <TableSortLabel
+                                active={orderBy === 'dv_ti_le_da_tt'}
+                                direction={orderBy === 'dv_ti_le_da_tt' ? order : 'asc'}
+                                onClick={() => handleRequestSort('dv_ti_le_da_tt')}
+                              >
+                                % Công Nợ
+                              </TableSortLabel>
+                            </TableCell>
+
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#fff5f8', color: '#c2185b', px: 1, minWidth: 85 }}>
+                              <TableSortLabel
+                                active={orderBy === 'dv_roi_mang_kh'}
+                                direction={orderBy === 'dv_roi_mang_kh' ? order : 'asc'}
+                                onClick={() => handleRequestSort('dv_roi_mang_kh')}
+                              >
+                                RM Kế Hoạch Tháng
+                              </TableSortLabel>
+                            </TableCell>
+
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#fff5f8', color: '#c2185b', px: 1, minWidth: 85 }}>
+                              <TableSortLabel
+                                active={orderBy === 'dv_roi_mang_du_kien'}
+                                direction={orderBy === 'dv_roi_mang_du_kien' ? order : 'asc'}
+                                onClick={() => handleRequestSort('dv_roi_mang_du_kien')}
+                              >
+                                Rời Mạng Dự Kiến
+                              </TableSortLabel>
+                            </TableCell>
+
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#fff5f8', color: '#c2185b', px: 1, minWidth: 80, borderRight: '1px solid #f8bbd0' }}>
+                              <TableSortLabel
+                                active={orderBy === 'dv_pct_rm_hien_tai'}
+                                direction={orderBy === 'dv_pct_rm_hien_tai' ? order : 'asc'}
+                                onClick={() => handleRequestSort('dv_pct_rm_hien_tai')}
+                              >
+                                % RM Hiện Tại
+                              </TableSortLabel>
+                            </TableCell>
+
                             <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 700, backgroundColor: '#f4f8fe', color: '#1a73e8' }}>
                               <TableSortLabel
                                 active={orderBy === 'tk_kpi_volume'}
@@ -4029,6 +4011,47 @@ export default function App() {
                                   {emp.region && <Chip label={emp.region} size="small" sx={{ height: 18, fontSize: '10px', backgroundColor: '#e8f0fe', color: '#1a73e8' }} />}
                                   {emp.block && <Chip label={emp.block} size="small" sx={{ height: 18, fontSize: '10px', backgroundColor: '#f1f5f9', color: '#475569' }} />}
                                 </Box>
+                              </TableCell>
+
+                              {/* CHĂM SÓC KHÁCH HÀNG (4 cột nhỏ gọn tương ứng Khối Lượng Công Việc) */}
+                              {/* 1. % Công Nợ */}
+                              <TableCell align="center" sx={{ px: 1, py: 0.5, backgroundColor: '#fffbfe' }}>
+                                {emp.dv_ti_le_da_tt !== null && emp.dv_ti_le_da_tt !== undefined ? (
+                                  <Typography variant="body2" sx={{ fontWeight: 800, fontSize: '12px', color: emp.dv_ti_le_da_tt >= 95 ? '#2e7d32' : '#c62828' }}>
+                                    {emp.dv_ti_le_da_tt.toFixed(2)}%
+                                  </Typography>
+                                ) : (
+                                  <Typography variant="caption" sx={{ color: '#bdbdbd', fontSize: '11px' }}>—</Typography>
+                                )}
+                              </TableCell>
+
+                              {/* 2. RM Kế Hoạch Tháng */}
+                              <TableCell align="center" sx={{ px: 1, py: 0.5, backgroundColor: '#fffbfe' }}>
+                                <Typography variant="body2" sx={{ fontWeight: 700, color: '#e65100', fontSize: '12px' }}>
+                                  {emp.dv_roi_mang_kh !== null && emp.dv_roi_mang_kh !== undefined
+                                    ? emp.dv_roi_mang_kh.toLocaleString('vi-VN')
+                                    : <span style={{ color: '#bdbdbd', fontSize: '11px' }}>—</span>}
+                                </Typography>
+                              </TableCell>
+
+                              {/* 3. Rời Mạng Dự Kiến */}
+                              <TableCell align="center" sx={{ px: 1, py: 0.5, backgroundColor: '#fffbfe' }}>
+                                <Typography variant="body2" sx={{ fontWeight: 700, color: '#b71c1c', fontSize: '12px' }}>
+                                  {emp.dv_roi_mang_du_kien !== null && emp.dv_roi_mang_du_kien !== undefined
+                                    ? emp.dv_roi_mang_du_kien.toLocaleString('vi-VN')
+                                    : <span style={{ color: '#bdbdbd', fontSize: '11px' }}>—</span>}
+                                </Typography>
+                              </TableCell>
+
+                              {/* 4. % RM Hiện Tại */}
+                              <TableCell align="center" sx={{ px: 1, py: 0.5, backgroundColor: '#fffbfe', borderRight: '1px solid #f8bbd0' }}>
+                                {emp.dv_pct_rm_hien_tai !== null && emp.dv_pct_rm_hien_tai !== undefined ? (
+                                  <Typography variant="body2" sx={{ fontWeight: 800, fontSize: '12px', color: emp.dv_pct_rm_hien_tai <= 1.5 ? '#2e7d32' : '#c62828' }}>
+                                    {emp.dv_pct_rm_hien_tai.toFixed(2)}%
+                                  </Typography>
+                                ) : (
+                                  <Typography variant="caption" sx={{ color: '#bdbdbd', fontSize: '11px' }}>—</Typography>
+                                )}
                               </TableCell>
 
                               {/* Volume Columns */}

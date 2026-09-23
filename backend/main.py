@@ -95,6 +95,40 @@ def get_kpi_report(
             block=blk,
             search=srch
         )
+
+        # ── Join KPI Dịch Vụ (Google Sheet) vào từng employee row ──────────
+        # Liên kết: phần sau dấu chấm cuối của account (PNC01.DUYPT → DUYPT)
+        # khớp với account_suffix trong sheet KPI DV (phuongnam.duypt → DUYPT)
+        try:
+            dv_rows_list = _fetch_dich_vu_sheet()
+            # Tạo dict tra cứu: suffix_upper → dict KPI DV
+            dv_map: dict = {}
+            for dv in dv_rows_list:
+                suffix = str(dv.get("account_suffix", "")).strip().upper()
+                if suffix:
+                    dv_map[suffix] = dv
+
+            # Gán vào từng employee row trong report['employees']
+            for emp_row in report.get("employees", []):
+                acc = str(emp_row.get("account", "")).strip()
+                suffix = acc.split(".")[-1].upper() if "." in acc else acc.upper()
+                dv = dv_map.get(suffix)
+                if dv:
+                    emp_row["dv_tong_hoa_don"]     = dv.get("tong_hoa_don")
+                    emp_row["dv_ti_le_da_tt"]       = dv.get("ti_le_da_tt")
+                    emp_row["dv_roi_mang_kh"]       = dv.get("roi_mang_kh")
+                    emp_row["dv_roi_mang_du_kien"]  = dv.get("roi_mang_du_kien")
+                    emp_row["dv_pct_rm_hien_tai"]   = dv.get("pct_rm_hien_tai")
+                else:
+                    emp_row["dv_tong_hoa_don"]     = None
+                    emp_row["dv_ti_le_da_tt"]       = None
+                    emp_row["dv_roi_mang_kh"]       = None
+                    emp_row["dv_roi_mang_du_kien"]  = None
+                    emp_row["dv_pct_rm_hien_tai"]   = None
+        except Exception as dv_err:
+            print(f"Warning: Không fetch/join được KPI DV: {dv_err}", flush=True)
+        # ────────────────────────────────────────────────────────────────────
+
         clean_report = _sanitize_for_json(report)
         return JSONResponse(content=clean_report)
     except Exception as e:
