@@ -268,7 +268,10 @@ class KPIEngine:
             return None
 
     def _save_df_to_supabase(self, df: pd.DataFrame, table_name: str) -> bool:
-        """Save DataFrame to Supabase cleanly using to_sql with if_exists='replace'."""
+        """Save DataFrame to Supabase safely.
+        Uses DELETE + INSERT (chunked) instead of if_exists='replace' to avoid
+        dropping the entire table (which would lose data on concurrent access).
+        """
         if df is None or df.empty:
             return False
         engine = self.get_db_engine()
@@ -302,12 +305,24 @@ class KPIEngine:
 
             for attempt in range(2):
                 try:
-                    df_to_save.to_sql(table_name, engine, if_exists='replace', index=False, chunksize=CHUNK_SIZE)
+                    from sqlalchemy import text as sa_text
+                    with engine.begin() as conn:
+                        # Truncate then bulk-insert — all in one transaction so no data is lost
+                        # on failure (transaction rolls back automatically).
+                        conn.execute(sa_text(f'DELETE FROM "{table_name}"'))
+                        df_to_save.to_sql(table_name, conn, if_exists='append', index=False, chunksize=CHUNK_SIZE)
                     print(f"[Supabase] Successfully saved {total_rows} rows to '{table_name}'", flush=True)
                     return True
                 except Exception as e:
                     if attempt == 0:
-                        time.sleep(0.5)
+                        # Table may not exist yet — create it on first attempt
+                        try:
+                            df_to_save.to_sql(table_name, engine, if_exists='replace', index=False, chunksize=CHUNK_SIZE)
+                            print(f"[Supabase] Created and saved {total_rows} rows to '{table_name}'", flush=True)
+                            return True
+                        except Exception as e2:
+                            print(f"[Supabase] Create-and-save failed for '{table_name}': {e2}", flush=True)
+                            time.sleep(0.5)
                     else:
                         print(f"Warning: Failed to save to Supabase table '{table_name}': {e}", flush=True)
                         return False
@@ -2983,13 +2998,34 @@ class KPIEngine:
                 if existing_cls.empty and (CACHE_DIR / "kh_cls.pkl.gz").exists():
                     try: existing_cls = pd.read_pickle(CACHE_DIR / "kh_cls.pkl.gz")
                     except Exception: existing_cls = pd.DataFrame()
-                
-                added_count = total_incoming
-                skipped_count = 0
-                if rule == "OVERWRITE" or existing_cls.empty:
+                # [FIX] Supabase fallback: nếu cold start (Vercel) không có local cache, load từ Supabase
+                # để cơ chế dedup MERGE_NO_OVERWRITE hoạt động đúng — tránh mất data hoặc nhân đôi
+                if existing_cls.empty and rule != "OVERWRITE":
+                    try:
+                        sp_cls = self._load_df_from_supabase("kh_cls")
+                        if not sp_cls.empty:
+                            existing_cls = sp_cls
+                            self._save_pickle(existing_cls, "kh_cls.pkl.gz")
+                            self.kh_cls_df = existing_cls
+                    except Exception as e_sp:
+                        print(f"[Import] kh_cls Supabase fallback load warning: {e_sp}", flush=True)
+
+                if rule == "OVERWRITE":
+                    # Ghi đè hoàn toàn: chỉ giữ data mới upload
                     merged_cls = inc_cls.drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                    added_count = len(merged_cls)
+                    skipped_count = total_incoming - added_count
                 else:
-                    merged_cls = pd.concat([existing_cls, inc_cls], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                    # MERGE_NO_OVERWRITE: luôn giữ data cũ, chỉ thêm rows chưa có
+                    # (dù existing_cls có rỗng hay không — tránh mất data khi cold-start)
+                    if existing_cls.empty:
+                        merged_cls = inc_cls.drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                    else:
+                        merged_cls = pd.concat([existing_cls, inc_cls], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                    added_count = len(merged_cls) - (len(existing_cls) if not existing_cls.empty else 0)
+                    added_count = max(0, added_count)
+                    skipped_count = total_incoming - added_count
+                    skipped_count = max(0, skipped_count)
                 self._save_pickle(merged_cls, "kh_cls.pkl.gz")
                 self.kh_cls_df = merged_cls
                 self._clear_cleared_flag('kh_cls')
@@ -3006,13 +3042,33 @@ class KPIEngine:
                 if existing_cll.empty and (CACHE_DIR / "cll30n.pkl.gz").exists():
                     try: existing_cll = pd.read_pickle(CACHE_DIR / "cll30n.pkl.gz")
                     except Exception: existing_cll = pd.DataFrame()
+                # [FIX] Supabase fallback: tránh mất data hoặc nhân đôi khi cold start
+                if existing_cll.empty and rule != "OVERWRITE":
+                    try:
+                        sp_cll = self._load_df_from_supabase("cll30n")
+                        if not sp_cll.empty:
+                            existing_cll = sp_cll
+                            self._save_pickle(existing_cll, "cll30n.pkl.gz")
+                            self.cll30n_df = existing_cll
+                    except Exception as e_sp:
+                        print(f"[Import] cll30n Supabase fallback load warning: {e_sp}", flush=True)
 
-                added_count = len(inc_cll)
-                skipped_count = total_incoming - added_count
-                if rule == "OVERWRITE" or existing_cll.empty:
+                if rule == "OVERWRITE":
+                    # Ghi đè hoàn toàn: chỉ giữ data mới upload
                     merged_cll = inc_cll.drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                    added_count = len(merged_cll)
+                    skipped_count = total_incoming - added_count
                 else:
-                    merged_cll = pd.concat([existing_cll, inc_cll], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                    # MERGE_NO_OVERWRITE: luôn giữ data cũ, chỉ thêm rows chưa có
+                    # (dù existing_cll có rỗng hay không — tránh mất data khi cold-start)
+                    if existing_cll.empty:
+                        merged_cll = inc_cll.drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                    else:
+                        merged_cll = pd.concat([existing_cll, inc_cll], ignore_index=True).drop_duplicates(subset=['Số HĐ', 'Nhân viên', 'date_complete'], keep='first')
+                    added_count = len(merged_cll) - (len(existing_cll) if not existing_cll.empty else 0)
+                    added_count = max(0, added_count)
+                    skipped_count = total_incoming - len(inc_cll) + (len(inc_cll) - added_count)
+                    skipped_count = max(0, skipped_count)
                 self._save_pickle(merged_cll, "cll30n.pkl.gz")
                 self.cll30n_df = merged_cll
                 self._clear_cleared_flag('cll30n')
@@ -3064,6 +3120,16 @@ class KPIEngine:
                     existing_df = pd.read_pickle(CACHE_DIR / "tk.pkl.gz")
                 except Exception:
                     existing_df = pd.DataFrame()
+            # [FIX] Supabase fallback: tránh mất data hoặc nhân đôi khi cold start trên Vercel
+            if existing_df.empty and rule != "OVERWRITE":
+                try:
+                    sp_tk = self._load_df_from_supabase("tk")
+                    if not sp_tk.empty:
+                        existing_df = self._enrich_tk_df(sp_tk)
+                        self._save_pickle(existing_df, "tk.pkl.gz")
+                        self.tk_df = existing_df
+                except Exception as e_sp:
+                    print(f"[Import] tk Supabase fallback load warning: {e_sp}", flush=True)
 
             if rule == "MERGE_NO_OVERWRITE" and not existing_df.empty:
                 ex_hd = self._find_col(existing_df, ['Số hợp đồng', 'Số HĐ'], default_idx=0)
@@ -3131,6 +3197,16 @@ class KPIEngine:
                     existing_df = pd.read_pickle(CACHE_DIR / "bt.pkl.gz")
                 except Exception:
                     existing_df = pd.DataFrame()
+            # [FIX] Supabase fallback: tránh mất data hoặc nhân đôi khi cold start trên Vercel
+            if existing_df.empty and rule != "OVERWRITE":
+                try:
+                    sp_bt = self._load_df_from_supabase("bt")
+                    if not sp_bt.empty:
+                        existing_df = self._enrich_bt_df(sp_bt)
+                        self._save_pickle(existing_df, "bt.pkl.gz")
+                        self.bt_df = existing_df
+                except Exception as e_sp:
+                    print(f"[Import] bt Supabase fallback load warning: {e_sp}", flush=True)
 
             if rule == "MERGE_NO_OVERWRITE" and not existing_df.empty:
                 ex_hd = self._find_col(existing_df, ['Số HĐ', 'Số hợp đồng'], default_idx=0)
@@ -3189,6 +3265,16 @@ class KPIEngine:
                     existing_df = pd.read_pickle(CACHE_DIR / "ton_tk.pkl.gz")
                 except Exception:
                     existing_df = pd.DataFrame()
+            # [FIX] Supabase fallback: tránh mất data hoặc nhân đôi khi cold start trên Vercel
+            if existing_df.empty and rule != "OVERWRITE":
+                try:
+                    sp_ton_tk = self._load_df_from_supabase("ton_tk")
+                    if not sp_ton_tk.empty:
+                        existing_df = sp_ton_tk
+                        self._save_pickle(existing_df, "ton_tk.pkl.gz")
+                        self.ton_tk_df = existing_df
+                except Exception as e_sp:
+                    print(f"[Import] ton_tk Supabase fallback load warning: {e_sp}", flush=True)
 
             if rule == "MERGE_NO_OVERWRITE" and not existing_df.empty:
                 hd_col_ex = self._find_col(existing_df, ['Số HĐ', 'Số hợp đồng'], default_idx=3)
@@ -3249,6 +3335,16 @@ class KPIEngine:
                     existing_df = pd.read_pickle(CACHE_DIR / "ton_bt.pkl.gz")
                 except Exception:
                     existing_df = pd.DataFrame()
+            # [FIX] Supabase fallback: tránh mất data hoặc nhân đôi khi cold start trên Vercel
+            if existing_df.empty and rule != "OVERWRITE":
+                try:
+                    sp_ton_bt = self._load_df_from_supabase("ton_bt")
+                    if not sp_ton_bt.empty:
+                        existing_df = sp_ton_bt
+                        self._save_pickle(existing_df, "ton_bt.pkl.gz")
+                        self.ton_bt_df = existing_df
+                except Exception as e_sp:
+                    print(f"[Import] ton_bt Supabase fallback load warning: {e_sp}", flush=True)
 
             if rule == "MERGE_NO_OVERWRITE" and not existing_df.empty:
                 hd_col_ex = self._find_col(existing_df, ['Số HĐ', 'Số hợp đồng'], default_idx=5)

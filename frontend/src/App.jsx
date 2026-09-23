@@ -1220,7 +1220,16 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
 
   // Admin Page States (0: HR Nhân Sự, 1: Sheet Quyền Admin, 2: Import Data Base, 3: Quản Lý Lương)
-  const [adminSubTab, setAdminSubTab] = useState(0);
+  // [FIX] Khởi tạo thông minh: User thường luôn bắt đầu ở tab Quản Lý Lương (id=3)
+  const [adminSubTab, setAdminSubTab] = useState(() => {
+    try {
+      const stored = localStorage.getItem('kpi_current_user');
+      const u = stored ? JSON.parse(stored) : null;
+      return u && u.role !== 'admin' ? 3 : 0;
+    } catch {
+      return 0;
+    }
+  });
 
   // Topic 1: HR List & CRUD States
   const [hrList, setHrList] = useState([]);
@@ -1316,7 +1325,15 @@ export default function App() {
         setCurrentUser(u);
         setAuthModalOpen(false);
         setCurrentNav('admin');
-        fetchAdminUsers();
+        // [FIX] Phân quyền: User thường chỉ được xem tab Quản Lý Lương (id=3)
+        // Admin mới vào trang HR Nhân Sự (id=0) mặc định
+        if (u?.role === 'admin') {
+          setAdminSubTab(0);
+          fetchAdminUsers();
+        } else {
+          setAdminSubTab(3);
+          fetchLuongList();
+        }
       } else {
         setAuthError(res.data?.error || 'Đăng nhập thất bại!');
       }
@@ -1409,7 +1426,9 @@ export default function App() {
         setCurrentUser(u);
         setAuthModalOpen(false);
         setCurrentNav('admin');
-        fetchAdminUsers();
+        // [FIX] User mới đăng ký là user thường → chỉ vào tab Quản Lý Lương
+        setAdminSubTab(3);
+        fetchLuongList();
       } else {
         setAuthError(res.data?.error || 'Đăng ký tài khoản thất bại!');
       }
@@ -5275,8 +5294,12 @@ export default function App() {
                       badge: `${adminLoadingSlides.length || 0} Slides`
                     }
                   ].filter((topic) => {
-                    // An cac tab yeu cau quyen: id=1 (Phan Quyen) chi admin, id=2 (Import) can ImportDB
-                    if (topic.id === 1 && !isAdmin) return false;
+                    // [FIX] Phân quyền: User thường chỉ được xem tab Quản Lý Lương (id=3)
+                    // Tất cả tab khác yêu cầu quyền admin hoặc quyền đặc biệt
+                    if (!isAdmin) {
+                      return topic.id === 3; // Chỉ Quản Lý Lương
+                    }
+                    // Admin thấy tất cả, ngoại trừ tab Import cần quyền ImportDB
                     if (topic.id === 2 && !canImport) return false;
                     return true;
                   }).map((topic) => {
