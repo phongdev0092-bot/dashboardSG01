@@ -1785,6 +1785,8 @@ export default function App() {
                 loading={loading}
                 sortedEmployees={sortedEmployees}
                 handleOpenEmployee={handleOpenEmployee}
+                dichVuData={dichVuData}
+                dichVuLoading={dichVuLoading}
               />
             )}
 
@@ -1833,6 +1835,7 @@ export default function App() {
                 setTimelineModalOpen={setTimelineModalOpen}
                 selectedStaffTimeline={selectedStaffTimeline}
                 setSelectedStaffTimeline={setSelectedStaffTimeline}
+                exportCaOStaffCsv={exportCaOStaffCsv}
               />
             )}
 

@@ -75,6 +75,7 @@ export default function LichTrucView({
   setTimelineModalOpen,
   selectedStaffTimeline,
   setSelectedStaffTimeline,
+  exportCaOStaffCsv,
 }) {
   return (
 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
