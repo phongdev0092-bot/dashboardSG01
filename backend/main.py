@@ -242,8 +242,11 @@ def get_sync_status():
 # LỊCH TRỰC API ENDPOINTS
 # =========================================================================
 @app.get("/api/lich-truc/dashboard")
-def get_lich_truc_dashboard(date: Optional[str] = Query(None)):
-    return engine.get_lich_truc_dashboard(date_str=date)
+def get_lich_truc_dashboard(
+    date: Optional[str] = Query(None),
+    force: bool = Query(False)
+):
+    return engine.get_lich_truc_dashboard(date_str=date, force=force)
 
 @app.get("/api/lich-truc/thresholds")
 def get_lich_truc_thresholds():

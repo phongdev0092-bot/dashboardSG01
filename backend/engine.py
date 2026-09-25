@@ -1928,13 +1928,30 @@ class KPIEngine:
 
         return res_blocks, hr_map
 
+    def _clean_block_name(self, raw, ns='', hr_map=None):
+        import re
+        s = re.sub(r'\s*-\s*L\d+.*$', '', str(raw or '').strip(), flags=re.I).strip()
+        if not s or s.upper() in ('NAN', 'NONE', '-', 'NULL'):
+            if hr_map and ns and hr_map.get(ns, {}).get('block'):
+                return hr_map[ns]['block']
+            return '(Không xác định)'
+        return s
+
     def _get_ton_tk_parsed(self, hr_map):
         self._refresh_lt_from_sheet()
         df_ton_tk = getattr(self, 'ton_tk_df', pd.DataFrame())
         if df_ton_tk.empty:
+            try:
+                self.sync_ton_tk_bt(force=False)
+                df_ton_tk = getattr(self, 'ton_tk_df', pd.DataFrame())
+            except Exception as e_sync:
+                print(f"Warning: sync_ton_tk_bt in _get_ton_tk_parsed failed: {e_sync}", flush=True)
+
+        if df_ton_tk.empty:
             return []
         
-        col_f_block = self._find_col(df_ton_tk, ['Block', 'Block nhân sự'], default_idx=5)
+        col_block_ns = self._find_col(df_ton_tk, ['Block nhân sự', 'Block nhân viên', 'Block nhận sự'], default_idx=16)
+        col_block_raw = self._find_col(df_ton_tk, ['Block'], default_idx=5)
         ns_col = self._find_col(df_ton_tk, ['Nhân sự', 'Nhân viên'], default_idx=17)
         s_col = self._find_col(df_ton_tk, ['TG Hẹn xanh', 'Ngày hẹn Xanh'], default_idx=18)
         t_col = self._find_col(df_ton_tk, ['TG Hẹn đỏ', 'Ngày hẹn đỏ'], default_idx=19)
@@ -1949,13 +1966,10 @@ class KPIEngine:
             hen_raw = s if (s and s != 'nan') else (t if (t and t != 'nan') else 'Chưa có lịch hẹn')
             dt_hen = self._parse_date_str(hen_raw)
 
-            block_f = str(r.get(col_f_block, '')).strip()
-            if block_f and block_f.upper() not in ('NAN', 'NONE', '-', 'NULL'):
-                block = block_f
-            elif ns and hr_map.get(ns, {}).get('block'):
-                block = hr_map.get(ns, {}).get('block')
-            else:
-                block = '(Không xác định)'
+            b_ns = str(r.get(col_block_ns, '')).strip()
+            b_raw = str(r.get(col_block_raw, '')).strip()
+            candidate = b_ns if (b_ns and b_ns.upper() not in ('NAN', 'NONE', '-', 'NULL')) else b_raw
+            block = self._clean_block_name(candidate, ns, hr_map)
 
             tk_rows.append({
                 'ns': ns,
@@ -1969,9 +1983,16 @@ class KPIEngine:
         self._refresh_lt_from_sheet()
         df_ton_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
         if df_ton_bt.empty:
+            try:
+                self.sync_ton_tk_bt(force=False)
+                df_ton_bt = getattr(self, 'ton_bt_df', pd.DataFrame())
+            except Exception as e_sync:
+                print(f"Warning: sync_ton_tk_bt in _get_ton_bt_parsed failed: {e_sync}", flush=True)
+
+        if df_ton_bt.empty:
             return []
         
-        col_e_block = self._find_col(df_ton_bt, ['Block'], default_idx=4)
+        col_e_block = self._find_col(df_ton_bt, ['Block nhân sự', 'Block nhân viên', 'Block'], default_idx=4)
         k_col = self._find_col(df_ton_bt, ['Ngày hẹn Xanh', 'TG Hẹn xanh'], default_idx=10)
         l_col = self._find_col(df_ton_bt, ['Ngày hẹn đỏ', 'TG Hẹn đỏ'], default_idx=11)
         ns_col = self._find_col(df_ton_bt, ['Nhân sự', 'Nhân viên'], default_idx=18)
@@ -1986,13 +2007,8 @@ class KPIEngine:
             hen_raw = k if (k and k != 'nan') else (l if (l and l != 'nan') else 'Chưa có lịch hẹn')
             dt_hen = self._parse_date_str(hen_raw)
 
-            block_e = str(r.get(col_e_block, '')).strip()
-            if block_e and block_e.upper() not in ('NAN', 'NONE', '-', 'NULL'):
-                block = block_e
-            elif ns and hr_map.get(ns, {}).get('block'):
-                block = hr_map.get(ns, {}).get('block')
-            else:
-                block = '(Không xác định)'
+            block_raw = str(r.get(col_e_block, '')).strip()
+            block = self._clean_block_name(block_raw, ns, hr_map)
 
             bt_rows.append({
                 'ns': ns,
@@ -2035,13 +2051,50 @@ class KPIEngine:
                 continue
 
             shift = str(vals[day_col_idx] or '').strip().upper()
-            if shift == 'CA1':
+            if shift in ('CA1', '1'):
                 mail = str(vals[0] or '').strip().upper()
                 info = hr_map.get(mail, {})
-                block = info.get('block') or str(vals[4] or '').strip() or '(Không xác định)'
+                raw_b = info.get('block') or str(vals[4] or '').strip()
+                block = self._clean_block_name(raw_b, mail, hr_map)
                 res[block] = res.get(block, 0) + 1
 
         return res
+
+    def _load_lt_manual_edits(self):
+        edits_path = CACHE_DIR / "lt_manual_edits.pkl.gz"
+        if edits_path.exists():
+            try:
+                self.lt_manual_edits = pd.read_pickle(edits_path)
+                if not isinstance(self.lt_manual_edits, dict):
+                    self.lt_manual_edits = {}
+            except Exception:
+                self.lt_manual_edits = {}
+        else:
+            self.lt_manual_edits = {}
+
+    def _save_lt_manual_edits(self):
+        try:
+            pd.to_pickle(getattr(self, 'lt_manual_edits', {}), CACHE_DIR / "lt_manual_edits.pkl.gz")
+        except Exception as e:
+            print(f"Warning: Failed to save lt_manual_edits: {e}", flush=True)
+
+    def _apply_manual_lt_edits(self, df):
+        if not hasattr(self, 'lt_manual_edits') or not self.lt_manual_edits or df.empty:
+            return
+        for (mail, month, year, day), new_shift in self.lt_manual_edits.items():
+            mail_clean = str(mail or '').strip().upper()
+            for idx, r in df.iterrows():
+                row_mail = str(r.iloc[0] or '').strip().upper()
+                if row_mail == mail_clean:
+                    m_raw = str(r.iloc[36] or '').strip()
+                    y_raw = str(r.iloc[37] or '').strip()
+                    m_match = re.search(r'\d+', m_raw)
+                    y_match = re.search(r'\d+', y_raw)
+                    if m_match and y_match:
+                        if int(m_match.group(0)) == month and int(y_match.group(0)) == year:
+                            col_idx = 4 + day
+                            if col_idx < df.shape[1]:
+                                df.iloc[idx, col_idx] = str(new_shift)
 
     def _refresh_lt_from_sheet(self, force=False):
         if force:
@@ -2050,14 +2103,17 @@ class KPIEngine:
 
         now = time.time()
         last_fetch = getattr(self, '_last_lt_fetch_time', 0)
-        need_fetch = force or (now - last_fetch > 60) or not hasattr(self, 'lt_df') or self.lt_df.empty
+        need_fetch = force or (now - last_fetch > 120) or not hasattr(self, 'lt_df') or self.lt_df.empty
         if need_fetch:
+            self._last_lt_fetch_time = now
             # 1. Fetch Lịch Trực live from Google Sheet
             try:
                 res_lt = requests.get(self._get_lt_sheet_url(), timeout=15)
                 if res_lt.status_code == 200 and not res_lt.text.strip().startswith('<!DOCTYPE'):
                     df_lt_fetched = self._read_any_dataframe(res_lt.content, "lt.csv")
                     if not df_lt_fetched.empty:
+                        if hasattr(self, 'lt_manual_edits') and self.lt_manual_edits:
+                            self._apply_manual_lt_edits(df_lt_fetched)
                         self.lt_df = df_lt_fetched
                         self._save_pickle(self.lt_df, "lt.pkl.gz")
                         try:
@@ -2091,10 +2147,19 @@ class KPIEngine:
                 except Exception as e_ton_bt:
                     print(f"Auto-refresh Tồn BT error: {e_ton_bt}", flush=True)
 
-            self._last_lt_fetch_time = now
+    def get_lich_truc_dashboard(self, date_str=None, force=False):
+        self._refresh_lt_from_sheet(force=force)
 
-    def get_lich_truc_dashboard(self, date_str=None):
-        self._refresh_lt_from_sheet()
+        # Luôn đảm bảo Tồn TK & Tồn BT sẵn sàng và đồng bộ
+        now_ts = time.time()
+        last_ton_fetch = getattr(self, '_last_ton_fetch_time', 0)
+        if force or (now_ts - last_ton_fetch > 120) or getattr(self, 'ton_tk_df', pd.DataFrame()).empty or getattr(self, 'ton_bt_df', pd.DataFrame()).empty:
+            try:
+                self.sync_ton_tk_bt(force=force)
+                self._last_ton_fetch_time = now_ts
+            except Exception as e_sync:
+                print(f"Warning: sync_ton_tk_bt in get_lich_truc_dashboard failed: {e_sync}", flush=True)
+
         if not date_str:
             base_date = datetime.date.today()
         else:
@@ -2118,6 +2183,56 @@ class KPIEngine:
         d1_shifts = self._compute_shift_for_date(d1)
         d2_shifts = self._compute_shift_for_date(d2)
 
+        # Thu thập danh sách Nhân Sự có ca trực là O (nghỉ trực) trong ngày d0
+        off_staff_list = []
+        if hasattr(self, 'lt_df') and not self.lt_df.empty:
+            day_0 = d0.day
+            month_0 = d0.month
+            year_0 = d0.year
+            day_col_idx_0 = 4 + day_0
+
+            for idx, r in self.lt_df.iterrows():
+                vals = list(r.values)
+                if len(vals) < 38 or day_col_idx_0 >= len(vals):
+                    continue
+
+                m_raw = str(vals[36] or '').strip()
+                y_raw = str(vals[37] or '').strip()
+                m_match = re.search(r'\d+', m_raw)
+                y_match = re.search(r'\d+', y_raw)
+                if not m_match or not y_match:
+                    continue
+
+                if int(m_match.group(0)) != month_0 or int(y_match.group(0)) != year_0:
+                    continue
+
+                shift = str(vals[day_col_idx_0] or '').strip().upper()
+                if shift == 'O':
+                    mail = str(vals[0] or '').strip()
+                    code = str(vals[1] or '').strip()
+                    name = str(vals[2] or '').strip()
+                    partner = str(vals[3] or '').strip()
+                    raw_b = str(vals[4] or '').strip()
+
+                    info = hr_map.get(mail.upper(), {}) or hr_map.get(code.upper(), {})
+                    clean_b = self._clean_block_name(info.get('block') or raw_b, mail, hr_map)
+                    doi_truong = info.get('truong') or ns_by_block.get(clean_b, {}).get('truong') or '(chưa rõ)'
+                    status = 'Active' if info.get('is_active', True) else 'Inactive'
+
+                    off_staff_list.append({
+                        'code': code,
+                        'name': name,
+                        'mail': mail,
+                        'partner': partner,
+                        'block': clean_b,
+                        'doiTruong': doi_truong,
+                        'caTruc': 'O',
+                        'status': status
+                    })
+
+            # Sắp xếp theo Đội Trưởng, sau đó theo Tên
+            off_staff_list.sort(key=lambda x: (x.get('doiTruong', ''), x.get('block', ''), x.get('name', '')))
+
         all_blocks = sorted(list(set(
             list(ns_by_block.keys()) +
             list(d0_shifts.keys()) +
@@ -2125,21 +2240,31 @@ class KPIEngine:
             list(df_bt_p['block'].unique() if not df_bt_p.empty else [])
         )))
 
+        # Total Backlog Across All Dates
         tot_tk_map = df_tk_p.groupby('block').size().to_dict() if not df_tk_p.empty else {}
         tot_bt_map = df_bt_p.groupby('block').size().to_dict() if not df_bt_p.empty else {}
 
-        tk_0_map = df_tk_p[df_tk_p['dt_hen'] == d0].groupby('block').size().to_dict() if not df_tk_p.empty else {}
-        bt_0_map = df_bt_p[df_bt_p['dt_hen'] == d0].groupby('block').size().to_dict() if not df_bt_p.empty else {}
+        # Date X (d0): Tickets scheduled for d0, plus overdue tickets before d0, plus unassigned tickets
+        cond_0_tk = (df_tk_p['dt_hen'].isna()) | (df_tk_p['dt_hen'] <= d0) if not df_tk_p.empty else pd.Series(dtype=bool)
+        cond_0_bt = (df_bt_p['dt_hen'].isna()) | (df_bt_p['dt_hen'] <= d0) if not df_bt_p.empty else pd.Series(dtype=bool)
+        tk_0_map = df_tk_p[cond_0_tk].groupby('block').size().to_dict() if not df_tk_p.empty else {}
+        bt_0_map = df_bt_p[cond_0_bt].groupby('block').size().to_dict() if not df_bt_p.empty else {}
 
-        tk_1_map = df_tk_p[df_tk_p['dt_hen'] == d1].groupby('block').size().to_dict() if not df_tk_p.empty else {}
-        bt_1_map = df_bt_p[df_bt_p['dt_hen'] == d1].groupby('block').size().to_dict() if not df_bt_p.empty else {}
+        # Date X+1 (d1): Tickets booked specifically for d1
+        cond_1_tk = (df_tk_p['dt_hen'] == d1) if not df_tk_p.empty else pd.Series(dtype=bool)
+        cond_1_bt = (df_bt_p['dt_hen'] == d1) if not df_bt_p.empty else pd.Series(dtype=bool)
+        tk_1_map = df_tk_p[cond_1_tk].groupby('block').size().to_dict() if not df_tk_p.empty else {}
+        bt_1_map = df_bt_p[cond_1_bt].groupby('block').size().to_dict() if not df_bt_p.empty else {}
 
-        tk_2_map = df_tk_p[df_tk_p['dt_hen'] == d2].groupby('block').size().to_dict() if not df_tk_p.empty else {}
-        bt_2_map = df_bt_p[df_bt_p['dt_hen'] == d2].groupby('block').size().to_dict() if not df_bt_p.empty else {}
+        # Date X+2 (d2): Tickets booked specifically for d2
+        cond_2_tk = (df_tk_p['dt_hen'] == d2) if not df_tk_p.empty else pd.Series(dtype=bool)
+        cond_2_bt = (df_bt_p['dt_hen'] == d2) if not df_bt_p.empty else pd.Series(dtype=bool)
+        tk_2_map = df_tk_p[cond_2_tk].groupby('block').size().to_dict() if not df_tk_p.empty else {}
+        bt_2_map = df_bt_p[cond_2_bt].groupby('block').size().to_dict() if not df_bt_p.empty else {}
 
         summary_table = []
         for block in all_blocks:
-            if not block or block == 'nan':
+            if not block or block in ('nan', '(Không xác định)'):
                 continue
             ns_info = ns_by_block.get(block, {'truong': '(chưa rõ)', 'activeCount': 0})
             sl_active = ns_info['activeCount']
@@ -2208,7 +2333,9 @@ class KPIEngine:
             'ca1Total0': ca1_total_0,
             'activeTotal': active_total,
             'tonTotal': ton_total_sum,
-            'summaryTable': summary_table
+            'summaryTable': summary_table,
+            'offStaffList': off_staff_list,
+            'totalOff': len(off_staff_list)
         }
 
     def get_lich_truc_chitiet(self, month=0, year=0, doi_truong="__ALL__"):
@@ -2280,23 +2407,107 @@ class KPIEngine:
         self._snapshot_and_detect_lt_changes(source_label="Thêm mới")
         return {"ok": True}
 
-    def update_lich_truc_row(self, row_number: int, values_b_to_al: list):
+    def update_lich_truc_row(self, row_number: int, values_b_to_al: list, target_mail: str = None):
         if not hasattr(self, 'lt_df') or self.lt_df.empty:
             return {"ok": False, "error": "No Lịch Trực data loaded"}
         
+        if not hasattr(self, 'lt_history') or self.lt_history is None:
+            self._load_lt_history_and_snapshot()
+        if not hasattr(self, 'lt_manual_edits'):
+            self._load_lt_manual_edits()
+
         try:
             df_idx = int(row_number) - 2
-            if 0 <= df_idx < len(self.lt_df):
+            matched_idx = None
+            clean_target_mail = str(target_mail or '').strip().upper()
+
+            if clean_target_mail:
+                for pos, r in enumerate(self.lt_df.itertuples(index=False)):
+                    if str(r[0] or '').strip().upper() == clean_target_mail:
+                        matched_idx = pos
+                        break
+
+            if matched_idx is None and 0 <= df_idx < len(self.lt_df):
+                matched_idx = df_idx
+
+            if matched_idx is not None and 0 <= matched_idx < len(self.lt_df):
+                old_row = list(self.lt_df.iloc[matched_idx].values)
+                mail = str(old_row[0] or clean_target_mail).strip().upper()
+
+                m_raw = str(values_b_to_al[35] if len(values_b_to_al) > 35 else old_row[36] or '').strip()
+                y_raw = str(values_b_to_al[36] if len(values_b_to_al) > 36 else old_row[37] or '').strip()
+                m_match = re.search(r'\d+', m_raw)
+                y_match = re.search(r'\d+', y_raw)
+                row_month = int(m_match.group(0)) if m_match else datetime.datetime.now().month
+                row_year = int(y_match.group(0)) if y_match else datetime.datetime.now().year
+
+                _, hr_map = self._get_nhan_su_by_block()
+                info = hr_map.get(mail, {})
+                doi_truong = info.get('truong') or ''
+                code_staff = str(values_b_to_al[0] if len(values_b_to_al) > 0 else old_row[1] or '').strip()
+                name = str(values_b_to_al[1] if len(values_b_to_al) > 1 else old_row[2] or '').strip()
+                partner = str(values_b_to_al[2] if len(values_b_to_al) > 2 else old_row[3] or '').strip()
+                block = str(values_b_to_al[3] if len(values_b_to_al) > 3 else old_row[4] or '').strip()
+
+                now_dt = datetime.datetime.now()
+                time_str = now_dt.strftime('%Y-%m-%d %H:%M:%S')
+                time_display = now_dt.strftime('%d/%m/%Y %H:%M')
+
+                def norm_shift(v):
+                    s = str(v or '').strip().upper()
+                    if s in ('', 'NAN', 'NONE', 'NULL', 'O', 'OFF', '0', '-'):
+                        return 'O'
+                    if 'CA1' in s or s == '1':
+                        return 'CA1'
+                    return s
+
+                # Apply updates to lt_df
                 for i, val in enumerate(values_b_to_al):
                     col_target = i + 1
                     if col_target < self.lt_df.shape[1]:
-                        self.lt_df.iloc[df_idx, col_target] = str(val)
+                        self.lt_df.iloc[matched_idx, col_target] = str(val)
+
+                # Check Day 1 to Day 31 shift differences and record directly into audit history
+                for day_idx in range(1, 32):
+                    old_shift_raw = old_row[4 + day_idx] if (4 + day_idx) < len(old_row) else ''
+                    new_val_idx = 3 + day_idx # index 4 is Day1 in values_b_to_al
+                    new_shift_raw = values_b_to_al[new_val_idx] if new_val_idx < len(values_b_to_al) else ''
+
+                    old_clean = norm_shift(old_shift_raw)
+                    new_clean = norm_shift(new_shift_raw)
+
+                    if old_clean != new_clean:
+                        rec = {
+                            'id': len(self.lt_history) + 1,
+                            'timestamp': time_str,
+                            'timeDisplay': time_display,
+                            'milestone': 'Chỉnh sửa',
+                            'mail': mail,
+                            'codeStaff': code_staff,
+                            'name': name,
+                            'partner': partner,
+                            'block': block,
+                            'doiTruong': doi_truong,
+                            'month': row_month,
+                            'year': row_year,
+                            'day': day_idx,
+                            'dateStr': f"{day_idx:02d}/{row_month:02d}/{row_year}",
+                            'oldVal': old_clean,
+                            'newVal': new_clean,
+                            'changeType': f"{old_clean} ➔ {new_clean}"
+                        }
+                        self.lt_history.append(rec)
+                        # Record in persistent manual edits dict so Google Sheet sync won't revert
+                        self.lt_manual_edits[(mail, row_month, row_year, day_idx)] = new_clean
+                        if hasattr(self, 'lt_snapshot_map') and isinstance(self.lt_snapshot_map, dict):
+                            self.lt_snapshot_map[(mail, row_month, row_year, day_idx)] = new_clean
+
+                self._last_lt_fetch_time = time.time()
                 self._save_pickle(self.lt_df, "lt.pkl.gz")
-                try:
-                    self._snapshot_and_detect_lt_changes(source_label="Chỉnh sửa")
-                except Exception as snap_err:
-                    print(f"Warning: snapshot update warning: {snap_err}", flush=True)
-                return {"ok": True, "message": "Đã lưu thay đổi lịch trực thành công!"}
+                self._save_lt_history_and_snapshot()
+                self._save_lt_manual_edits()
+                return {"ok": True, "message": "Đã lưu thay đổi lịch trực và ghi nhận timeline thành công!"}
+
             return {"ok": False, "error": f"Invalid row index ({row_number})"}
         except Exception as e:
             return {"ok": False, "error": f"Lỗi lưu lịch trực: {str(e)}"}
@@ -2555,6 +2766,10 @@ class KPIEngine:
                         self.ton_tk_df = df_ton_tk_fetched
                         self._save_pickle(self.ton_tk_df, "ton_tk.pkl.gz")
                         sources.append(f"Google Sheet Tồn TK ({len(df_ton_tk_fetched)} phiếu)")
+                        try:
+                            self._save_df_to_supabase(self.ton_tk_df, "ton_tk")
+                        except Exception as e_sp_save:
+                            print(f"Warning: Failed to save fetched ton_tk to Supabase: {e_sp_save}", flush=True)
             except Exception as e_sheet_tk:
                 print(f"Fallback Tồn TK Sheet error: {e_sheet_tk}", flush=True)
 
@@ -2568,6 +2783,10 @@ class KPIEngine:
                         self.ton_bt_df = df_ton_bt_fetched
                         self._save_pickle(self.ton_bt_df, "ton_bt.pkl.gz")
                         sources.append(f"Google Sheet Tồn BT ({len(df_ton_bt_fetched)} phiếu)")
+                        try:
+                            self._save_df_to_supabase(self.ton_bt_df, "ton_bt")
+                        except Exception as e_sp_save:
+                            print(f"Warning: Failed to save fetched ton_bt to Supabase: {e_sp_save}", flush=True)
             except Exception as e_sheet_bt:
                 print(f"Fallback Tồn BT Sheet error: {e_sheet_bt}", flush=True)
 

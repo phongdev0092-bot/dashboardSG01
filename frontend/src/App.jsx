@@ -1150,6 +1150,7 @@ export default function App() {
   const [ltDashDoiTruong, setLtDashDoiTruong] = useState('__ALL__');
   const [ltDashData, setLtDashData] = useState(null);
   const [ltLoading, setLtLoading] = useState(false);
+  const [ltOffStaffSearch, setLtOffStaffSearch] = useState('');
 
   // Thresholds State
   const [ltThresholds, setLtThresholds] = useState({ tiLeTrucMin: 50, tonPerNsMax: 5 });
@@ -1853,16 +1854,61 @@ export default function App() {
   };
 
   // Lịch Trực API Calls
-  const fetchLichTrucDashboard = async (targetDate = ltDate) => {
+  const fetchLichTrucDashboard = async (targetDate = ltDate, force = false) => {
     setLtLoading(true);
     try {
-      const res = await axios.get('/api/lich-truc/dashboard', { params: { date: targetDate } });
+      const res = await axios.get('/api/lich-truc/dashboard', { params: { date: targetDate, force } });
       setLtDashData(res.data);
     } catch (err) {
       console.error("Failed to fetch Lịch Trực dashboard:", err);
     } finally {
       setLtLoading(false);
     }
+  };
+
+  const exportCaOStaffCsv = () => {
+    if (!ltDashData || !ltDashData.offStaffList) return;
+    const filtered = ltDashData.offStaffList
+      .filter(s => ltDashDoiTruong === '__ALL__' || s.doiTruong === ltDashDoiTruong)
+      .filter(s => {
+        if (!ltOffStaffSearch) return true;
+        const q = ltOffStaffSearch.toLowerCase().trim();
+        return (
+          (s.code || '').toLowerCase().includes(q) ||
+          (s.name || '').toLowerCase().includes(q) ||
+          (s.mail || '').toLowerCase().includes(q) ||
+          (s.block || '').toLowerCase().includes(q) ||
+          (s.doiTruong || '').toLowerCase().includes(q)
+        );
+      });
+    if (filtered.length === 0) {
+      alert("Không có dữ liệu nhân sự ca O để xuất!");
+      return;
+    }
+    const headers = ["STT", "Mã NV", "Họ Tên", "Email", "Block", "Đội Trưởng", "Đối Tác", "Ca Trực", "Trạng Thái"];
+    const rows = filtered.map((s, idx) => [
+      idx + 1,
+      s.code,
+      s.name,
+      s.mail,
+      s.block,
+      s.doiTruong,
+      s.partner,
+      s.caTruc,
+      s.status
+    ]);
+    const csvContent = "\uFEFF" + [
+      headers.map(h => `"${h}"`).join(","),
+      ...rows.map(r => r.map(c => `"${String(c || '').replace(/"/g, '""')}"`).join(","))
+    ].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `DS_Nhan_Su_Ca_O_${ltDate || new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const fetchLichTrucThresholds = async () => {
@@ -4255,7 +4301,7 @@ export default function App() {
                           />
                         </Grid>
 
-                        <Grid item xs={12} sm={6} md={2}>
+                        <Grid item xs={6} sm={3} md={1.5}>
                           <Button
                             variant="contained"
                             color="primary"
@@ -4267,7 +4313,7 @@ export default function App() {
                           </Button>
                         </Grid>
 
-                        <Grid item xs={12} sm={6} md={2}>
+                        <Grid item xs={6} sm={3} md={1.5}>
                           <Button
                             variant="outlined"
                             color="primary"
@@ -4285,7 +4331,20 @@ export default function App() {
                           </Button>
                         </Grid>
 
-                        <Grid item xs={12} sm={6} md={3}>
+                        <Grid item xs={6} sm={3} md={1.5}>
+                          <Button
+                            variant="outlined"
+                            color="info"
+                            fullWidth
+                            onClick={() => fetchLichTrucDashboard(ltDate, true)}
+                            disabled={ltLoading}
+                            sx={{ borderRadius: 2, height: 40, fontWeight: 700 }}
+                          >
+                            🔄 Làm mới
+                          </Button>
+                        </Grid>
+
+                        <Grid item xs={12} sm={6} md={2.5}>
                           <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
                             Lọc Theo Đội Trưởng
                           </FormLabel>
@@ -4304,7 +4363,7 @@ export default function App() {
                           </TextField>
                         </Grid>
 
-                        <Grid item xs={12} sm={6} md={2}>
+                        <Grid item xs={6} sm={3} md={2}>
                           <Button
                             variant="outlined"
                             color="secondary"
@@ -4321,7 +4380,7 @@ export default function App() {
 
                     {/* SUMMARY CARDS ROW */}
                     {ltDashData && (
-                      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, gap: 2, width: '100%' }}>
+                      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }, gap: 2, width: '100%' }}>
                         <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #d2e3fc', borderLeft: '6px solid #1a73e8', backgroundColor: '#ffffff' }}>
                           <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                             <Typography variant="overline" sx={{ color: '#1a73e8', fontWeight: 800 }}>
@@ -4366,6 +4425,22 @@ export default function App() {
                             </Typography>
                             <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
                               Tổng tồn Triển Khai + Bảo Trì {ltDashDoiTruong !== '__ALL__' ? '(đã lọc)' : 'toàn hệ thống'}
+                            </Typography>
+                          </CardContent>
+                        </Card>
+
+                        <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #fbcfe8', borderLeft: '6px solid #db2777', backgroundColor: '#ffffff' }}>
+                          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                            <Typography variant="overline" sx={{ color: '#db2777', fontWeight: 800 }}>
+                              NS NGHỈ (CA O) - {ltDashData.date0}
+                            </Typography>
+                            <Typography variant="h3" sx={{ fontWeight: 800, color: '#db2777', mt: 0.5 }}>
+                              {ltDashData.offStaffList
+                                ?.filter(s => ltDashDoiTruong === '__ALL__' || s.doiTruong === ltDashDoiTruong)
+                                ?.length || 0}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
+                              Nhân sự ca O {ltDashDoiTruong !== '__ALL__' ? `(${ltDashDoiTruong})` : 'toàn hệ thống'} ngày tra cứu
                             </Typography>
                           </CardContent>
                         </Card>
@@ -4471,6 +4546,130 @@ export default function App() {
                             </TableBody>
                           </Table>
                         </TableContainer>
+                      )}
+                    </Paper>
+
+                    {/* DANH SÁCH NHÂN SỰ NGHỈ (CA O) TRONG NGÀY */}
+                    <Paper elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', backgroundColor: '#ffffff', border: '1px solid #e0e0e0', mt: 1 }}>
+                      <Box sx={{ p: 2.5, backgroundColor: '#fff7ed', borderBottom: '1px solid #fed7aa', display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                          <Typography variant="h6" sx={{ fontWeight: 800, color: '#9a3412', display: 'flex', alignItems: 'center', gap: 1 }}>
+                            🏖️ DANH SÁCH NHÂN SỰ NGHỈ (CA O) - NGÀY {ltDashData?.date0 || '...'}
+                          </Typography>
+                          <Chip 
+                            label={`${
+                              (ltDashData?.offStaffList || [])
+                                .filter(s => ltDashDoiTruong === '__ALL__' || s.doiTruong === ltDashDoiTruong)
+                                .filter(s => {
+                                  if (!ltOffStaffSearch) return true;
+                                  const q = ltOffStaffSearch.toLowerCase().trim();
+                                  return (
+                                    (s.code || '').toLowerCase().includes(q) ||
+                                    (s.name || '').toLowerCase().includes(q) ||
+                                    (s.mail || '').toLowerCase().includes(q) ||
+                                    (s.block || '').toLowerCase().includes(q) ||
+                                    (s.doiTruong || '').toLowerCase().includes(q)
+                                  );
+                                }).length
+                            } nhân sự`}
+                            size="small"
+                            sx={{ fontWeight: 700, backgroundColor: '#ffedd5', color: '#c2410c', border: '1px solid #fed7aa' }}
+                          />
+                        </Box>
+
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                          <TextField
+                            size="small"
+                            placeholder="🔍 Tìm Mã NV, Tên, Block, ĐT..."
+                            value={ltOffStaffSearch}
+                            onChange={(e) => setLtOffStaffSearch(e.target.value)}
+                            sx={{ width: 280, backgroundColor: '#ffffff', '& .MuiInputBase-root': { borderRadius: 2 } }}
+                          />
+                          <Button
+                            variant="outlined"
+                            color="warning"
+                            size="small"
+                            onClick={exportCaOStaffCsv}
+                            sx={{ borderRadius: 2, height: 40, fontWeight: 700, px: 2, textTransform: 'none' }}
+                          >
+                            📥 Xuất File CSV
+                          </Button>
+                        </Box>
+                      </Box>
+
+                      {ltLoading ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress /></Box>
+                      ) : (
+                        (() => {
+                          const offList = (ltDashData?.offStaffList || [])
+                            .filter(s => ltDashDoiTruong === '__ALL__' || s.doiTruong === ltDashDoiTruong)
+                            .filter(s => {
+                              if (!ltOffStaffSearch) return true;
+                              const q = ltOffStaffSearch.toLowerCase().trim();
+                              return (
+                                (s.code || '').toLowerCase().includes(q) ||
+                                (s.name || '').toLowerCase().includes(q) ||
+                                (s.mail || '').toLowerCase().includes(q) ||
+                                (s.block || '').toLowerCase().includes(q) ||
+                                (s.doiTruong || '').toLowerCase().includes(q)
+                              );
+                            });
+
+                          if (offList.length === 0) {
+                            return (
+                              <Box sx={{ p: 4, textAlign: 'center' }}>
+                                <Typography variant="body1" sx={{ color: '#6b7280', fontStyle: 'italic' }}>
+                                  🎉 Không có nhân sự nào có ca trực là O (nghỉ trực) {ltDashDoiTruong !== '__ALL__' ? `thuộc ${ltDashDoiTruong}` : ''} trong ngày {ltDashData?.date0 || 'này'}.
+                                </Typography>
+                              </Box>
+                            );
+                          }
+
+                          return (
+                            <TableContainer sx={{ maxHeight: 480 }}>
+                              <Table stickyHeader size="small">
+                                <TableHead sx={{ backgroundColor: '#fff7ed' }}>
+                                  <TableRow>
+                                    <TableCell align="center" sx={{ fontWeight: 800, width: 60 }}>STT</TableCell>
+                                    <TableCell sx={{ fontWeight: 800, minWidth: 100 }}>Mã NV</TableCell>
+                                    <TableCell sx={{ fontWeight: 800, minWidth: 180 }}>Họ và Tên</TableCell>
+                                    <TableCell sx={{ fontWeight: 800, minWidth: 180 }}>Email / Account</TableCell>
+                                    <TableCell sx={{ fontWeight: 800, minWidth: 160 }}>Block</TableCell>
+                                    <TableCell sx={{ fontWeight: 800, minWidth: 140 }}>Đội Trưởng</TableCell>
+                                    <TableCell sx={{ fontWeight: 800, minWidth: 120 }}>Đối Tác</TableCell>
+                                    <TableCell align="center" sx={{ fontWeight: 800, width: 110 }}>Ca Trực</TableCell>
+                                    <TableCell align="center" sx={{ fontWeight: 800, width: 110 }}>Trạng Thái</TableCell>
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {offList.map((st, sIdx) => (
+                                    <TableRow key={st.code || sIdx} hover sx={{ '&:nth-of-type(even)': { backgroundColor: '#fafafa' } }}>
+                                      <TableCell align="center" sx={{ color: '#6b7280', fontSize: '13px' }}>{sIdx + 1}</TableCell>
+                                      <TableCell sx={{ fontWeight: 700, color: '#1e293b' }}>{st.code || '-'}</TableCell>
+                                      <TableCell sx={{ fontWeight: 600, color: '#0f172a' }}>{st.name}</TableCell>
+                                      <TableCell sx={{ fontSize: '12px', color: '#475569' }}>{st.mail || '-'}</TableCell>
+                                      <TableCell sx={{ fontWeight: 600, color: '#334155' }}>{st.block}</TableCell>
+                                      <TableCell sx={{ fontSize: '13px', color: '#0369a1', fontWeight: 600 }}>{st.doiTruong}</TableCell>
+                                      <TableCell sx={{ fontSize: '12px', color: '#64748b' }}>{st.partner || '-'}</TableCell>
+                                      <TableCell align="center">
+                                        <Chip label="Ca O" size="small" sx={{ fontWeight: 800, backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fecaca' }} />
+                                      </TableCell>
+                                      <TableCell align="center">
+                                        <Chip
+                                          label={st.status || 'Active'}
+                                          size="small"
+                                          variant="outlined"
+                                          color={st.status === 'Active' ? 'success' : 'default'}
+                                          sx={{ fontWeight: 600, fontSize: '11px', height: 22 }}
+                                        />
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </TableContainer>
+                          );
+                        })()
                       )}
                     </Paper>
 
