@@ -20,6 +20,8 @@ import {
   IconButton,
   Switch,
   FormControlLabel,
+  Card,
+  CardContent,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -29,6 +31,8 @@ import {
   CalendarToday as CalendarTodayIcon,
   Visibility as VisibilityIcon,
   Tune as TuneIcon,
+  Settings as SettingsIcon,
+  Download as DownloadIcon,
 } from '@mui/icons-material';
 import { TimelineModal, ThresholdModal } from '../modals';
 
