@@ -95,7 +95,7 @@ class KPIEngine:
         self.CLL30N_SHEET_ID = os.environ.get("CLL30N_SHEET_ID", "1iNzByTpTVARldj9ggWyv-FKe_vzpeDKyHeYZt4vYU94").strip()
         self.CLL30N_GID = os.environ.get("CLL30N_GID", "0").strip()
 
-        DEFAULT_DB_URL = "postgresql://postgres.pmhyostihrzwzwprdkbs:Benngo@@2027@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
+        DEFAULT_DB_URL = "postgresql+psycopg2://postgres.pmhyostihrzwzwprdkbs:Benngo@@2027@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
         self.DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip() or DEFAULT_DB_URL
         try:
             CACHE_DIR.mkdir(exist_ok=True, parents=True)
@@ -237,12 +237,14 @@ class KPIEngine:
         return name in self._manually_cleared_datasets
 
     def get_db_engine(self):
-        DEFAULT_DB_URL = "postgresql://postgres.pmhyostihrzwzwprdkbs:Benngo@@2027@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
+        DEFAULT_DB_URL = "postgresql+psycopg2://postgres.pmhyostihrzwzwprdkbs:Benngo@@2027@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
         db_url = getattr(self, 'DATABASE_URL', '') or os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip() or DEFAULT_DB_URL
         if not db_url or '[YOUR-PASSWORD]' in db_url:
             return None
         if db_url.startswith("postgres://"):
-            db_url = db_url.replace("postgres://", "postgresql://", 1)
+            db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+        elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
         # Tự động URL-encode ký tự @ trong mật khẩu nếu bị trùng với ký tự phân cách host
         try:
