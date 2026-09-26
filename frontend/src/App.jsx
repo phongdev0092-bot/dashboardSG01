@@ -1787,6 +1787,8 @@ export default function App() {
                 handleOpenEmployee={handleOpenEmployee}
                 dichVuData={dichVuData}
                 dichVuLoading={dichVuLoading}
+                filteredBlocks={filteredBlocks}
+                error={error}
               />
             )}
 
@@ -1881,6 +1883,7 @@ export default function App() {
                 importTonResult={importTonResult}
                 tonImportInputRef={tonImportInputRef}
                 handleImportTonFileSelect={handleImportTonFileSelect}
+                filteredBacklogDetails={filteredBacklogDetails}
               />
             )}
 
@@ -1964,6 +1967,8 @@ export default function App() {
                 handleDeleteSlide={handleDeleteSlide}
                 setPreviewLoadingModalOpen={setPreviewLoadingModalOpen}
                 handleResetLoadingSlides={handleResetLoadingSlides}
+                isAdmin={isAdmin}
+                canImport={canImport}
               />
             )}
 

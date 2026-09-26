@@ -139,6 +139,8 @@ export default function AdminView({
   handleDeleteSlide,
   setPreviewLoadingModalOpen,
   handleResetLoadingSlides,
+  isAdmin,
+  canImport,
 }) {
   return (
 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>

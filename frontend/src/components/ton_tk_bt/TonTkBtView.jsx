@@ -69,6 +69,7 @@ export default function TonTkBtView({
   importTonResult,
   tonImportInputRef,
   handleImportTonFileSelect,
+  filteredBacklogDetails = [],
 }) {
   return (
 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>

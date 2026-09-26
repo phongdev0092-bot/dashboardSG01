@@ -67,6 +67,8 @@ export default function KpisView({
   handleOpenEmployee,
   dichVuData,
   dichVuLoading,
+  filteredBlocks = [],
+  error,
 }) {
   return (
 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
