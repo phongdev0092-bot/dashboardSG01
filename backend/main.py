@@ -197,6 +197,8 @@ def get_debug_data_status():
             "emp_map_size": len(engine.emp_map),
             "last_sync_time": engine.last_sync_time,
             "has_db_connection": engine.get_db_engine() is not None,
+            "db_error": getattr(engine, '_last_db_error', None),
+            "db_url_masked": (engine.DATABASE_URL[:25] + '...') if getattr(engine, 'DATABASE_URL', None) else 'EMPTY',
         }
     except Exception as e:
         import traceback

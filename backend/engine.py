@@ -266,6 +266,7 @@ class KPIEngine:
                 connect_args={"connect_timeout": 15}
             )
         except Exception as e:
+            self._last_db_error = str(e)
             print(f"Warning: Failed to create SQLAlchemy DB engine: {e}", flush=True)
             return None
 
