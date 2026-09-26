@@ -95,7 +95,8 @@ class KPIEngine:
         self.CLL30N_SHEET_ID = os.environ.get("CLL30N_SHEET_ID", "1iNzByTpTVARldj9ggWyv-FKe_vzpeDKyHeYZt4vYU94").strip()
         self.CLL30N_GID = os.environ.get("CLL30N_GID", "0").strip()
 
-        self.DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip()
+        DEFAULT_DB_URL = "postgresql://postgres.pmhyostihrzwzwprdkbs:Benngo@@2027@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
+        self.DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip() or DEFAULT_DB_URL
         try:
             CACHE_DIR.mkdir(exist_ok=True, parents=True)
             cfg_file = CACHE_DIR / "webapp_config.json"
@@ -236,7 +237,8 @@ class KPIEngine:
         return name in self._manually_cleared_datasets
 
     def get_db_engine(self):
-        db_url = getattr(self, 'DATABASE_URL', '') or os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip()
+        DEFAULT_DB_URL = "postgresql://postgres.pmhyostihrzwzwprdkbs:Benngo@@2027@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
+        db_url = getattr(self, 'DATABASE_URL', '') or os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip() or DEFAULT_DB_URL
         if not db_url or '[YOUR-PASSWORD]' in db_url:
             return None
         if db_url.startswith("postgres://"):
@@ -1336,14 +1338,18 @@ class KPIEngine:
         e_d = self._parse_date_param(end_date)
 
         if s_d:
-            tk = tk[tk['date_complete'] >= s_d]
-            bt = bt[bt['date_complete'] >= s_d]
+            if not tk.empty and 'date_complete' in tk.columns:
+                tk = tk[tk['date_complete'] >= s_d]
+            if not bt.empty and 'date_complete' in bt.columns:
+                bt = bt[bt['date_complete'] >= s_d]
 
         if e_d:
             # Include the full end day (up to 23:59:59) so tickets completed on end_date are included
             e_d_end = e_d + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-            tk = tk[tk['date_complete'] <= e_d_end]
-            bt = bt[bt['date_complete'] <= e_d_end]
+            if not tk.empty and 'date_complete' in tk.columns:
+                tk = tk[tk['date_complete'] <= e_d_end]
+            if not bt.empty and 'date_complete' in bt.columns:
+                bt = bt[bt['date_complete'] <= e_d_end]
 
         # Filter KH Co Cls by date range
         cls = self.kh_cls_df.copy() if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else pd.DataFrame()
@@ -1763,12 +1769,16 @@ class KPIEngine:
         e_d = self._parse_date_param(end_date)
 
         if s_d:
-            tk = tk[tk['date_complete'] >= s_d]
-            bt = bt[bt['date_complete'] >= s_d]
+            if not tk.empty and 'date_complete' in tk.columns:
+                tk = tk[tk['date_complete'] >= s_d]
+            if not bt.empty and 'date_complete' in bt.columns:
+                bt = bt[bt['date_complete'] >= s_d]
 
         if e_d:
-            tk = tk[tk['date_complete'] <= e_d]
-            bt = bt[bt['date_complete'] <= e_d]
+            if not tk.empty and 'date_complete' in tk.columns:
+                tk = tk[tk['date_complete'] <= e_d]
+            if not bt.empty and 'date_complete' in bt.columns:
+                bt = bt[bt['date_complete'] <= e_d]
 
         # TK tickets list
         tk_list = []
