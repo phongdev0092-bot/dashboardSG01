@@ -1598,15 +1598,22 @@ export default function App() {
           }
         }
         if (rowsToImport.length > 0) {
-          await axios.post('/api/lich-truc/import-csv', { rows: rowsToImport });
-          alert(`Đã nhập thành công ${rowsToImport.length} dòng dữ liệu Lịch Trực!`);
+          const res = await axios.post('/api/lich-truc/import-csv', { rows: rowsToImport });
+          const data = res.data;
+          if (data.ok) {
+            const msg = data.message || `Đã nhập thành công ${data.count || rowsToImport.length} dòng dữ liệu Lịch Trực!`;
+            alert(msg);
+          } else {
+            alert(data.error || 'Import không thành công!');
+          }
           fetchLichTrucChiTiet();
         } else {
           alert("Không tìm thấy dòng dữ liệu hợp lệ (cần đủ 38 cột: Mail, CodeStaff, Name, Partner, Block, Day1..31, Months, Years).");
         }
       } catch (err) {
         console.error("Import error:", err);
-        alert("Lỗi khi đọc file CSV!");
+        const errMsg = err?.response?.data?.error || "Lỗi khi đọc file CSV!";
+        alert(errMsg);
       } finally {
         e.target.value = '';
       }

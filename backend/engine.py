@@ -123,6 +123,8 @@ class KPIEngine:
             pass
         # Load cleared flags AFTER DATABASE_URL is fully set, so Supabase fallback works
         self._load_cleared_flags()
+        self._load_lt_manual_edits()  # Load manual edits early (before sheet refresh)
+        self._load_lt_imported_rows()  # Load imported rows early (for dedup + merge after sheet refresh)
         self._load_lt_history_and_snapshot()
         self.load_cache_or_fetch()
 
@@ -2085,11 +2087,47 @@ class KPIEngine:
         else:
             self.lt_manual_edits = {}
 
+        # Fallback: load from Supabase if local is empty (Vercel cold start)
+        if not self.lt_manual_edits:
+            try:
+                db_engine = self.get_db_engine()
+                if db_engine:
+                    from sqlalchemy import text as sa_text
+                    with db_engine.connect() as conn:
+                        result = conn.execute(sa_text(
+                            "SELECT flag_name, flag_value FROM _system_flags WHERE flag_type = 'lt_manual_edits'"
+                        ))
+                        row = result.fetchone()
+                        if row and row[1]:
+                            edits_raw = json.loads(row[1])
+                            # Convert keys back from JSON string to tuples
+                            restored = {}
+                            for k_str, v in edits_raw.items():
+                                parts = k_str.split('|')
+                                if len(parts) == 4:
+                                    restored[(parts[0], int(parts[1]), int(parts[2]), int(parts[3]))] = v
+                            self.lt_manual_edits = restored
+                            print(f"Loaded {len(restored)} lt_manual_edits from Supabase", flush=True)
+            except Exception as e:
+                print(f"Info: Could not load lt_manual_edits from Supabase: {e}", flush=True)
+
     def _save_lt_manual_edits(self):
         try:
             pd.to_pickle(getattr(self, 'lt_manual_edits', {}), CACHE_DIR / "lt_manual_edits.pkl.gz")
         except Exception as e:
             print(f"Warning: Failed to save lt_manual_edits: {e}", flush=True)
+        # Also persist to Supabase for Vercel
+        try:
+            edits = getattr(self, 'lt_manual_edits', {})
+            if edits:
+                # Convert tuple keys to JSON-safe string keys
+                edits_json = {}
+                for (mail, month, year, day), val in edits.items():
+                    key_str = f"{mail}|{month}|{year}|{day}"
+                    edits_json[key_str] = val
+                self._save_system_flag('lt_manual_edits', 'lt_manual_edits', json.dumps(edits_json, ensure_ascii=False))
+        except Exception as e:
+            print(f"Warning: Failed to save lt_manual_edits to Supabase: {e}", flush=True)
 
     def _apply_manual_lt_edits(self, df):
         if not hasattr(self, 'lt_manual_edits') or not self.lt_manual_edits or df.empty:
@@ -2127,6 +2165,8 @@ class KPIEngine:
                     if not df_lt_fetched.empty:
                         if hasattr(self, 'lt_manual_edits') and self.lt_manual_edits:
                             self._apply_manual_lt_edits(df_lt_fetched)
+                        # Merge imported rows back after Google Sheet refresh
+                        df_lt_fetched = self._merge_imported_rows(df_lt_fetched)
                         self.lt_df = df_lt_fetched
                         self._save_pickle(self.lt_df, "lt.pkl.gz")
                         try:
@@ -2549,16 +2589,165 @@ class KPIEngine:
                     new_rows.append([m] + [str(x) for x in v[:37]])
         
         if new_rows:
-            new_df = pd.DataFrame(new_rows)
-            if not hasattr(self, 'lt_df') or self.lt_df.empty:
-                header = ['Mail', 'CodeStaff', 'Name', 'Partner', 'Block'] + [f'Day{i}' for i in range(1, 32)] + ['Months', 'Years']
-                self.lt_df = pd.DataFrame([header] + new_rows)
-            else:
-                self.lt_df = pd.concat([self.lt_df, new_df], ignore_index=True)
-            self._save_pickle(self.lt_df, "lt.pkl.gz")
-            self._snapshot_and_detect_lt_changes(source_label="Import")
-            return {"ok": True, "count": len(new_rows)}
+            # ── Lọc trùng: check cả lt_df hiện tại VÀ lt_imported_rows đã lưu ──
+            existing_keys = set()
+            # Check lt_df (data từ Google Sheet + imported trước đó)
+            if hasattr(self, 'lt_df') and not self.lt_df.empty:
+                for idx, r in self.lt_df.iterrows():
+                    vals = list(r.values)
+                    if len(vals) < 38:
+                        continue
+                    mail_ex = str(vals[0] or '').strip().upper()
+                    m_raw = str(vals[36] or '').strip()
+                    y_raw = str(vals[37] or '').strip()
+                    m_match = re.search(r'\d+', m_raw)
+                    y_match = re.search(r'\d+', y_raw)
+                    if m_match and y_match:
+                        existing_keys.add((mail_ex, m_match.group(0), y_match.group(0)))
+            # Check cả imported rows đã lưu trong Supabase (phòng trường hợp lt_df chưa merge)
+            if hasattr(self, '_lt_imported_rows') and self._lt_imported_rows:
+                for imp_row in self._lt_imported_rows:
+                    if len(imp_row) >= 38:
+                        mail_imp = str(imp_row[0] or '').strip().upper()
+                        m_imp = str(imp_row[36] or '').strip()
+                        y_imp = str(imp_row[37] or '').strip()
+                        m_match = re.search(r'\d+', m_imp)
+                        y_match = re.search(r'\d+', y_imp)
+                        if m_match and y_match:
+                            existing_keys.add((mail_imp, m_match.group(0), y_match.group(0)))
+
+            filtered_rows = []
+            skipped = 0
+            for row in new_rows:
+                mail_new = str(row[0] or '').strip().upper()
+                m_new_raw = str(row[36] if len(row) > 36 else '').strip()
+                y_new_raw = str(row[37] if len(row) > 37 else '').strip()
+                m_new_match = re.search(r'\d+', m_new_raw)
+                y_new_match = re.search(r'\d+', y_new_raw)
+                if m_new_match and y_new_match:
+                    key = (mail_new, m_new_match.group(0), y_new_match.group(0))
+                    if key in existing_keys:
+                        skipped += 1
+                        continue
+                    existing_keys.add(key)  # Cũng check trùng giữa các row import
+                filtered_rows.append(row)
+            # ────────────────────────────────────────────────────────────────────
+
+            if not filtered_rows and skipped > 0:
+                return {"ok": False, "error": f"Tất cả {skipped} dòng đã tồn tại (trùng Mail + Tháng + Năm), không import thêm."}
+
+            if filtered_rows:
+                new_df = pd.DataFrame(filtered_rows)
+                if not hasattr(self, 'lt_df') or self.lt_df.empty:
+                    header = ['Mail', 'CodeStaff', 'Name', 'Partner', 'Block'] + [f'Day{i}' for i in range(1, 32)] + ['Months', 'Years']
+                    self.lt_df = pd.DataFrame([header] + filtered_rows)
+                else:
+                    self.lt_df = pd.concat([self.lt_df, new_df], ignore_index=True)
+                self._save_pickle(self.lt_df, "lt.pkl.gz")
+                self._snapshot_and_detect_lt_changes(source_label="Import")
+                # Persist imported rows to Supabase (survive cold starts)
+                if not hasattr(self, '_lt_imported_rows'):
+                    self._lt_imported_rows = []
+                self._lt_imported_rows.extend(filtered_rows)
+                self._save_lt_imported_rows()
+                msg = f"Đã import {len(filtered_rows)} dòng mới."
+                if skipped > 0:
+                    msg += f" Bỏ qua {skipped} dòng trùng (Mail + Tháng + Năm)."
+                return {"ok": True, "count": len(filtered_rows), "skipped": skipped, "message": msg}
         return {"ok": False, "error": "No valid rows to import"}
+
+    def _load_lt_imported_rows(self):
+        """Load imported LT rows from local pickle or Supabase fallback."""
+        imp_cache = CACHE_DIR / "lt_imported_rows.pkl.gz"
+        if imp_cache.exists():
+            try:
+                data = pd.read_pickle(imp_cache)
+                if isinstance(data, list):
+                    self._lt_imported_rows = data
+                    print(f"Loaded {len(data)} imported LT rows from local cache", flush=True)
+                    return
+            except Exception:
+                pass
+        self._lt_imported_rows = []
+        # Fallback: load from Supabase
+        try:
+            db_engine = self.get_db_engine()
+            if db_engine:
+                from sqlalchemy import text as sa_text
+                with db_engine.connect() as conn:
+                    result = conn.execute(sa_text(
+                        "SELECT flag_value FROM _system_flags WHERE flag_type = 'lt_imported' AND flag_name = 'lt_imported'"
+                    ))
+                    row = result.fetchone()
+                    if row and row[0]:
+                        self._lt_imported_rows = json.loads(row[0])
+                        if not isinstance(self._lt_imported_rows, list):
+                            self._lt_imported_rows = []
+                        print(f"Loaded {len(self._lt_imported_rows)} imported LT rows from Supabase", flush=True)
+        except Exception as e:
+            print(f"Info: Could not load lt_imported_rows from Supabase: {e}", flush=True)
+
+    def _save_lt_imported_rows(self):
+        """Save imported LT rows to local pickle + Supabase."""
+        rows = getattr(self, '_lt_imported_rows', [])
+        try:
+            pd.to_pickle(rows, CACHE_DIR / "lt_imported_rows.pkl.gz")
+        except Exception as e:
+            print(f"Warning: Failed to save lt_imported_rows pickle: {e}", flush=True)
+        # Persist to Supabase
+        import threading
+        def _persist():
+            try:
+                rows_json = json.dumps(rows, ensure_ascii=False, default=str)
+                self._save_system_flag('lt_imported', 'lt_imported', rows_json)
+                print(f"Saved {len(rows)} imported LT rows to Supabase", flush=True)
+            except Exception as e:
+                print(f"Warning: Failed to save lt_imported_rows to Supabase: {e}", flush=True)
+        t = threading.Thread(target=_persist, daemon=True)
+        t.start()
+
+    def _merge_imported_rows(self, df_sheet):
+        """Merge imported rows back into sheet DataFrame (dedup by mail+month+year)."""
+        imported = getattr(self, '_lt_imported_rows', [])
+        if not imported:
+            return df_sheet
+
+        # Build set of existing keys from sheet
+        existing_keys = set()
+        for idx, r in df_sheet.iterrows():
+            vals = list(r.values)
+            if len(vals) < 38:
+                continue
+            mail_ex = str(vals[0] or '').strip().upper()
+            m_raw = str(vals[36] or '').strip()
+            y_raw = str(vals[37] or '').strip()
+            m_match = re.search(r'\d+', m_raw)
+            y_match = re.search(r'\d+', y_raw)
+            if m_match and y_match:
+                existing_keys.add((mail_ex, m_match.group(0), y_match.group(0)))
+
+        # Filter imported rows that are NOT already in sheet
+        rows_to_merge = []
+        for imp_row in imported:
+            if len(imp_row) < 38:
+                continue
+            mail_imp = str(imp_row[0] or '').strip().upper()
+            m_raw = str(imp_row[36] or '').strip()
+            y_raw = str(imp_row[37] or '').strip()
+            m_match = re.search(r'\d+', m_raw)
+            y_match = re.search(r'\d+', y_raw)
+            if m_match and y_match:
+                key = (mail_imp, m_match.group(0), y_match.group(0))
+                if key not in existing_keys:
+                    rows_to_merge.append(imp_row)
+                    existing_keys.add(key)
+
+        if rows_to_merge:
+            merge_df = pd.DataFrame(rows_to_merge)
+            df_sheet = pd.concat([df_sheet, merge_df], ignore_index=True)
+            print(f"Merged {len(rows_to_merge)} imported rows back after sheet refresh", flush=True)
+
+        return df_sheet
 
     def _load_lt_history_and_snapshot(self):
         lt_hist_cache = CACHE_DIR / "lt_history.pkl.gz"
@@ -2581,12 +2770,103 @@ class KPIEngine:
             except Exception:
                 self.lt_snapshot_map = {}
 
+        # Fallback: load from Supabase if local is empty (Vercel cold start)
+        if not self.lt_history:
+            try:
+                db_engine = self.get_db_engine()
+                if db_engine:
+                    from sqlalchemy import text as sa_text
+                    with db_engine.connect() as conn:
+                        result = conn.execute(sa_text(
+                            "SELECT flag_value FROM _system_flags WHERE flag_type = 'lt_history' AND flag_name = 'lt_history'"
+                        ))
+                        row = result.fetchone()
+                        if row and row[0]:
+                            self.lt_history = json.loads(row[0])
+                            if not isinstance(self.lt_history, list):
+                                self.lt_history = []
+                            print(f"Loaded {len(self.lt_history)} lt_history records from Supabase", flush=True)
+            except Exception as e:
+                print(f"Info: Could not load lt_history from Supabase: {e}", flush=True)
+
+        if not self.lt_snapshot_map:
+            try:
+                db_engine = self.get_db_engine()
+                if db_engine:
+                    from sqlalchemy import text as sa_text
+                    with db_engine.connect() as conn:
+                        result = conn.execute(sa_text(
+                            "SELECT flag_value FROM _system_flags WHERE flag_type = 'lt_snapshot' AND flag_name = 'lt_snapshot'"
+                        ))
+                        row = result.fetchone()
+                        if row and row[0]:
+                            raw = json.loads(row[0])
+                            # Convert keys back from JSON string to tuples
+                            restored = {}
+                            for k_str, v in raw.items():
+                                parts = k_str.split('|')
+                                if len(parts) == 4:
+                                    restored[(parts[0], int(parts[1]), int(parts[2]), int(parts[3]))] = v
+                            self.lt_snapshot_map = restored
+                            print(f"Loaded {len(restored)} lt_snapshot_map entries from Supabase", flush=True)
+            except Exception as e:
+                print(f"Info: Could not load lt_snapshot_map from Supabase: {e}", flush=True)
+
     def _save_lt_history_and_snapshot(self):
         try:
             pd.to_pickle(self.lt_history, CACHE_DIR / "lt_history.pkl.gz")
             pd.to_pickle(self.lt_snapshot_map, CACHE_DIR / "lt_snapshot.pkl.gz")
         except Exception as e:
             print(f"Warning: Failed to save lt history/snapshot: {e}", flush=True)
+        # Also persist to Supabase for Vercel
+        import threading
+        def _persist_to_supabase():
+            try:
+                # Save lt_history
+                hist_json = json.dumps(self.lt_history, ensure_ascii=False, default=str)
+                self._save_system_flag('lt_history', 'lt_history', hist_json)
+            except Exception as e:
+                print(f"Warning: Failed to save lt_history to Supabase: {e}", flush=True)
+            try:
+                # Save lt_snapshot_map (convert tuple keys to JSON string)
+                snap_json_dict = {}
+                for (mail, month, year, day), val in self.lt_snapshot_map.items():
+                    key_str = f"{mail}|{month}|{year}|{day}"
+                    snap_json_dict[key_str] = val
+                snap_json = json.dumps(snap_json_dict, ensure_ascii=False, default=str)
+                self._save_system_flag('lt_snapshot', 'lt_snapshot', snap_json)
+            except Exception as e:
+                print(f"Warning: Failed to save lt_snapshot_map to Supabase: {e}", flush=True)
+        t = threading.Thread(target=_persist_to_supabase, daemon=True)
+        t.start()
+
+    def _save_system_flag(self, flag_type: str, flag_name: str, flag_value: str):
+        """Upsert a row into _system_flags table (create table if needed)."""
+        db_engine = self.get_db_engine()
+        if not db_engine:
+            return
+        from sqlalchemy import text as sa_text
+        for attempt in range(2):
+            try:
+                with db_engine.begin() as conn:
+                    conn.execute(sa_text(
+                        "DELETE FROM _system_flags WHERE flag_type = :ft AND flag_name = :fn"
+                    ), {"ft": flag_type, "fn": flag_name})
+                    conn.execute(sa_text(
+                        "INSERT INTO _system_flags (flag_type, flag_name, flag_value) VALUES (:ft, :fn, :fv)"
+                    ), {"ft": flag_type, "fn": flag_name, "fv": flag_value})
+                return
+            except Exception as e:
+                if attempt == 0:
+                    try:
+                        with db_engine.begin() as conn:
+                            conn.execute(sa_text(
+                                "CREATE TABLE IF NOT EXISTS _system_flags (flag_type TEXT, flag_name TEXT, flag_value TEXT)"
+                            ))
+                        continue
+                    except Exception:
+                        pass
+                print(f"Warning: _save_system_flag({flag_type}/{flag_name}) failed: {e}", flush=True)
 
     def _snapshot_and_detect_lt_changes(self, source_label="Auto-Sync"):
         if not hasattr(self, 'lt_df') or self.lt_df.empty:
