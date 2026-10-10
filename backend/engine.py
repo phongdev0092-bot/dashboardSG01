@@ -9,6 +9,7 @@ import datetime
 import json
 from pathlib import Path
 import re
+import threading
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -57,6 +58,12 @@ class KPIEngine:
         # Tracks datasets that were manually cleared (so auto-sync won't overwrite them)
         # NOTE: _load_cleared_flags() is called AFTER DATABASE_URL is set (see below)
         self._manually_cleared_datasets: set = set()
+        self._cleared_mtime = 0
+        self._lt_refresh_lock = threading.Lock()
+        self._lt_snapshot_lock = threading.Lock()
+        self._bg_refresher_running = False
+        self._ton_boot_ts = 0.0
+        self._ns_cache = None
         # Auto-load .env file if present
         for env_path in [Path(__file__).parent / ".env", Path(__file__).parent.parent / ".env"]:
             if env_path.exists():
@@ -122,11 +129,42 @@ class KPIEngine:
         except Exception:
             pass
         # Load cleared flags AFTER DATABASE_URL is fully set, so Supabase fallback works
+        self._enrich_dirty = True
+        self._enrich_lock = threading.RLock()
+        self._ds_miss_ts = {}
+        self.data_version = 0
         self._load_cleared_flags()
         self._load_lt_manual_edits()  # Load manual edits early (before sheet refresh)
         self._load_lt_imported_rows()  # Load imported rows early (for dedup + merge after sheet refresh)
         self._load_lt_history_and_snapshot()
         self.load_cache_or_fetch()
+
+    def _mark_data_changed(self):
+        self._enrich_dirty = True
+        self._ds_miss_ts.clear()
+        self.data_version += 1
+
+    def _load_ds(self, name, attr, enrich=None):
+        df = getattr(self, attr, None)
+        if (df is not None and not df.empty) or self._is_cleared(name):
+            return
+        if time.time() - self._ds_miss_ts.get(name, 0) < 300:   # vừa thử mà rỗng
+            return
+        loaded = pd.DataFrame()
+        p = CACHE_DIR / f"{name}.pkl.gz"
+        if p.exists():
+            try: loaded = pd.read_pickle(p)
+            except Exception: pass
+        if loaded is None or loaded.empty:
+            sp = self._load_df_from_supabase(name)
+            if sp is not None and not sp.empty:
+                loaded = enrich(sp) if enrich else sp
+                self._save_pickle(loaded, f"{name}.pkl.gz")
+        if loaded is None or loaded.empty:
+            self._ds_miss_ts[name] = time.time()
+            return
+        setattr(self, attr, loaded)
+        self._mark_data_changed()
 
     # -------------------------------------------------------------------------
     # Cleared-dataset flag helpers
@@ -167,6 +205,11 @@ class KPIEngine:
             print(f"Info: Could not load cleared flags from Supabase (may not exist yet): {e}", flush=True)
 
         self._manually_cleared_datasets = loaded
+        try:
+            p = self._cleared_flags_path()
+            self._cleared_mtime = p.stat().st_mtime if p.exists() else 0
+        except Exception:
+            self._cleared_mtime = 0
 
     def _save_cleared_flags(self):
         """Persist cleared flags to local JSON (synchronous, fast)."""
@@ -175,6 +218,7 @@ class KPIEngine:
             p = self._cleared_flags_path()
             with open(p, 'w', encoding='utf-8') as f:
                 json.dump({'cleared': list(self._manually_cleared_datasets)}, f)
+            self._cleared_mtime = p.stat().st_mtime
         except Exception as e:
             print(f"Warning: could not save cleared-dataset flags to file: {e}", flush=True)
 
@@ -230,13 +274,16 @@ class KPIEngine:
     def _is_cleared(self, name: str) -> bool:
         try:
             p = self._cleared_flags_path()
-            if p.exists():
-                with open(p, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self._manually_cleared_datasets = set(data.get('cleared', []))
+            m = p.stat().st_mtime if p.exists() else 0
+            if m != self._cleared_mtime:
+                if m:
+                    with open(p, 'r', encoding='utf-8') as f:
+                        self._manually_cleared_datasets = set(json.load(f).get('cleared', []))
+                self._cleared_mtime = m
         except Exception:
             pass
         return name in self._manually_cleared_datasets
+
 
     def get_db_engine(self):
         DEFAULT_DB_URL = "postgresql+psycopg2://postgres.pmhyostihrzwzwprdkbs:Benngo@@2027@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
@@ -261,14 +308,16 @@ class KPIEngine:
         except Exception:
             pass
 
+        if getattr(self, '_db_engine', None) is not None and getattr(self, '_db_engine_url', None) == db_url:
+            return self._db_engine
         try:
             from sqlalchemy import create_engine
             from sqlalchemy.pool import NullPool
-            return create_engine(
-                db_url,
-                poolclass=NullPool,
-                connect_args={"connect_timeout": 15}
-            )
+            kw = {"poolclass": NullPool} if IS_VERCEL else \
+                 {"pool_size": 3, "max_overflow": 4, "pool_pre_ping": True, "pool_recycle": 300}
+            self._db_engine = create_engine(db_url, connect_args={"connect_timeout": 15}, **kw)
+            self._db_engine_url = db_url
+            return self._db_engine
         except Exception as e:
             self._last_db_error = str(e)
             print(f"Warning: Failed to create SQLAlchemy DB engine: {e}", flush=True)
@@ -375,6 +424,7 @@ class KPIEngine:
     def set_database_url(self, url: str):
         url = (url or '').strip()
         self.DATABASE_URL = url
+        self._db_engine = None
         try:
             CACHE_DIR.mkdir(exist_ok=True, parents=True)
             cfg_file = CACHE_DIR / "webapp_config.json"
@@ -835,10 +885,14 @@ class KPIEngine:
 
         mtime = hr_path.stat().st_mtime if hr_path else time.time()
         self.last_sync_time = datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
-        print(f"Cache/Supabase data loaded successfully! Sync time: {self.last_sync_time}", flush=True)
+        if not IS_VERCEL:
+            self._mark_data_changed()
 
         if hr_df.empty or tk_df.empty or bt_df.empty:
-            self.sync_live_data()
+            if IS_VERCEL:
+                self.sync_live_data()
+            else:
+                threading.Thread(target=self.sync_live_data, daemon=True).start()
 
     def sync_live_data(self):
         if self.is_syncing:
@@ -987,6 +1041,7 @@ class KPIEngine:
             self.last_sync_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
             self._process_metadata()
+            self._mark_data_changed()
             self._auto_enrich_hr_from_tickets()
             elapsed = time.time() - t0
             print(f"Synced live data in {elapsed:.2f}s!", flush=True)
@@ -1000,6 +1055,7 @@ class KPIEngine:
             return False, str(e)
 
     def _process_metadata(self):
+        self._ns_cache = None
         # Build employee metadata map
         self.emp_map = {}
         if self.hr_df is None or self.hr_df.empty:
@@ -1051,6 +1107,22 @@ class KPIEngine:
         self.partners = sorted([str(x).strip() for x in self.hr_df[col_part].dropna().unique() if str(x).strip() and str(x).strip().lower() not in ('nan', 'none', '-', '', 'null')])
         self.blocks = sorted([str(x).strip() for x in self.hr_df[col_blk].dropna().unique() if str(x).strip() and str(x).strip().lower() not in ('nan', 'none', '-', '', 'null')])
 
+        # Build phuong (ward) from block name: strip trailing -NNN suffix
+        import re as _re
+        def _block_to_phuong(blk: str) -> str:
+            return _re.sub(r'-\d+$', '', blk.strip())
+
+        self.phuongs = sorted(list(set(_block_to_phuong(b) for b in self.blocks if b and b.lower() not in ('nan', 'none', '-', '', 'null'))))
+
+        # Map phuong -> sorted list of blocks
+        btp = {}
+        for blk in self.blocks:
+            ph = _block_to_phuong(blk)
+            if ph not in btp:
+                btp[ph] = set()
+            btp[ph].add(blk)
+        self.blocks_by_phuong = {ph: sorted(list(blks)) for ph, blks in btp.items()}
+
         # Build blocks_by_teamlead map: team_lead -> sorted list of blocks they manage
         btl = {}
         for v in self.emp_map.values():
@@ -1063,6 +1135,19 @@ class KPIEngine:
         self.blocks_by_teamlead = {tl: sorted(list(blks)) for tl, blks in btl.items()}
 
     def _auto_enrich_hr_from_tickets(self):
+        if self.hr_df is None or self.hr_df.empty or not self._enrich_dirty:
+            return
+        with self._enrich_lock:
+            if not self._enrich_dirty:
+                return
+            self._enrich_dirty = False
+            try:
+                self._do_enrich_hr()
+            except Exception:
+                self._enrich_dirty = True
+                raise
+
+    def _do_enrich_hr(self):
         """
         Tự động phát hiện và bổ sung nhân sự kỹ thuật từ các ca hoàn tất TK / BT vào dữ liệu HR.
         Quy tắc nghiệp vụ FPT SG01:
@@ -1272,54 +1357,25 @@ class KPIEngine:
             if self.hr_df is not None and not self.hr_df.empty:
                 self._process_metadata()
 
-        # 2. TK
-        if (self.tk_df is None or self.tk_df.empty) and not self._is_cleared('tk'):
-            if (CACHE_DIR / "tk.pkl.gz").exists():
-                try: self.tk_df = pd.read_pickle(CACHE_DIR / "tk.pkl.gz")
-                except Exception: pass
-            if (self.tk_df is None or self.tk_df.empty):
-                sp_tk = self._load_df_from_supabase("tk")
-                if not sp_tk.empty:
-                    self.tk_df = self._enrich_tk_df(sp_tk)
-                    self._save_pickle(self.tk_df, "tk.pkl.gz")
+        # 2 to 5. Datasets
+        self._load_ds('tk', 'tk_df', self._enrich_tk_df)
+        self._load_ds('bt', 'bt_df', self._enrich_bt_df)
+        self._load_ds('kh_cls', 'kh_cls_df')
+        self._load_ds('cll30n', 'cll30n_df')
+        self._auto_enrich_hr_from_tickets()   # giờ chỉ chạy khi dữ liệu đổi
 
-        # 3. BT
-        if (self.bt_df is None or self.bt_df.empty) and not self._is_cleared('bt'):
-            if (CACHE_DIR / "bt.pkl.gz").exists():
-                try: self.bt_df = pd.read_pickle(CACHE_DIR / "bt.pkl.gz")
-                except Exception: pass
-            if (self.bt_df is None or self.bt_df.empty):
-                sp_bt = self._load_df_from_supabase("bt")
-                if not sp_bt.empty:
-                    self.bt_df = self._enrich_bt_df(sp_bt)
-                    self._save_pickle(self.bt_df, "bt.pkl.gz")
+    def _prepaid_contracts(self):
+        if getattr(self, '_pp_ver', None) != self.data_version:
+            s = set()
+            tk = self.tk_df
+            if tk is not None and not tk.empty and 'Số hợp đồng' in tk.columns and 'Gói dịch vụ' in tk.columns:
+                m = (tk['Gói dịch vụ'].astype(str).str.strip().str.lower()
+                     .str.replace(r'\s+', ' ', regex=True).eq('prepaid wifi'))
+                s = set(tk.loc[m, 'Số hợp đồng'].astype(str).str.strip())
+            self._pp_set, self._pp_ver = s, self.data_version
+        return self._pp_set
 
-        # 4. KH_CLS
-        if (self.kh_cls_df is None or self.kh_cls_df.empty) and not self._is_cleared('kh_cls'):
-            if (CACHE_DIR / "kh_cls.pkl.gz").exists():
-                try: self.kh_cls_df = pd.read_pickle(CACHE_DIR / "kh_cls.pkl.gz")
-                except Exception: pass
-            if (self.kh_cls_df is None or self.kh_cls_df.empty):
-                sp_kh = self._load_df_from_supabase("kh_cls")
-                if not sp_kh.empty:
-                    self.kh_cls_df = sp_kh
-                    self._save_pickle(self.kh_cls_df, "kh_cls.pkl.gz")
-
-        # 5. CLL30N
-        if (self.cll30n_df is None or self.cll30n_df.empty) and not self._is_cleared('cll30n'):
-            if (CACHE_DIR / "cll30n.pkl.gz").exists():
-                try: self.cll30n_df = pd.read_pickle(CACHE_DIR / "cll30n.pkl.gz")
-                except Exception: pass
-            if (self.cll30n_df is None or self.cll30n_df.empty):
-                sp_cll = self._load_df_from_supabase("cll30n")
-                if not sp_cll.empty:
-                    self.cll30n_df = sp_cll
-                    self._save_pickle(self.cll30n_df, "cll30n.pkl.gz")
-
-        # 6. Auto-enrich missing staff from tickets into HR data
-        self._auto_enrich_hr_from_tickets()
-
-    def get_kpi_report(self, start_date=None, end_date=None, team_lead=None, region=None, partner=None, block=None, search=None):
+    def get_kpi_report(self, start_date=None, end_date=None, team_lead=None, region=None, partner=None, block=None, phuong=None, search=None):
         t0 = time.time()
         self._ensure_kpi_datasets_loaded()
         
@@ -1327,7 +1383,12 @@ class KPIEngine:
         region = self._clean_str_param(region)
         partner = self._clean_str_param(partner)
         block = self._clean_str_param(block)
+        phuong = self._clean_str_param(phuong)
         search = self._clean_str_param(search)
+
+        import re as _re
+        def _block_to_phuong_local(blk: str) -> str:
+            return _re.sub(r'-\d+$', '', blk.strip())
 
         # 1. Date Filtering
         tk = self.tk_df.copy()
@@ -1371,13 +1432,24 @@ class KPIEngine:
         allowed_accounts = set(self.emp_map.keys())
 
         if team_lead:
-            allowed_accounts &= {k for k, v in self.emp_map.items() if v['team_lead'] == team_lead}
+            tl_set = {x.strip() for x in str(team_lead).split('|') if x.strip()}
+            allowed_accounts &= {k for k, v in self.emp_map.items() if v['team_lead'] in tl_set}
         if region:
-            allowed_accounts &= {k for k, v in self.emp_map.items() if v['region'] == region}
+            reg_set = {x.strip() for x in str(region).split('|') if x.strip()}
+            allowed_accounts &= {k for k, v in self.emp_map.items() if v.get('region') in reg_set}
         if partner:
             allowed_accounts &= {k for k, v in self.emp_map.items() if v['partner'] == partner}
+        if phuong:
+            ph_set = {x.strip() for x in str(phuong).split('|') if x.strip()}
+            # expand phuong to all blocks belonging to those phuongs
+            ph_blocks = set()
+            for b in (self.blocks or []):
+                if _block_to_phuong_local(b) in ph_set:
+                    ph_blocks.add(b)
+            allowed_accounts &= {k for k, v in self.emp_map.items() if v['block'] in ph_blocks}
         if block:
-            allowed_accounts &= {k for k, v in self.emp_map.items() if v['block'] == block}
+            blk_set = {x.strip() for x in str(block).split('|') if x.strip()}
+            allowed_accounts &= {k for k, v in self.emp_map.items() if v['block'] in blk_set}
         if search:
             s = search.upper()
             allowed_accounts &= {
@@ -1386,7 +1458,7 @@ class KPIEngine:
             }
 
         # Filter TK & BT & CLS by allowed accounts if any filter is set
-        if team_lead or region or partner or block or search:
+        if team_lead or region or partner or phuong or block or search:
             tk = tk[tk['Nhân viên'].isin(allowed_accounts)]
             bt = bt[bt['Nhân viên'].isin(allowed_accounts)]
             if not cls.empty and 'Nhân viên' in cls.columns:
@@ -1402,7 +1474,7 @@ class KPIEngine:
                 e_d_end_cll = e_d + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
                 cll = cll[cll['date_complete'] <= e_d_end_cll]
 
-        if team_lead or region or partner or block or search:
+        if team_lead or region or partner or phuong or block or search:
             if not cll.empty and 'Nhân viên' in cll.columns:
                 cll = cll[cll['Nhân viên'].isin(allowed_accounts)]
 
@@ -1450,9 +1522,33 @@ class KPIEngine:
 
         # 2. Overall Aggregations
         # TK Valid (Excluding Gsafe and Swap for KPIs)
-        tk_valid = tk[~tk['is_gsafe'] & ~tk['is_swap']] if not tk.empty else tk
+        # Loại trừ Prepaid Wifi (cột Gói dịch vụ) khỏi RT/Đúng hẹn, tương tự Gsafe/Swap
+        def _is_prepaid_wifi(frame):
+            for cname in ['Gói dịch vụ', 'goi_dich_vu', 'Gói dịch vụ ']:
+                if cname in frame.columns:
+                    return frame[cname].astype(str).str.strip().str.lower().str.replace(r'\s+', ' ', regex=True) == 'prepaid wifi'
+            return pd.Series(False, index=frame.index)
+
+        if not tk.empty:
+            tk['is_prepaid_wifi'] = _is_prepaid_wifi(tk)
+            tk_valid = tk[~tk['is_gsafe'] & ~tk['is_swap'] & ~tk['is_prepaid_wifi']]
+        else:
+            tk_valid = tk
         tk_swap = tk[tk['is_swap']] if not tk.empty else tk
         tk_gsafe = tk[tk['is_gsafe']] if not tk.empty else tk
+
+        # BT: loại các ca thuộc hợp đồng Prepaid Wifi (theo cột gói của BT nếu có, nếu không join theo Số HĐ từ dữ liệu triển khai)
+        if not bt.empty:
+            bt_pp = _is_prepaid_wifi(bt)
+            if not bt_pp.any():
+                _hd_bt = 'Số HĐ' if 'Số HĐ' in bt.columns else ('Số hợp đồng' if 'Số hợp đồng' in bt.columns else None)
+                pp = self._prepaid_contracts()
+                if _hd_bt and pp:
+                    bt_pp = bt[_hd_bt].astype(str).str.strip().isin(pp)
+            bt_all = bt
+            bt = bt[~bt_pp]
+        else:
+            bt_all = bt
 
         tk_1 = int((tk_valid['dung_hen'] == 1).sum())
         tk_0 = int((tk_valid['dung_hen'] == 0).sum())
@@ -1512,7 +1608,7 @@ class KPIEngine:
         if not cll.empty and 'Nhân viên' in cll.columns:
             active_accs |= set(cll['Nhân viên'].dropna().unique())
 
-        if team_lead or region or partner or block or search:
+        if team_lead or region or partner or phuong or block or search:
             active_accs &= allowed_accounts
 
         emp_rows = []
@@ -1625,6 +1721,8 @@ class KPIEngine:
             e_bt_gt_24h = int(e_bt.get('gt_24h', 0))
             e_bt_gt_72h = int(e_bt.get('gt_72h', 0))
 
+            _blk = meta.get('block', '-') or '-'
+            _phuong = _block_to_phuong_local(_blk) if _blk and _blk != '-' else '-'
             emp_rows.append({
                 'account': acc,
                 'name': meta['name'],
@@ -1632,7 +1730,8 @@ class KPIEngine:
                 'team_lead': meta['team_lead'],
                 'region': meta['region'],
                 'partner': meta['partner'],
-                'block': meta['block'],
+                'block': _blk,
+                'phuong': _phuong,
                 
                 # Triển Khai KPIs
                 'tk_kpi_volume': e_tk_tot,
@@ -1700,6 +1799,7 @@ class KPIEngine:
                     'team_lead': team_lead,
                     'region': region,
                     'partner': partner,
+                    'phuong': phuong,
                     'block': block,
                     'search': search
                 }
@@ -1891,16 +1991,24 @@ class KPIEngine:
         return None
 
     def _get_nhan_su_by_block(self):
-        if self.hr_df.empty:
+        c = self._ns_cache
+        if c is not None:
+            return c
+        c = self._build_nhan_su_by_block()
+        self._ns_cache = c
+        return c
+
+    def _build_nhan_su_by_block(self):
+        if self.hr_df is None or self.hr_df.empty:
             return {}, {}
         
-        df_hr = self.hr_df.copy()
+        df_hr = self.hr_df
         
         # Build HR account map from Cột G (Inside Account), Cột F (Mã NV), Cột K (Email)
         hr_map = {}
         block_ns_info = {}
 
-        for _, row in df_hr.iterrows():
+        for row in df_hr.to_dict('records'):
             acc = str(row.get('Inside Account', '')).strip().upper()
             ma_nv = str(row.get('Mã NV', '')).strip().upper()
             email = str(row.get('Email', '')).strip().upper()
@@ -1942,6 +2050,7 @@ class KPIEngine:
             }
 
         return res_blocks, hr_map
+
 
     def _clean_block_name(self, raw, ns='', hr_map=None):
         import re
@@ -2033,47 +2142,30 @@ class KPIEngine:
             })
         return bt_rows
 
-    def _compute_shift_for_date(self, date_obj):
-        day = date_obj.day
-        month = date_obj.month
-        year = date_obj.year
-        day_col_idx = 4 + day # Day1 = index 5, Day13 = index 17
+    def _compute_shift_for_date(self, date_obj, hr_map=None):
+        df = getattr(self, 'lt_df', None)
+        if df is None or df.empty or df.shape[1] < 38:
+            return {}
+        col = 4 + date_obj.day
+        if col >= df.shape[1]:
+            return {}
+        if hr_map is None:
+            _, hr_map = self._get_nhan_su_by_block()
+
+        m = pd.to_numeric(df.iloc[:, 36].astype(str).str.extract(r'(\d+)')[0], errors='coerce')
+        y = pd.to_numeric(df.iloc[:, 37].astype(str).str.extract(r'(\d+)')[0], errors='coerce')
+        shift = df.iloc[:, col].astype(str).str.strip().str.upper()
+        sel = df[(m == date_obj.month) & (y == date_obj.year) & shift.isin(['CA1', '1'])]
 
         res = {}
-        if not hasattr(self, 'lt_df') or self.lt_df.empty:
-            return res
-
-        _, hr_map = self._get_nhan_su_by_block()
-
-        for idx, r in self.lt_df.iterrows():
-            vals = list(r.values)
-            if len(vals) < 38:
-                continue
-
-            m_raw = str(vals[36] or '').strip()
-            y_raw = str(vals[37] or '').strip()
-
-            m_match = re.search(r'\d+', m_raw)
-            y_match = re.search(r'\d+', y_raw)
-
-            if not m_match or not y_match:
-                continue
-
-            row_month = int(m_match.group(0))
-            row_year = int(y_match.group(0))
-
-            if row_month != month or row_year != year:
-                continue
-
-            shift = str(vals[day_col_idx] or '').strip().upper()
-            if shift in ('CA1', '1'):
-                mail = str(vals[0] or '').strip().upper()
-                info = hr_map.get(mail, {})
-                raw_b = info.get('block') or str(vals[4] or '').strip()
-                block = self._clean_block_name(raw_b, mail, hr_map)
-                res[block] = res.get(block, 0) + 1
-
+        mails = sel.iloc[:, 0].astype(str).str.strip().str.upper()
+        raw_bs = sel.iloc[:, 4].astype(str).str.strip()
+        for mail, raw_b in zip(mails, raw_bs):
+            info = hr_map.get(mail, {})
+            block = self._clean_block_name(info.get('block') or raw_b, mail, hr_map)
+            res[block] = res.get(block, 0) + 1
         return res
+
 
     def _load_lt_manual_edits(self):
         edits_path = CACHE_DIR / "lt_manual_edits.pkl.gz"
@@ -2147,71 +2239,116 @@ class KPIEngine:
                             if col_idx < df.shape[1]:
                                 df.iloc[idx, col_idx] = str(new_shift)
 
-    def _refresh_lt_from_sheet(self, force=False):
+    def _refresh_lt_from_sheet_blocking(self, force=False, min_interval=120):
         if force:
             self._clear_custom_ton_imported("ton_tk")
             self._clear_custom_ton_imported("ton_bt")
-
-        now = time.time()
-        last_fetch = getattr(self, '_last_lt_fetch_time', 0)
-        need_fetch = force or (now - last_fetch > 120) or not hasattr(self, 'lt_df') or self.lt_df.empty
-        if need_fetch:
-            self._last_lt_fetch_time = now
-            # 1. Fetch Lịch Trực live from Google Sheet
-            try:
-                res_lt = requests.get(self._get_lt_sheet_url(), timeout=15)
-                if res_lt.status_code == 200 and not res_lt.text.strip().startswith('<!DOCTYPE'):
-                    df_lt_fetched = self._read_any_dataframe(res_lt.content, "lt.csv")
-                    if not df_lt_fetched.empty:
-                        if hasattr(self, 'lt_manual_edits') and self.lt_manual_edits:
-                            self._apply_manual_lt_edits(df_lt_fetched)
-                        # Merge imported rows back after Google Sheet refresh
-                        df_lt_fetched = self._merge_imported_rows(df_lt_fetched)
-                        self.lt_df = df_lt_fetched
-                        self._save_pickle(self.lt_df, "lt.pkl.gz")
-                        try:
-                            self._snapshot_and_detect_lt_changes(source_label="Google Sheet Sync")
-                        except Exception as e_snap:
-                            print(f"Warning: snapshot detection failed: {e_snap}", flush=True)
-            except Exception as e:
-                print(f"Auto-refresh Lịch Trực error: {e}", flush=True)
-
-            # 2. Fetch Tồn TK live from Google Sheet (only if user hasn't imported custom file or force=True or ton_tk_df is empty)
-            if force or not self._is_custom_ton_imported("ton_tk") or not hasattr(self, 'ton_tk_df') or getattr(self, 'ton_tk_df', pd.DataFrame()).empty:
+        if not self._lt_refresh_lock.acquire(blocking=force):
+            return                      # đang có luồng khác refresh, bỏ qua
+        try:
+            now = time.time()
+            last_fetch = getattr(self, '_last_lt_fetch_time', 0)
+            need_fetch = force or (now - last_fetch > min_interval) \
+                or not hasattr(self, 'lt_df') or self.lt_df.empty
+            if need_fetch:
+                self._last_lt_fetch_time = now
+                # 1. Fetch Lịch Trực live from Google Sheet
                 try:
-                    res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
-                    if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
-                        df_ton_tk_fetched = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
-                        if not df_ton_tk_fetched.empty:
-                            self.ton_tk_df = df_ton_tk_fetched
-                            self._save_pickle(self.ton_tk_df, "ton_tk.pkl.gz")
-                except Exception as e_ton_tk:
-                    print(f"Auto-refresh Tồn TK error: {e_ton_tk}", flush=True)
+                    res_lt = requests.get(self._get_lt_sheet_url(), timeout=15)
+                    if res_lt.status_code == 200 and not res_lt.text.strip().startswith('<!DOCTYPE'):
+                        import hashlib
+                        h = hashlib.md5(res_lt.content).hexdigest()
+                        if force or not hasattr(self, 'lt_df') or self.lt_df.empty or h != getattr(self, '_lt_hash', None):
+                            self._lt_hash = h
+                            df_lt_fetched = self._read_any_dataframe(res_lt.content, "lt.csv")
+                            if not df_lt_fetched.empty:
+                                if hasattr(self, 'lt_manual_edits') and self.lt_manual_edits:
+                                    self._apply_manual_lt_edits(df_lt_fetched)
+                                # Merge imported rows back after Google Sheet refresh
+                                df_lt_fetched = self._merge_imported_rows(df_lt_fetched)
+                                self.lt_df = df_lt_fetched
+                                self._save_pickle(self.lt_df, "lt.pkl.gz")
+                                try:
+                                    self._snapshot_and_detect_lt_changes(source_label="Google Sheet Sync")
+                                except Exception as e_snap:
+                                    print(f"Warning: snapshot detection failed: {e_snap}", flush=True)
+                except Exception as e:
+                    print(f"Auto-refresh Lịch Trực error: {e}", flush=True)
 
-            # 3. Fetch Tồn BT live from Google Sheet (only if user hasn't imported custom file or force=True or ton_bt_df is empty)
-            if force or not self._is_custom_ton_imported("ton_bt") or not hasattr(self, 'ton_bt_df') or getattr(self, 'ton_bt_df', pd.DataFrame()).empty:
+                # 2. Fetch Tồn TK live from Google Sheet (only if user hasn't imported custom file or force=True or ton_tk_df is empty)
+                if force or not self._is_custom_ton_imported("ton_tk") or not hasattr(self, 'ton_tk_df') or getattr(self, 'ton_tk_df', pd.DataFrame()).empty:
+                    try:
+                        res_ton_tk = requests.get(self._get_ton_tk_sheet_url(), timeout=15)
+                        if res_ton_tk.status_code == 200 and not res_ton_tk.text.strip().startswith('<!DOCTYPE'):
+                            import hashlib
+                            h_tk = hashlib.md5(res_ton_tk.content).hexdigest()
+                            if force or getattr(self, 'ton_tk_df', pd.DataFrame()).empty or h_tk != getattr(self, '_ton_tk_hash', None):
+                                self._ton_tk_hash = h_tk
+                                df_ton_tk_fetched = self._read_any_dataframe(res_ton_tk.content, "ton_tk.csv")
+                                if not df_ton_tk_fetched.empty:
+                                    self.ton_tk_df = df_ton_tk_fetched
+                                    self._save_pickle(self.ton_tk_df, "ton_tk.pkl.gz")
+                    except Exception as e_ton_tk:
+                        print(f"Auto-refresh Tồn TK error: {e_ton_tk}", flush=True)
+
+                # 3. Fetch Tồn BT live from Google Sheet (only if user hasn't imported custom file or force=True or ton_bt_df is empty)
+                if force or not self._is_custom_ton_imported("ton_bt") or not hasattr(self, 'ton_bt_df') or getattr(self, 'ton_bt_df', pd.DataFrame()).empty:
+                    try:
+                        res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
+                        if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
+                            import hashlib
+                            h_bt = hashlib.md5(res_ton_bt.content).hexdigest()
+                            if force or getattr(self, 'ton_bt_df', pd.DataFrame()).empty or h_bt != getattr(self, '_ton_bt_hash', None):
+                                self._ton_bt_hash = h_bt
+                                df_ton_bt_fetched = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
+                                if not df_ton_bt_fetched.empty:
+                                    self.ton_bt_df = df_ton_bt_fetched
+                                    self._save_pickle(self.ton_bt_df, "ton_bt.pkl.gz")
+                    except Exception as e_ton_bt:
+                        print(f"Auto-refresh Tồn BT error: {e_ton_bt}", flush=True)
+        finally:
+            self._lt_refresh_lock.release()
+
+    def _refresh_lt_from_sheet(self, force=False):
+        # Có thread nền và đã có dữ liệu -> request chỉ đọc RAM
+        if (not force and self._bg_refresher_running
+                and getattr(self, 'lt_df', None) is not None and not self.lt_df.empty):
+            return
+        self._refresh_lt_from_sheet_blocking(force=force)   # Vercel/không có thread: giữ hành vi cũ
+
+    def start_background_refresher(self, lt_interval=120, ton_interval=300):
+        if self._bg_refresher_running:
+            return
+        self._bg_refresher_running = True
+
+        def loop():
+            last_ton = 0.0
+            while True:
                 try:
-                    res_ton_bt = requests.get(self._get_ton_bt_sheet_url(), timeout=15)
-                    if res_ton_bt.status_code == 200 and not res_ton_bt.text.strip().startswith('<!DOCTYPE'):
-                        df_ton_bt_fetched = self._read_any_dataframe(res_ton_bt.content, "ton_bt.csv")
-                        if not df_ton_bt_fetched.empty:
-                            self.ton_bt_df = df_ton_bt_fetched
-                            self._save_pickle(self.ton_bt_df, "ton_bt.pkl.gz")
-                except Exception as e_ton_bt:
-                    print(f"Auto-refresh Tồn BT error: {e_ton_bt}", flush=True)
+                    self._refresh_lt_from_sheet_blocking(min_interval=0)
+                    if time.time() - last_ton >= ton_interval:
+                        self.sync_ton_tk_bt(force=False)
+                        last_ton = time.time()
+                except Exception as e:
+                    print(f"[bg-refresher] error: {e}", flush=True)
+                time.sleep(lt_interval)
+
+        threading.Thread(target=loop, daemon=True, name="lt-refresher").start()
+
+    def _ensure_ton_ready(self, force=False):
+        tk_empty = getattr(self, 'ton_tk_df', pd.DataFrame()).empty
+        bt_empty = getattr(self, 'ton_bt_df', pd.DataFrame()).empty
+        if force:
+            self.sync_ton_tk_bt(force=True)
+            self._ton_boot_ts = time.time()
+        elif (tk_empty or bt_empty) and time.time() - self._ton_boot_ts > 60:   # khởi động nguội
+            self._ton_boot_ts = time.time()
+            self.sync_ton_tk_bt(force=False)
 
     def get_lich_truc_dashboard(self, date_str=None, force=False):
         self._refresh_lt_from_sheet(force=force)
+        self._ensure_ton_ready(force)
 
-        # Luôn đảm bảo Tồn TK & Tồn BT sẵn sàng và đồng bộ
-        now_ts = time.time()
-        last_ton_fetch = getattr(self, '_last_ton_fetch_time', 0)
-        if force or (now_ts - last_ton_fetch > 120) or getattr(self, 'ton_tk_df', pd.DataFrame()).empty or getattr(self, 'ton_bt_df', pd.DataFrame()).empty:
-            try:
-                self.sync_ton_tk_bt(force=force)
-                self._last_ton_fetch_time = now_ts
-            except Exception as e_sync:
-                print(f"Warning: sync_ton_tk_bt in get_lich_truc_dashboard failed: {e_sync}", flush=True)
 
         if not date_str:
             base_date = datetime.date.today()
@@ -2232,9 +2369,10 @@ class KPIEngine:
         df_tk_p = pd.DataFrame(tk_list) if tk_list else pd.DataFrame(columns=['ns', 'block', 'hen_raw', 'dt_hen'])
         df_bt_p = pd.DataFrame(bt_list) if bt_list else pd.DataFrame(columns=['ns', 'block', 'hen_raw', 'dt_hen'])
 
-        d0_shifts = self._compute_shift_for_date(d0)
-        d1_shifts = self._compute_shift_for_date(d1)
-        d2_shifts = self._compute_shift_for_date(d2)
+        d0_shifts = self._compute_shift_for_date(d0, hr_map)
+        d1_shifts = self._compute_shift_for_date(d1, hr_map)
+        d2_shifts = self._compute_shift_for_date(d2, hr_map)
+
 
         # Thu thập danh sách Nhân Sự có ca trực là O (nghỉ trực) trong ngày d0
         off_staff_list = []
@@ -2869,11 +3007,17 @@ class KPIEngine:
                 print(f"Warning: _save_system_flag({flag_type}/{flag_name}) failed: {e}", flush=True)
 
     def _snapshot_and_detect_lt_changes(self, source_label="Auto-Sync"):
+        with self._lt_snapshot_lock:
+            self._snapshot_and_detect_lt_changes_impl(source_label)
+
+    def _snapshot_and_detect_lt_changes_impl(self, source_label="Auto-Sync"):
         if not hasattr(self, 'lt_df') or self.lt_df.empty:
+
             return
 
         if not hasattr(self, 'lt_history') or self.lt_history is None:
             self._load_lt_history_and_snapshot()
+        n_hist = len(self.lt_history)
 
         _, hr_map = self._get_nhan_su_by_block()
         current_matrix = {}
@@ -2964,9 +3108,10 @@ class KPIEngine:
                         'changeType': change_type
                     }
                     self.lt_history.append(rec)
-
+        old_map = self.lt_snapshot_map
         self.lt_snapshot_map = current_matrix
-        self._save_lt_history_and_snapshot()
+        if len(self.lt_history) != n_hist or current_matrix != old_map:
+            self._save_lt_history_and_snapshot()
 
     def get_lich_truc_history(self, month=0, year=0, doi_truong="__ALL__", search="", limit_latest=False):
         if not hasattr(self, 'lt_history') or self.lt_history is None:
@@ -3095,13 +3240,9 @@ class KPIEngine:
         }
 
     def get_ton_tk_bt_dashboard(self, force=False):
-        now = time.time()
-        last_fetch = getattr(self, '_last_ton_fetch_time', 0)
-        if force or (now - last_fetch > 60) or getattr(self, 'ton_tk_df', pd.DataFrame()).empty or getattr(self, 'ton_bt_df', pd.DataFrame()).empty:
-            self.sync_ton_tk_bt(force=force)
-            self._last_ton_fetch_time = now
-
+        self._ensure_ton_ready(force)
         self._refresh_lt_from_sheet()
+
         ns_by_block, hr_map = self._get_nhan_su_by_block()
         import unicodedata
         df_tk = getattr(self, 'ton_tk_df', pd.DataFrame())
@@ -3644,11 +3785,36 @@ class KPIEngine:
                     print(f"[Import] tk Supabase fallback load warning: {e_sp}", flush=True)
 
             if rule == "MERGE_NO_OVERWRITE" and not existing_df.empty:
-                ex_hd = self._find_col(existing_df, ['Số hợp đồng', 'Số HĐ'], default_idx=0)
-                ex_nv = self._find_col(existing_df, ['Nhân viên', 'Nhân sự'], default_idx=1)
-                existing_keys = set(existing_df[ex_hd].astype(str).str.strip().str.upper() + "||" + existing_df[ex_nv].astype(str).str.strip().str.upper())
-                df_incoming['_comp_key'] = df_incoming[col_hd].astype(str).str.strip().str.upper() + "||" + df_incoming[col_nv].astype(str).str.strip().str.upper()
+                ex_hd  = self._find_col(existing_df, ['Số hợp đồng', 'Số HĐ'], default_idx=0)
+                ex_nv  = self._find_col(existing_df, ['Nhân viên', 'Nhân sự'], default_idx=1)
+                ex_tg_ptc  = self._find_col(existing_df, ['TG tạo PTC', 'Ngày tạo PTC', 'TG Tạo PTC'], default_idx=None)
+                ex_ht_ptc  = self._find_col(existing_df, ['Ngày hoàn tất PTC', 'TG hoàn tất PTC', 'TG Hoàn Tất PTC'], default_idx=None)
+                ex_loai_gd = self._find_col(existing_df, ['Loại giao dịch', 'Loại Giao Dịch', 'loai_giao_dich'], default_idx=None)
 
+                # Dedup 5 cột: chỉ skip khi Số HĐ + NV + TG tạo PTC + Ngày HT PTC + Loại giao dịch đều giống nhau
+                def _make_tk_key_existing(row):
+                    hd    = str(row[ex_hd]).strip().upper() if ex_hd else ''
+                    nv    = str(row[ex_nv]).strip().upper() if ex_nv else ''
+                    ptc   = str(row[ex_tg_ptc]).strip()  if ex_tg_ptc  and ex_tg_ptc  in existing_df.columns else ''
+                    ht    = str(row[ex_ht_ptc]).strip()  if ex_ht_ptc  and ex_ht_ptc  in existing_df.columns else ''
+                    loai  = str(row[ex_loai_gd]).strip().upper() if ex_loai_gd and ex_loai_gd in existing_df.columns else ''
+                    return f"{hd}||{nv}||{ptc}||{ht}||{loai}"
+
+                col_tg_ptc  = self._find_col(df_incoming, ['TG tạo PTC', 'Ngày tạo PTC', 'TG Tạo PTC'], default_idx=None)
+                col_ht_ptc  = self._find_col(df_incoming, ['Ngày hoàn tất PTC', 'TG hoàn tất PTC', 'TG Hoàn Tất PTC'], default_idx=None)
+                col_loai_gd = self._find_col(df_incoming, ['Loại giao dịch', 'Loại Giao Dịch', 'loai_giao_dich'], default_idx=None)
+
+                existing_keys = set(existing_df.apply(_make_tk_key_existing, axis=1))
+
+                def _make_tk_key_incoming(row):
+                    hd   = str(row[col_hd]).strip().upper()
+                    nv   = str(row[col_nv]).strip().upper()
+                    ptc  = str(row[col_tg_ptc]).strip()  if col_tg_ptc  and col_tg_ptc  in df_incoming.columns else ''
+                    ht   = str(row[col_ht_ptc]).strip()  if col_ht_ptc  and col_ht_ptc  in df_incoming.columns else ''
+                    loai = str(row[col_loai_gd]).strip().upper() if col_loai_gd and col_loai_gd in df_incoming.columns else ''
+                    return f"{hd}||{nv}||{ptc}||{ht}||{loai}"
+
+                df_incoming['_comp_key'] = df_incoming.apply(_make_tk_key_incoming, axis=1)
                 new_rows = df_incoming[~df_incoming['_comp_key'].isin(existing_keys)].drop(columns=['_comp_key'])
                 added_count = len(new_rows)
                 skipped_count = total_incoming - added_count
@@ -3723,9 +3889,34 @@ class KPIEngine:
             if rule == "MERGE_NO_OVERWRITE" and not existing_df.empty:
                 ex_hd = self._find_col(existing_df, ['Số HĐ', 'Số hợp đồng'], default_idx=0)
                 ex_nv = self._find_col(existing_df, ['Nhân viên', 'Nhân sự'], default_idx=3)
-                existing_keys = set(existing_df[ex_hd].astype(str).str.strip().str.upper() + "||" + existing_df[ex_nv].astype(str).str.strip().str.upper())
-                df_incoming['_comp_key'] = df_incoming[col_hd].astype(str).str.strip().str.upper() + "||" + df_incoming[col_nv].astype(str).str.strip().str.upper()
+                ex_tg_tao = self._find_col(existing_df, ['TG Tạo', 'Thời gian tạo', 'TG tạo'], default_idx=None)
+                ex_tg_ht = self._find_col(existing_df, ['TG Hoàn Tất', 'Thời gian hoàn tất', 'TG hoàn tất'], default_idx=None)
+                ex_tg_hen = self._find_col(existing_df, ['Thời gian hẹn', 'TG Hẹn', 'TG hẹn', 'tg_hen'], default_idx=None)
 
+                # Dedup 5 cột: chỉ skip khi Số HĐ + NV + TG Tạo + TG Hoàn Tất + Thời gian hẹn đều giống nhau
+                def _make_bt_key_existing(row):
+                    hd = str(row[ex_hd]).strip().upper() if ex_hd else ''
+                    nv = str(row[ex_nv]).strip().upper() if ex_nv else ''
+                    tao = str(row[ex_tg_tao]).strip() if ex_tg_tao and ex_tg_tao in existing_df.columns else ''
+                    ht  = str(row[ex_tg_ht]).strip()  if ex_tg_ht  and ex_tg_ht  in existing_df.columns else ''
+                    hen = str(row[ex_tg_hen]).strip()  if ex_tg_hen and ex_tg_hen in existing_df.columns else ''
+                    return f"{hd}||{nv}||{tao}||{ht}||{hen}"
+
+                col_tg_tao = self._find_col(df_incoming, ['TG Tạo', 'Thời gian tạo', 'TG tạo'], default_idx=None)
+                col_tg_ht  = self._find_col(df_incoming, ['TG Hoàn Tất', 'Thời gian hoàn tất', 'TG hoàn tất'], default_idx=None)
+                col_tg_hen = self._find_col(df_incoming, ['Thời gian hẹn', 'TG Hẹn', 'TG hẹn', 'tg_hen'], default_idx=None)
+
+                existing_keys = set(existing_df.apply(_make_bt_key_existing, axis=1))
+
+                def _make_bt_key_incoming(row):
+                    hd  = str(row[col_hd]).strip().upper()
+                    nv  = str(row[col_nv]).strip().upper()
+                    tao = str(row[col_tg_tao]).strip() if col_tg_tao and col_tg_tao in df_incoming.columns else ''
+                    ht  = str(row[col_tg_ht]).strip()  if col_tg_ht  and col_tg_ht  in df_incoming.columns else ''
+                    hen = str(row[col_tg_hen]).strip()  if col_tg_hen and col_tg_hen in df_incoming.columns else ''
+                    return f"{hd}||{nv}||{tao}||{ht}||{hen}"
+
+                df_incoming['_comp_key'] = df_incoming.apply(_make_bt_key_incoming, axis=1)
                 new_rows = df_incoming[~df_incoming['_comp_key'].isin(existing_keys)].drop(columns=['_comp_key'])
                 added_count = len(new_rows)
                 skipped_count = total_incoming - added_count
@@ -3884,6 +4075,7 @@ class KPIEngine:
         else:
             return {"ok": False, "error": "Bảng dữ liệu mục tiêu không hợp lệ."}
 
+        self._mark_data_changed()
         # Auto-enrich HR metadata if imported ticket datasets
         if target in ("tk", "bt", "kh_cls", "cll30n"):
             self._auto_enrich_hr_from_tickets()
@@ -4002,6 +4194,7 @@ class KPIEngine:
         else:
             return {"ok": False, "error": "Dataset mục tiêu không hợp lệ."}
 
+        self._mark_data_changed()
         return {
             "ok": True,
             "target": target,
@@ -4589,6 +4782,7 @@ class KPIEngine:
         self.hr_df = pd.concat([self.hr_df, pd.DataFrame([new_row])], ignore_index=True)
         self._save_pickle(self.hr_df, "hr.pkl.gz")
         self._process_metadata()
+        self._mark_data_changed()
         return {"ok": True, "message": "Đã thêm mới nhân sự thành công!"}
 
     def update_hr_employee(self, code: str, payload: dict):
@@ -4615,6 +4809,7 @@ class KPIEngine:
 
         self._save_pickle(self.hr_df, "hr.pkl.gz")
         self._process_metadata()
+        self._mark_data_changed()
         return {"ok": True, "message": "Đã cập nhật hồ sơ nhân sự thành công!"}
 
     def delete_hr_employee(self, code: str):
@@ -4632,6 +4827,7 @@ class KPIEngine:
         ]
         self._save_pickle(self.hr_df, "hr.pkl.gz")
         self._process_metadata()
+        self._mark_data_changed()
         return {"ok": True, "message": f"Đã xóa nhân sự {code} thành công!"}
 
     def get_luong_list(self, search: str = "", block: str = "__ALL__", team_lead: str = "__ALL__"):

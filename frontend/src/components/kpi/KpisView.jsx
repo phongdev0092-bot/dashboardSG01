@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState, memo } from 'react';
 import {
   Box,
   Card,
@@ -20,6 +20,9 @@ import {
   TableSortLabel,
   Chip,
   CircularProgress,
+  LinearProgress,
+  Checkbox,
+  InputAdornment,
 } from '@mui/material';
 import {
   Assignment as AssignmentIcon,
@@ -34,10 +37,223 @@ import {
   Clear as ClearIcon,
   InfoOutlined as InfoIcon,
   CheckCircle as CheckCircleIcon,
+  CalendarToday as CalendarIcon,
+  Event as EventIcon,
+  SupervisorAccount as SupervisorAccountIcon,
+  Public as PublicIcon,
+  LocationCity as LocationCityIcon,
+  GridView as GridViewIcon,
+  RestartAlt as ResetIcon,
 } from '@mui/icons-material';
-import { DebouncedSearchInput } from '../common';
+import { DebouncedSearchInput, MultiSelectFilter } from '../common';
 
-export default function KpisView({
+const nf = new Intl.NumberFormat('vi-VN');
+const cellB = { borderRight: '1px solid #f0f0f0' };
+const dvCell = { px: 1, py: 0.5, backgroundColor: '#fffbfe' };
+
+const EmployeeRow = memo(function EmployeeRow({ emp, idx, onOpen }) {
+  return (
+    <TableRow hover>
+      <TableCell align="center" sx={cellB}>{idx + 1}</TableCell>
+      <TableCell sx={cellB}>
+        <Typography variant="body2" sx={{ fontWeight: 700, color: '#202124' }}>{emp.name}</Typography>
+        <Typography variant="caption" sx={{ color: '#1a73e8', fontWeight: 600 }}>{emp.account}</Typography>
+        <Typography variant="caption" sx={{ color: '#5f6368', ml: 1 }}>({emp.code})</Typography>
+      </TableCell>
+
+      <TableCell sx={cellB}>
+        {emp.team_lead === 'Chưa xác nhận' ? (
+          <Chip label="⚠️ Chưa xác nhận" size="small" sx={{ height: 22, fontSize: '11px', fontWeight: 800, backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }} />
+        ) : (
+          <Typography variant="body2" sx={{ fontWeight: 600, color: '#3c4043' }}>{emp.team_lead}</Typography>
+        )}
+        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.25, alignItems: 'center' }}>
+          {emp.region && <Chip label={emp.region} size="small" sx={{ height: 18, fontSize: '10px', backgroundColor: '#e8f0fe', color: '#1a73e8' }} />}
+          {emp.block && <Chip label={emp.block} size="small" sx={{ height: 18, fontSize: '10px', backgroundColor: '#f1f5f9', color: '#475569' }} />}
+        </Box>
+      </TableCell>
+
+      {/* CHĂM SÓC KHÁCH HÀNG */}
+      {/* 1. % Công Nợ */}
+      <TableCell align="center" sx={dvCell}>
+        {emp.dv_ti_le_da_tt !== null && emp.dv_ti_le_da_tt !== undefined ? (
+          <Typography variant="body2" sx={{ fontWeight: 800, fontSize: '12px', color: emp.dv_ti_le_da_tt >= 95 ? '#2e7d32' : '#c62828' }}>
+            {emp.dv_ti_le_da_tt.toFixed(2)}%
+          </Typography>
+        ) : (
+          <Typography variant="caption" sx={{ color: '#bdbdbd', fontSize: '11px' }}>—</Typography>
+        )}
+      </TableCell>
+
+      {/* 2. RM Kế Hoạch Tháng */}
+      <TableCell align="center" sx={dvCell}>
+        <Typography variant="body2" sx={{ fontWeight: 700, color: '#e65100', fontSize: '12px' }}>
+          {emp.dv_roi_mang_kh !== null && emp.dv_roi_mang_kh !== undefined
+            ? nf.format(emp.dv_roi_mang_kh)
+            : <span style={{ color: '#bdbdbd', fontSize: '11px' }}>—</span>}
+        </Typography>
+      </TableCell>
+
+      {/* 3. Rời Mạng Dự Kiến */}
+      <TableCell align="center" sx={dvCell}>
+        <Typography variant="body2" sx={{ fontWeight: 700, color: '#b71c1c', fontSize: '12px' }}>
+          {emp.dv_roi_mang_du_kien !== null && emp.dv_roi_mang_du_kien !== undefined
+            ? nf.format(emp.dv_roi_mang_du_kien)
+            : <span style={{ color: '#bdbdbd', fontSize: '11px' }}>—</span>}
+        </Typography>
+      </TableCell>
+
+      {/* 4. % RM Hiện Tại */}
+      <TableCell align="center" sx={{ ...dvCell, borderRight: '1px solid #f8bbd0' }}>
+        {emp.dv_pct_rm_hien_tai !== null && emp.dv_pct_rm_hien_tai !== undefined ? (
+          <Typography variant="body2" sx={{ fontWeight: 800, fontSize: '12px', color: emp.dv_pct_rm_hien_tai <= 1.5 ? '#2e7d32' : '#c62828' }}>
+            {emp.dv_pct_rm_hien_tai.toFixed(2)}%
+          </Typography>
+        ) : (
+          <Typography variant="caption" sx={{ color: '#bdbdbd', fontSize: '11px' }}>—</Typography>
+        )}
+      </TableCell>
+
+      {/* Volume Columns */}
+      <TableCell align="center">
+        <Typography variant="body2" sx={{ fontWeight: 800, color: '#1a73e8' }}>
+          {emp.tk_kpi_volume || 0}
+        </Typography>
+        {(emp.tk_gt_72h || 0) > 0 ? (
+          <Box sx={{ mt: 0.3 }}>
+            <Chip
+              label={`>72H: ${emp.tk_gt_72h}`}
+              size="small"
+              sx={{ height: 18, fontSize: '10px', fontWeight: 800, backgroundColor: '#d32f2f', color: '#ffffff' }}
+            />
+          </Box>
+        ) : (
+          <Typography variant="caption" sx={{ display: 'block', fontSize: '10.5px', color: '#9e9e9e', fontWeight: 500, mt: 0.2 }}>
+            {`>72H: 0`}
+          </Typography>
+        )}
+      </TableCell>
+
+      <TableCell align="center">
+        <Typography variant="body2" sx={{ fontWeight: 800, color: '#00897b' }}>
+          {emp.bt_volume || 0}
+        </Typography>
+        {(emp.bt_gt_24h || 0) > 0 ? (
+          <Box sx={{ mt: 0.3 }}>
+            <Chip
+              label={`>24H: ${emp.bt_gt_24h}`}
+              size="small"
+              sx={{ height: 18, fontSize: '10px', fontWeight: 800, backgroundColor: '#d32f2f', color: '#ffffff' }}
+            />
+          </Box>
+        ) : (
+          <Typography variant="caption" sx={{ display: 'block', fontSize: '10.5px', color: '#9e9e9e', fontWeight: 500, mt: 0.2 }}>
+            {`>24H: 0`}
+          </Typography>
+        )}
+      </TableCell>
+
+      <TableCell align="center" sx={{ borderRight: '1px solid #d2e3fc' }}>
+        <Typography variant="body2" sx={{ fontWeight: 600, color: '#5f6368' }}>
+          {emp.tk_swap_volume || 0}
+        </Typography>
+      </TableCell>
+
+      {/* Progress RT Columns */}
+      <TableCell align="center">
+        {emp.rt_tk_hours !== null && emp.rt_tk_hours !== undefined && !isNaN(emp.rt_tk_hours) && emp.rt_tk_hours > 72.0 ? (
+          <Chip
+            label={emp.rt_tk_fmt || '-'}
+            size="small"
+            sx={{ height: 22, fontSize: '11px', fontWeight: 900, backgroundColor: '#d32f2f', color: '#ffffff', boxShadow: '0 2px 4px rgba(211,47,47,0.4)' }}
+          />
+        ) : (
+          <Typography variant="body2" sx={{
+            fontWeight: 800,
+            color: (emp.rt_tk_hours !== null && emp.rt_tk_hours !== undefined && !isNaN(emp.rt_tk_hours))
+              ? (emp.rt_tk_hours <= 18.0 ? '#2e7d32' : '#d32f2f')
+              : '#5f6368'
+          }}>
+            {emp.rt_tk_fmt || '-'}
+          </Typography>
+        )}
+      </TableCell>
+
+      <TableCell align="center" sx={{ borderRight: '1px solid #ffe0b2' }}>
+        {emp.rt_bt_hours !== null && emp.rt_bt_hours !== undefined && !isNaN(emp.rt_bt_hours) && emp.rt_bt_hours > 24.0 ? (
+          <Chip
+            label={emp.rt_bt_fmt || '-'}
+            size="small"
+            sx={{ height: 22, fontSize: '11px', fontWeight: 900, backgroundColor: '#d32f2f', color: '#ffffff', boxShadow: '0 2px 4px rgba(211,47,47,0.4)' }}
+          />
+        ) : (
+          <Typography variant="body2" sx={{
+            fontWeight: 800,
+            color: (emp.rt_bt_hours !== null && emp.rt_bt_hours !== undefined && !isNaN(emp.rt_bt_hours))
+              ? (emp.rt_bt_hours <= 8.0 ? '#2e7d32' : '#d32f2f')
+              : '#5f6368'
+          }}>
+            {emp.rt_bt_fmt || '-'}
+          </Typography>
+        )}
+      </TableCell>
+
+      {/* CLL30N Column */}
+      <TableCell align="center" sx={{ backgroundColor: '#fcf8fe', borderRight: '1px solid #e1bee7' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.2 }}>
+          <Typography variant="body2" sx={{ fontWeight: 800, color: emp.cll30n_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
+            {emp.cll30n_pct || 0}%
+          </Typography>
+          <Typography variant="caption" sx={{ color: '#5f6368', fontSize: '10px' }}>
+            {emp.kh_cls_count > 0 ? `(${emp.cll30n_count || 0}/${emp.kh_cls_count} HĐ)` : `(${emp.cll30n_count || 0} HĐ)`}
+          </Typography>
+        </Box>
+      </TableCell>
+
+      {/* CLPS 7N BT Column */}
+      <TableCell align="center" sx={{ backgroundColor: '#fcf8fe', borderRight: '1px solid #e1bee7' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.2 }}>
+          <Typography variant="body2" sx={{ fontWeight: 800, color: emp.clps7n_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
+            {emp.clps7n_pct || 0}%
+          </Typography>
+          <Typography variant="caption" sx={{ color: '#5f6368', fontSize: '10px' }}>
+            {emp.kh_cls_count > 0 ? `(${emp.clps7n_count || 0}/${emp.kh_cls_count} HĐ)` : `(${emp.clps7n_count || 0} HĐ)`}
+          </Typography>
+        </Box>
+      </TableCell>
+
+      {/* Total Đúng Hẹn Percentage Column */}
+      <TableCell align="center" sx={{ backgroundColor: '#f6fbf7' }}>
+        <Chip
+          label={emp.total_dung_hen_pct >= 97.2 ? `${emp.total_dung_hen_pct || 0}% Đạt` : `${emp.total_dung_hen_pct || 0}% Không Đạt`}
+          size="small"
+          color={emp.total_dung_hen_pct >= 97.2 ? 'success' : 'error'}
+          sx={{ fontWeight: 800, borderRadius: '12px' }}
+        />
+      </TableCell>
+
+      <TableCell align="center" sx={{ color: emp.tk_dung_hen_pct >= 97.2 ? '#2e7d32' : '#d32f2f', fontWeight: 800 }}>
+        {emp.tk_dung_hen_pct || 0}%
+      </TableCell>
+      <TableCell align="center" sx={{ color: emp.bt_dung_hen_pct >= 97.2 ? '#2e7d32' : '#d32f2f', fontWeight: 800, borderRight: '1px solid #ceead6' }}>
+        {emp.bt_dung_hen_pct || 0}%
+      </TableCell>
+
+      <TableCell align="center">
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => onOpen(emp)}
+          sx={{ borderRadius: '12px', textTransform: 'none', px: 1.5, fontSize: '11px', fontWeight: 700 }}
+        >
+          Xem Chi Tiết
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+});
+
+function KpisView({
   summary,
   setDetailModalOpen,
   fetchDichVu,
@@ -54,6 +270,8 @@ export default function KpisView({
   setSelectedRegion,
   selectedTeamLead,
   setSelectedTeamLead,
+  selectedPhuong,
+  setSelectedPhuong,
   selectedBlock,
   setSelectedBlock,
   options,
@@ -68,8 +286,51 @@ export default function KpisView({
   dichVuData,
   dichVuLoading,
   filteredBlocks = [],
+  filteredPhuongs = [],
   error,
 }) {
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (selectedTeamLead && selectedTeamLead.length > 0) count += selectedTeamLead.length;
+    if (selectedRegion && selectedRegion.length > 0) count += 1;
+    if (selectedPhuong && selectedPhuong.length > 0) count += selectedPhuong.length;
+    if (selectedBlock && selectedBlock.length > 0) count += selectedBlock.length;
+    if (searchQuery && searchQuery.trim().length > 0) count += 1;
+    if (datePreset !== 'month_to_yesterday') count += 1;
+    return count;
+  }, [selectedTeamLead, selectedRegion, selectedPhuong, selectedBlock, searchQuery, datePreset]);
+
+  const [visibleCount, setVisibleCount] = useState(50);
+  React.useEffect(() => setVisibleCount(50), [sortedEmployees]);
+
+  const dv = useMemo(() => {
+    let sTT = 0, nTT = 0, rmKH = 0, rmDK = 0, sRM = 0, nRM = 0;
+    const rows = dichVuData || [];
+    for (const r of rows) {
+      if (r.ti_le_da_tt != null) { sTT += r.ti_le_da_tt; nTT++; }
+      if (r.roi_mang_kh != null) rmKH += r.roi_mang_kh;
+      if (r.roi_mang_du_kien != null) rmDK += r.roi_mang_du_kien;
+      if (r.pct_rm_hien_tai != null) { sRM += r.pct_rm_hien_tai; nRM++; }
+    }
+    return { count: rows.length, avgTT: nTT ? sTT / nTT : null, rmKH, rmDK, avgRM: nRM ? sRM / nRM : null };
+  }, [dichVuData]);
+
+  const regionValue = useMemo(
+    () => (selectedRegion ? (Array.isArray(selectedRegion) ? selectedRegion : selectedRegion.split('|').filter(Boolean)) : []),
+    [selectedRegion]
+  );
+  const teamLeadOptions = useMemo(() => options.team_leads || [], [options.team_leads]);
+  const regionOptions = useMemo(() => options.regions || [], [options.regions]);
+
+  const handleResetAllFilters = () => {
+    handleDatePreset('month_to_yesterday');
+    setSelectedTeamLead([]);
+    setSelectedRegion('');
+    setSelectedPhuong([]);
+    setSelectedBlock([]);
+    setSearchQuery('');
+  };
+
   return (
 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 
@@ -363,117 +624,96 @@ export default function KpisView({
                   </Box>
 
                   {/* 4 Metric Cards */}
-                  {(() => {
-                    // Tính tổng / trung bình từ dichVuData
-                    const dvRows = dichVuData || [];
-                    const tiLeDaTTArr = dvRows.filter(r => r.ti_le_da_tt !== null).map(r => r.ti_le_da_tt);
-                    const avgTiLeDaTT = tiLeDaTTArr.length > 0 ? (tiLeDaTTArr.reduce((a, b) => a + b, 0) / tiLeDaTTArr.length) : null;
-                    const rmKHTotal = dvRows.filter(r => r.roi_mang_kh !== null).reduce((s, r) => s + (r.roi_mang_kh || 0), 0);
-                    const rmDKTotal = dvRows.filter(r => r.roi_mang_du_kien !== null).reduce((s, r) => s + (r.roi_mang_du_kien || 0), 0);
-                    const pctRMArr = dvRows.filter(r => r.pct_rm_hien_tai !== null).map(r => r.pct_rm_hien_tai);
-                    const avgPctRM = pctRMArr.length > 0 ? (pctRMArr.reduce((a, b) => a + b, 0) / pctRMArr.length) : null;
+                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }, gap: 2 }}>
+                    {/* Card: % Công Nợ */}
+                    <Card elevation={0} sx={{ borderRadius: 3, backgroundColor: '#ffffff', height: '100%', border: `1px solid ${dv.avgTT !== null && dv.avgTT >= 95 ? '#c8e6c9' : '#ffccbc'}`, borderLeft: `6px solid ${dv.avgTT !== null && dv.avgTT >= 95 ? '#2e7d32' : '#bf360c'}` }}>
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                          <Typography variant="overline" sx={{ color: '#0288d1', fontWeight: 800, fontSize: '10px' }}>
+                            % CÔNG NỢ (J)
+                          </Typography>
+                          <PaidIcon sx={{ color: dv.avgTT !== null && dv.avgTT >= 95 ? '#2e7d32' : '#bf360c', fontSize: 20 }} />
+                        </Box>
+                        <Typography variant="h5" sx={{ fontWeight: 800, color: dv.avgTT !== null && dv.avgTT >= 95 ? '#1b5e20' : '#bf360c', letterSpacing: '-0.5px' }}>
+                          {dichVuLoading ? '...' : dv.avgTT !== null ? `${dv.avgTT.toFixed(2)}%` : '—'}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
+                          Trung bình % công nợ
+                        </Typography>
+                        <Chip
+                          label={dv.avgTT !== null ? (dv.avgTT >= 95 ? 'ĐẠT (≥ 95%)' : 'CHƯA ĐẠT (< 95%)') : 'Chưa có dữ liệu'}
+                          size="small"
+                          color={dv.avgTT !== null && dv.avgTT >= 95 ? 'success' : 'error'}
+                          sx={{ fontWeight: 800, fontSize: '10px', height: 20, mt: 0.8 }}
+                        />
+                      </CardContent>
+                    </Card>
 
-                    const cardBase = {
-                      elevation: 0,
-                      sx: { borderRadius: 3, backgroundColor: '#ffffff', height: '100%' }
-                    };
+                    {/* Card: RM Kế Hoạch Tháng */}
+                    <Card elevation={0} sx={{ borderRadius: 3, backgroundColor: '#ffffff', height: '100%', border: '1px solid #fff9c4', borderLeft: '6px solid #f9a825' }}>
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                          <Typography variant="overline" sx={{ color: '#f57f17', fontWeight: 800, fontSize: '10px' }}>
+                            RM KẾ HOẠCH THÁNG (M)
+                          </Typography>
+                          <TrendingDownIcon sx={{ color: '#f9a825', fontSize: 20 }} />
+                        </Box>
+                        <Typography variant="h5" sx={{ fontWeight: 800, color: '#e65100', letterSpacing: '-0.5px' }}>
+                          {dichVuLoading ? '...' : dv.count > 0 ? nf.format(dv.rmKH) : '—'}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
+                          Tổng RM kế hoạch tháng
+                        </Typography>
+                      </CardContent>
+                    </Card>
 
-                    return (
-                      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }, gap: 2 }}>
+                    {/* Card: Rời Mạng Dự Kiến */}
+                    <Card elevation={0} sx={{ borderRadius: 3, backgroundColor: '#ffffff', height: '100%', border: '1px solid #fce4ec', borderLeft: '6px solid #c62828' }}>
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                          <Typography variant="overline" sx={{ color: '#c62828', fontWeight: 800, fontSize: '10px' }}>
+                            RỜI MẠNG DỰ KIẾN (T)
+                          </Typography>
+                          <TrendingDownIcon sx={{ color: '#c62828', fontSize: 20 }} />
+                        </Box>
+                        <Typography variant="h5" sx={{ fontWeight: 800, color: '#b71c1c', letterSpacing: '-0.5px' }}>
+                          {dichVuLoading ? '...' : dv.count > 0 ? nf.format(dv.rmDK) : '—'}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
+                          Tổng rời mạng dự kiến
+                        </Typography>
+                        {dv.count > 0 && dv.rmKH > 0 && (
+                          <Typography variant="caption" sx={{ color: dv.rmDK > dv.rmKH ? '#d32f2f' : '#2e7d32', fontWeight: 700, display: 'block', mt: 0.3 }}>
+                            {dv.rmDK > dv.rmKH ? `⬆️ Vượt KH: +${nf.format(dv.rmDK - dv.rmKH)}` : `✅ Trong KH: ${nf.format(dv.rmKH - dv.rmDK)} buffer`}
+                          </Typography>
+                        )}
+                      </CardContent>
+                    </Card>
 
-
-                        {/* Card: % Công Nợ */}
-                        <Card {...cardBase} sx={{ ...cardBase.sx, border: `1px solid ${avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? '#c8e6c9' : '#ffccbc'}`, borderLeft: `6px solid ${avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? '#2e7d32' : '#bf360c'}` }}>
-                          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                              <Typography variant="overline" sx={{ color: '#0288d1', fontWeight: 800, fontSize: '10px' }}>
-                                % CÔNG NỢ (J)
-                              </Typography>
-                              <PaidIcon sx={{ color: avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? '#2e7d32' : '#bf360c', fontSize: 20 }} />
-                            </Box>
-                            <Typography variant="h5" sx={{ fontWeight: 800, color: avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? '#1b5e20' : '#bf360c', letterSpacing: '-0.5px' }}>
-                              {dichVuLoading ? '...' : avgTiLeDaTT !== null ? `${avgTiLeDaTT.toFixed(2)}%` : '—'}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                              Trung bình % công nợ
-                            </Typography>
-                            <Chip
-                              label={avgTiLeDaTT !== null ? (avgTiLeDaTT >= 95 ? 'ĐẠT (≥ 95%)' : 'CHƯA ĐẠT (< 95%)') : 'Chưa có dữ liệu'}
-                              size="small"
-                              color={avgTiLeDaTT !== null && avgTiLeDaTT >= 95 ? 'success' : 'error'}
-                              sx={{ fontWeight: 800, fontSize: '10px', height: 20, mt: 0.8 }}
-                            />
-                          </CardContent>
-                        </Card>
-
-                        {/* Card: RM Kế Hoạch Tháng */}
-                        <Card {...cardBase} sx={{ ...cardBase.sx, border: '1px solid #fff9c4', borderLeft: '6px solid #f9a825' }}>
-                          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                              <Typography variant="overline" sx={{ color: '#f57f17', fontWeight: 800, fontSize: '10px' }}>
-                                RM KẾ HOẠCH THÁNG (M)
-                              </Typography>
-                              <TrendingDownIcon sx={{ color: '#f9a825', fontSize: 20 }} />
-                            </Box>
-                            <Typography variant="h5" sx={{ fontWeight: 800, color: '#e65100', letterSpacing: '-0.5px' }}>
-                              {dichVuLoading ? '...' : dvRows.length > 0 ? rmKHTotal.toLocaleString('vi-VN') : '—'}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                              Tổng RM kế hoạch tháng
-                            </Typography>
-                          </CardContent>
-                        </Card>
-
-                        {/* Card: Rời Mạng Dự Kiến */}
-                        <Card {...cardBase} sx={{ ...cardBase.sx, border: '1px solid #fce4ec', borderLeft: '6px solid #c62828' }}>
-                          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                              <Typography variant="overline" sx={{ color: '#c62828', fontWeight: 800, fontSize: '10px' }}>
-                                RỜI MẠNG DỰ KIẾN (T)
-                              </Typography>
-                              <TrendingDownIcon sx={{ color: '#c62828', fontSize: 20 }} />
-                            </Box>
-                            <Typography variant="h5" sx={{ fontWeight: 800, color: '#b71c1c', letterSpacing: '-0.5px' }}>
-                              {dichVuLoading ? '...' : dvRows.length > 0 ? rmDKTotal.toLocaleString('vi-VN') : '—'}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                              Tổng rời mạng dự kiến
-                            </Typography>
-                            {dvRows.length > 0 && rmKHTotal > 0 && (
-                              <Typography variant="caption" sx={{ color: rmDKTotal > rmKHTotal ? '#d32f2f' : '#2e7d32', fontWeight: 700, display: 'block', mt: 0.3 }}>
-                                {rmDKTotal > rmKHTotal ? `⬆️ Vượt KH: +${(rmDKTotal - rmKHTotal).toLocaleString('vi-VN')}` : `✅ Trong KH: ${(rmKHTotal - rmDKTotal).toLocaleString('vi-VN')} buffer`}
-                              </Typography>
-                            )}
-                          </CardContent>
-                        </Card>
-
-                        {/* Card: % RM Hiện Tại */}
-                        <Card {...cardBase} sx={{ ...cardBase.sx, border: `1px solid ${avgPctRM !== null && avgPctRM <= 1.5 ? '#c8e6c9' : '#ffcdd2'}`, borderLeft: `6px solid ${avgPctRM !== null && avgPctRM <= 1.5 ? '#2e7d32' : '#d32f2f'}` }}>
-                          <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                              <Typography variant="overline" sx={{ color: '#0288d1', fontWeight: 800, fontSize: '10px' }}>
-                                % RM HIỆN TẠI (U)
-                              </Typography>
-                              <PercentIcon sx={{ color: avgPctRM !== null && avgPctRM <= 1.5 ? '#2e7d32' : '#d32f2f', fontSize: 20 }} />
-                            </Box>
-                            <Typography variant="h5" sx={{ fontWeight: 800, color: avgPctRM !== null && avgPctRM <= 1.5 ? '#1b5e20' : '#b71c1c', letterSpacing: '-0.5px' }}>
-                              {dichVuLoading ? '...' : avgPctRM !== null ? `${avgPctRM.toFixed(2)}%` : '—'}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
-                              Trung bình % RM hiện tại
-                            </Typography>
-                            <Chip
-                              label={avgPctRM !== null ? (avgPctRM <= 1.5 ? 'ĐẠT (≤ 1.5%)' : 'CHƯA ĐẠT (> 1.5%)') : 'Chưa có dữ liệu'}
-                              size="small"
-                              color={avgPctRM !== null && avgPctRM <= 1.5 ? 'success' : 'error'}
-                              sx={{ fontWeight: 800, fontSize: '10px', height: 20, mt: 0.8 }}
-                            />
-                          </CardContent>
-                        </Card>
-
-                      </Box>
-                    );
-                  })()}
+                    {/* Card: % RM Hiện Tại */}
+                    <Card elevation={0} sx={{ borderRadius: 3, backgroundColor: '#ffffff', height: '100%', border: `1px solid ${dv.avgRM !== null && dv.avgRM <= 1.5 ? '#c8e6c9' : '#ffccbc'}`, borderLeft: `6px solid ${dv.avgRM !== null && dv.avgRM <= 1.5 ? '#2e7d32' : '#d32f2f'}` }}>
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                          <Typography variant="overline" sx={{ color: '#0288d1', fontWeight: 800, fontSize: '10px' }}>
+                            % RM HIỆN TẠI (U)
+                          </Typography>
+                          <PercentIcon sx={{ color: dv.avgRM !== null && dv.avgRM <= 1.5 ? '#2e7d32' : '#d32f2f', fontSize: 20 }} />
+                        </Box>
+                        <Typography variant="h5" sx={{ fontWeight: 800, color: dv.avgRM !== null && dv.avgRM <= 1.5 ? '#1b5e20' : '#b71c1c', letterSpacing: '-0.5px' }}>
+                          {dichVuLoading ? '...' : dv.avgRM !== null ? `${dv.avgRM.toFixed(2)}%` : '—'}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#5f6368', display: 'block', mt: 0.5 }}>
+                          Trung bình % RM hiện tại
+                        </Typography>
+                        <Chip
+                          label={dv.avgRM !== null ? (dv.avgRM <= 1.5 ? 'ĐẠT (≤ 1.5%)' : 'CHƯA ĐẠT (> 1.5%)') : 'Chưa có dữ liệu'}
+                          size="small"
+                          color={dv.avgRM !== null && dv.avgRM <= 1.5 ? 'success' : 'error'}
+                          sx={{ fontWeight: 800, fontSize: '10px', height: 20, mt: 0.8 }}
+                        />
+                      </CardContent>
+                    </Card>
+                  </Box>
 
                   {!dichVuData && !dichVuLoading && (
                     <Box sx={{ textAlign: 'center', py: 2, color: '#9e9e9e' }}>
@@ -483,147 +723,303 @@ export default function KpisView({
                 </Box>
 
                 {/* FILTER BAR PANEL */}
-                <Paper elevation={0} sx={{ p: 3, borderRadius: 3, backgroundColor: '#ffffff', border: '1px solid #e0e0e0', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-                  
-                  {/* Quick Date Presets Row */}
-                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', mb: 2.5 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#3c4043', mr: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <FilterIcon fontSize="small" color="primary" /> Lọc Nhanh:
-                    </Typography>
-
-                    {[
-                      { key: 'month_to_yesterday', label: 'Đầu tháng -> Hôm qua (Mặc định)' },
-                      { key: 'all', label: 'Tất cả' },
-                      { key: 'today', label: 'Hôm nay' },
-                      { key: 'yesterday', label: 'Hôm qua' },
-                      { key: 'week', label: '7 Ngày qua' }
-                    ].map((btn) => (
-                      <Button
-                        key={btn.key}
-                        size="small"
-                        variant={datePreset === btn.key ? 'contained' : 'outlined'}
-                        color="primary"
-                        onClick={() => handleDatePreset(btn.key)}
-                        sx={{ borderRadius: '16px', px: 2, py: 0.4, fontSize: '12.5px', textTransform: 'none', fontWeight: datePreset === btn.key ? 700 : 500 }}
+                <Paper
+                  elevation={0}
+                  sx={{
+                    p: { xs: 2, md: 2.5 },
+                    borderRadius: 3,
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2.2,
+                  }}
+                >
+                  {/* Top Bar: Lọc Nhanh & Đặt lại bộ lọc */}
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 1.5,
+                      pb: 1.5,
+                      borderBottom: '1px solid #f1f5f9',
+                    }}
+                  >
+                    {/* Left: Quick Date Presets */}
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <Typography
+                        variant="subtitle2"
+                        sx={{
+                          fontWeight: 800,
+                          color: '#1e293b',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 0.6,
+                          fontSize: '13px',
+                          mr: 0.5,
+                        }}
                       >
-                        {btn.label}
+                        <FilterIcon sx={{ fontSize: 18, color: '#1a73e8' }} /> Lọc Nhanh:
+                      </Typography>
+
+                      {[
+                        { key: 'month_to_yesterday', label: 'Đầu tháng -> Hôm qua (Mặc định)' },
+                        { key: 'all', label: 'Tất cả' },
+                        { key: 'today', label: 'Hôm nay' },
+                        { key: 'yesterday', label: 'Hôm qua' },
+                        { key: 'week', label: '7 Ngày qua' },
+                      ].map((btn) => (
+                        <Button
+                          key={btn.key}
+                          size="small"
+                          variant={datePreset === btn.key ? 'contained' : 'outlined'}
+                          color="primary"
+                          onClick={() => handleDatePreset(btn.key)}
+                          sx={{
+                            borderRadius: '20px',
+                            px: 1.8,
+                            py: 0.4,
+                            fontSize: '12px',
+                            textTransform: 'none',
+                            fontWeight: datePreset === btn.key ? 700 : 500,
+                            boxShadow: datePreset === btn.key ? '0 2px 6px rgba(26,115,232,0.3)' : 'none',
+                          }}
+                        >
+                          {btn.label}
+                        </Button>
+                      ))}
+                    </Box>
+
+                    {/* Right: Trạng thái & Nút Đặt lại tất cả */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {activeFilterCount > 0 && (
+                        <Chip
+                          label={`Đang lọc: ${activeFilterCount} mục`}
+                          size="small"
+                          color="primary"
+                          variant="outlined"
+                          sx={{ fontWeight: 700, fontSize: '11px', height: 24, borderRadius: '6px' }}
+                        />
+                      )}
+                      <Button
+                        size="small"
+                        variant="text"
+                        color="secondary"
+                        startIcon={<ResetIcon sx={{ fontSize: '16px !important' }} />}
+                        onClick={handleResetAllFilters}
+                        sx={{
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          textTransform: 'none',
+                          borderRadius: '8px',
+                          color: '#64748b',
+                          px: 1.2,
+                          py: 0.4,
+                          '&:hover': {
+                            color: '#d93025',
+                            backgroundColor: '#fef2f2',
+                          },
+                        }}
+                      >
+                        Đặt lại mặc định
                       </Button>
-                    ))}
+                    </Box>
                   </Box>
 
-                  {/* Filter Input Grid */}
-                  <Grid container spacing={2} alignItems="flex-end">
-                    
-                    <Grid item xs={12} sm={6} md={2}>
-                      <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
-                        Từ Ngày (TG Hoàn tất)
-                      </FormLabel>
+                  {/* Tier 1: Khoảng Thời Gian & Tìm Kiếm */}
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: {
+                        xs: '1fr',
+                        sm: '1fr 1fr',
+                        md: '220px 220px 1fr',
+                      },
+                      gap: 2,
+                      alignItems: 'flex-end',
+                    }}
+                  >
+                    {/* Từ Ngày */}
+                    <Box sx={{ width: '100%' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, mb: 0.6 }}>
+                        <CalendarIcon sx={{ fontSize: 16, color: '#1a73e8' }} />
+                        <Typography sx={{ fontSize: '12px', fontWeight: 700, color: '#374151' }}>
+                          Từ Ngày (TG Hoàn tất)
+                        </Typography>
+                      </Box>
                       <TextField
                         type="date"
                         fullWidth
                         size="small"
                         value={startDate}
-                        onChange={(e) => { setStartDate(e.target.value); setDatePreset('custom'); }}
-                        sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#fafafa' } }}
+                        onChange={(e) => {
+                          setStartDate(e.target.value);
+                          setDatePreset('custom');
+                        }}
+                        sx={{
+                          '& .MuiInputBase-root': {
+                            height: 40,
+                            borderRadius: '10px',
+                            backgroundColor: '#ffffff',
+                            fontSize: '13px',
+                            fontWeight: 600,
+                            border: '1px solid #d1d5db',
+                            '&:hover': { borderColor: '#1a73e8' },
+                            '&.Mui-focused': { borderColor: '#1a73e8', boxShadow: '0 0 0 2px rgba(26,115,232,0.15)' },
+                          },
+                          '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
+                        }}
                       />
-                    </Grid>
+                    </Box>
 
-                    <Grid item xs={12} sm={6} md={2}>
-                      <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
-                        Đến Ngày (TG Hoàn tất)
-                      </FormLabel>
+                    {/* Đến Ngày */}
+                    <Box sx={{ width: '100%' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, mb: 0.6 }}>
+                        <EventIcon sx={{ fontSize: 16, color: '#1a73e8' }} />
+                        <Typography sx={{ fontSize: '12px', fontWeight: 700, color: '#374151' }}>
+                          Đến Ngày (TG Hoàn tất)
+                        </Typography>
+                      </Box>
                       <TextField
                         type="date"
                         fullWidth
                         size="small"
                         value={endDate}
-                        onChange={(e) => { setEndDate(e.target.value); setDatePreset('custom'); }}
-                        sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#fafafa' } }}
-                      />
-                    </Grid>
-
-                    <Grid item xs={12} sm={6} md={2}>
-                      <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
-                        Lọc Theo Đội Trưởng
-                      </FormLabel>
-                      <TextField
-                        select
-                        fullWidth
-                        size="small"
-                        value={selectedTeamLead}
                         onChange={(e) => {
-                          setSelectedTeamLead(e.target.value);
-                          // Reset block khi đổi đội trưởng để tránh chọn block không thuộc đội
-                          setSelectedBlock('');
+                          setEndDate(e.target.value);
+                          setDatePreset('custom');
                         }}
-                        sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#fafafa' } }}
-                      >
-                        <MenuItem value="">-- Tất cả Đội Trưởng --</MenuItem>
-                        {options.team_leads.map((tl) => (
-                          <MenuItem key={tl} value={tl}>{tl}</MenuItem>
-                        ))}
-                      </TextField>
-                    </Grid>
+                        sx={{
+                          '& .MuiInputBase-root': {
+                            height: 40,
+                            borderRadius: '10px',
+                            backgroundColor: '#ffffff',
+                            fontSize: '13px',
+                            fontWeight: 600,
+                            border: '1px solid #d1d5db',
+                            '&:hover': { borderColor: '#1a73e8' },
+                            '&.Mui-focused': { borderColor: '#1a73e8', boxShadow: '0 0 0 2px rgba(26,115,232,0.15)' },
+                          },
+                          '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
+                        }}
+                      />
+                    </Box>
 
-                    <Grid item xs={12} sm={6} md={1.75}>
-                      <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
-                        Lọc Theo Vùng
-                      </FormLabel>
-                      <TextField
-                        select
-                        fullWidth
-                        size="small"
-                        value={selectedRegion}
-                        onChange={(e) => setSelectedRegion(e.target.value)}
-                        sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#fafafa' } }}
-                      >
-                        <MenuItem value="">-- Tất cả Vùng --</MenuItem>
-                        {options.regions.map((r) => (
-                          <MenuItem key={r} value={r}>{r}</MenuItem>
-                        ))}
-                      </TextField>
-                    </Grid>
-
-                    <Grid item xs={12} sm={6} md={2}>
-                      <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
-                        Lọc Theo Block
-                      </FormLabel>
-                      <TextField
-                        select
-                        fullWidth
-                        size="small"
-                        value={selectedBlock}
-                        onChange={(e) => setSelectedBlock(e.target.value)}
-                        sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#fafafa' } }}
-                      >
-                        <MenuItem value="">-- Tất cả Block {selectedTeamLead ? `(${filteredBlocks.length})` : ''} --</MenuItem>
-                        {filteredBlocks.map((b) => (
-                          <MenuItem key={b} value={b}>{b}</MenuItem>
-                        ))}
-                      </TextField>
-                    </Grid>
-
-                    <Grid item xs={12} sm={12} md={2.25}>
-                      <FormLabel sx={{ fontSize: '12px', fontWeight: 700, color: '#3c4043', display: 'block', mb: 0.5 }}>
-                        Tìm Inside Acc / NV
-                      </FormLabel>
+                    {/* Tìm Kiếm Inside Acc / NV */}
+                    <Box sx={{ width: '100%' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, mb: 0.6 }}>
+                        <SearchIcon sx={{ fontSize: 16, color: '#1a73e8' }} />
+                        <Typography sx={{ fontSize: '12px', fontWeight: 700, color: '#374151' }}>
+                          Tìm Kiếm Nhân Viên / Inside Acc
+                        </Typography>
+                      </Box>
                       <DebouncedSearchInput
                         fullWidth
                         size="small"
-                        placeholder="Nhập tên, mã hoặc account..."
+                        placeholder="Nhập tên nhân viên, mã NV hoặc account..."
                         value={searchQuery}
                         onChange={(val) => setSearchQuery(val)}
-                        sx={{ '& .MuiInputBase-root': { borderRadius: 2, backgroundColor: '#fafafa' } }}
+                        sx={{
+                          '& .MuiInputBase-root': {
+                            height: 40,
+                            borderRadius: '10px',
+                            backgroundColor: '#ffffff',
+                            fontSize: '13px',
+                            border: searchQuery ? '1.5px solid #1a73e8' : '1px solid #d1d5db',
+                            '&:hover': { borderColor: '#1a73e8' },
+                            '&.Mui-focused': { borderColor: '#1a73e8', boxShadow: '0 0 0 2px rgba(26,115,232,0.15)' },
+                          },
+                          '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
+                        }}
                         InputProps={{
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <SearchIcon sx={{ fontSize: 18, color: '#94a3b8' }} />
+                            </InputAdornment>
+                          ),
                           endAdornment: searchQuery ? (
-                            <IconButton size="small" onClick={() => setSearchQuery('')}><ClearIcon fontSize="small" /></IconButton>
-                          ) : <SearchIcon color="action" fontSize="small" />
+                            <IconButton size="small" onClick={() => setSearchQuery('')} sx={{ p: 0.3, mr: 0.2 }}>
+                              <ClearIcon sx={{ fontSize: 16, color: '#94a3b8', '&:hover': { color: '#ef4444' } }} />
+                            </IconButton>
+                          ) : null,
                         }}
                       />
-                    </Grid>
+                    </Box>
+                  </Box>
 
-                  </Grid>
+                  {/* Tier 2: Phân Cấp Quản Lý Địa Bàn (4 cột đều nhau 100%!) */}
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: {
+                        xs: '1fr',
+                        sm: '1fr 1fr',
+                        md: 'repeat(4, 1fr)',
+                      },
+                      gap: 2,
+                    }}
+                  >
+                    {/* Cột 1: Đội Trưởng */}
+                    <MultiSelectFilter
+                      label="Lọc Theo Đội Trưởng"
+                      icon={<SupervisorAccountIcon sx={{ fontSize: 16 }} />}
+                      options={teamLeadOptions}
+                      value={selectedTeamLead}
+                      onChange={(arr) => {
+                        setSelectedTeamLead(arr);
+                        // Reset phường và block khi đổi đội trưởng để tránh lệch dữ liệu
+                        setSelectedPhuong([]);
+                        setSelectedBlock([]);
+                      }}
+                      placeholder="-- Tất cả Đội Trưởng --"
+                      unit="đội trưởng"
+                    />
+
+                    {/* Cột 2: Vùng */}
+                    <MultiSelectFilter
+                      label="Lọc Theo Vùng"
+                      icon={<PublicIcon sx={{ fontSize: 16 }} />}
+                      options={regionOptions}
+                      value={regionValue}
+                      onChange={(arr) => {
+                        setSelectedRegion(Array.isArray(arr) ? arr.join('|') : (arr || ''));
+                      }}
+                      placeholder="-- Tất cả Vùng --"
+                      unit="vùng"
+                    />
+
+                    {/* Cột 3: Phường */}
+                    <MultiSelectFilter
+                      label="Lọc Theo Phường"
+                      icon={<LocationCityIcon sx={{ fontSize: 16 }} />}
+                      options={filteredPhuongs || []}
+                      value={selectedPhuong}
+                      onChange={(arr) => {
+                        setSelectedPhuong(arr);
+                        setSelectedBlock([]);
+                      }}
+                      placeholder={`-- Tất cả Phường ${selectedTeamLead.length ? `(${filteredPhuongs.length})` : ''} --`}
+                      unit="phường"
+                    />
+
+                    {/* Cột 4: Block */}
+                    <MultiSelectFilter
+                      label="Lọc Theo Block"
+                      icon={<GridViewIcon sx={{ fontSize: 16 }} />}
+                      options={filteredBlocks || []}
+                      value={selectedBlock}
+                      onChange={(arr) => {
+                        setSelectedBlock(arr);
+                      }}
+                      placeholder={`-- Tất cả Block ${selectedTeamLead.length || selectedPhuong.length ? `(${filteredBlocks.length})` : ''} --`}
+                      unit="block"
+                    />
+                  </Box>
                 </Paper>
+
 
                 {/* MAIN DATATABLE PAPER */}
                 <Paper elevation={0} sx={{ borderRadius: 3, overflow: 'hidden', backgroundColor: '#ffffff', border: '1px solid #e0e0e0', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
@@ -634,16 +1030,14 @@ export default function KpisView({
                     </Typography>
                   </Box>
 
-                  {loading ? (
-                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 10 }}>
-                      <CircularProgress />
-                    </Box>
+                  {loading && sortedEmployees.length === 0 ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 10 }}><CircularProgress /></Box>
                   ) : error ? (
-                    <Box sx={{ p: 5, textAlign: 'center', color: '#d93025' }}>
-                      <Typography variant="h6">{error}</Typography>
-                    </Box>
+                    <Box sx={{ p: 5, textAlign: 'center', color: '#d93025' }}><Typography variant="h6">{error}</Typography></Box>
                   ) : (
-                    <TableContainer sx={{ maxHeight: 720 }}>
+                    <Box sx={{ position: 'relative' }}>
+                      {loading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 20 }} />}
+                      <TableContainer sx={{ maxHeight: 720, opacity: loading ? 0.6 : 1, transition: 'opacity .15s' }}>
                       <Table stickyHeader size="medium">
                         <TableHead>
                           <TableRow sx={{ height: '38px' }}>
@@ -841,212 +1235,26 @@ export default function KpisView({
                           </TableRow>
                         </TableHead>
 
-                        <TableBody>
-                          {sortedEmployees.map((emp, idx) => (
-                            <TableRow key={emp.account} hover sx={{ '&:nth-of-type(even)': { backgroundColor: '#fafafa' } }}>
-                              <TableCell align="center" sx={{ color: '#5f6368', borderRight: '1px solid #f0f0f0' }}>{idx + 1}</TableCell>
-                              <TableCell sx={{ borderRight: '1px solid #f0f0f0' }}>
-                                <Typography variant="body2" sx={{ fontWeight: 700, color: '#202124' }}>{emp.name}</Typography>
-                                <Typography variant="caption" sx={{ color: '#1a73e8', fontWeight: 600 }}>{emp.account}</Typography>
-                                <Typography variant="caption" sx={{ color: '#5f6368', ml: 1 }}>({emp.code})</Typography>
-                              </TableCell>
-
-                              <TableCell sx={{ borderRight: '1px solid #f0f0f0' }}>
-                                {emp.team_lead === 'Chưa xác nhận' ? (
-                                  <Chip label="⚠️ Chưa xác nhận" size="small" sx={{ height: 22, fontSize: '11px', fontWeight: 800, backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }} />
-                                ) : (
-                                  <Typography variant="body2" sx={{ fontWeight: 600, color: '#3c4043' }}>{emp.team_lead}</Typography>
-                                )}
-                                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.25, alignItems: 'center' }}>
-                                  {emp.region && <Chip label={emp.region} size="small" sx={{ height: 18, fontSize: '10px', backgroundColor: '#e8f0fe', color: '#1a73e8' }} />}
-                                  {emp.block && <Chip label={emp.block} size="small" sx={{ height: 18, fontSize: '10px', backgroundColor: '#f1f5f9', color: '#475569' }} />}
-                                </Box>
-                              </TableCell>
-
-                              {/* CHĂM SÓC KHÁCH HÀNG (4 cột nhỏ gọn tương ứng Khối Lượng Công Việc) */}
-                              {/* 1. % Công Nợ */}
-                              <TableCell align="center" sx={{ px: 1, py: 0.5, backgroundColor: '#fffbfe' }}>
-                                {emp.dv_ti_le_da_tt !== null && emp.dv_ti_le_da_tt !== undefined ? (
-                                  <Typography variant="body2" sx={{ fontWeight: 800, fontSize: '12px', color: emp.dv_ti_le_da_tt >= 95 ? '#2e7d32' : '#c62828' }}>
-                                    {emp.dv_ti_le_da_tt.toFixed(2)}%
-                                  </Typography>
-                                ) : (
-                                  <Typography variant="caption" sx={{ color: '#bdbdbd', fontSize: '11px' }}>—</Typography>
-                                )}
-                              </TableCell>
-
-                              {/* 2. RM Kế Hoạch Tháng */}
-                              <TableCell align="center" sx={{ px: 1, py: 0.5, backgroundColor: '#fffbfe' }}>
-                                <Typography variant="body2" sx={{ fontWeight: 700, color: '#e65100', fontSize: '12px' }}>
-                                  {emp.dv_roi_mang_kh !== null && emp.dv_roi_mang_kh !== undefined
-                                    ? emp.dv_roi_mang_kh.toLocaleString('vi-VN')
-                                    : <span style={{ color: '#bdbdbd', fontSize: '11px' }}>—</span>}
-                                </Typography>
-                              </TableCell>
-
-                              {/* 3. Rời Mạng Dự Kiến */}
-                              <TableCell align="center" sx={{ px: 1, py: 0.5, backgroundColor: '#fffbfe' }}>
-                                <Typography variant="body2" sx={{ fontWeight: 700, color: '#b71c1c', fontSize: '12px' }}>
-                                  {emp.dv_roi_mang_du_kien !== null && emp.dv_roi_mang_du_kien !== undefined
-                                    ? emp.dv_roi_mang_du_kien.toLocaleString('vi-VN')
-                                    : <span style={{ color: '#bdbdbd', fontSize: '11px' }}>—</span>}
-                                </Typography>
-                              </TableCell>
-
-                              {/* 4. % RM Hiện Tại */}
-                              <TableCell align="center" sx={{ px: 1, py: 0.5, backgroundColor: '#fffbfe', borderRight: '1px solid #f8bbd0' }}>
-                                {emp.dv_pct_rm_hien_tai !== null && emp.dv_pct_rm_hien_tai !== undefined ? (
-                                  <Typography variant="body2" sx={{ fontWeight: 800, fontSize: '12px', color: emp.dv_pct_rm_hien_tai <= 1.5 ? '#2e7d32' : '#c62828' }}>
-                                    {emp.dv_pct_rm_hien_tai.toFixed(2)}%
-                                  </Typography>
-                                ) : (
-                                  <Typography variant="caption" sx={{ color: '#bdbdbd', fontSize: '11px' }}>—</Typography>
-                                )}
-                              </TableCell>
-
-                              {/* Volume Columns */}
-                              <TableCell align="center">
-                                <Typography variant="body2" sx={{ fontWeight: 800, color: '#1a73e8' }}>
-                                  {emp.tk_kpi_volume || 0}
-                                </Typography>
-                                {(emp.tk_gt_72h || 0) > 0 ? (
-                                  <Box sx={{ mt: 0.3 }}>
-                                    <Chip
-                                      label={`>72H: ${emp.tk_gt_72h}`}
-                                      size="small"
-                                      sx={{ height: 18, fontSize: '10px', fontWeight: 800, backgroundColor: '#d32f2f', color: '#ffffff' }}
-                                    />
-                                  </Box>
-                                ) : (
-                                  <Typography variant="caption" sx={{ display: 'block', fontSize: '10.5px', color: '#9e9e9e', fontWeight: 500, mt: 0.2 }}>
-                                    {`>72H: 0`}
-                                  </Typography>
-                                )}
-                              </TableCell>
-
-                              <TableCell align="center">
-                                <Typography variant="body2" sx={{ fontWeight: 800, color: '#00897b' }}>
-                                  {emp.bt_volume || 0}
-                                </Typography>
-                                {(emp.bt_gt_24h || 0) > 0 ? (
-                                  <Box sx={{ mt: 0.3 }}>
-                                    <Chip
-                                      label={`>24H: ${emp.bt_gt_24h}`}
-                                      size="small"
-                                      sx={{ height: 18, fontSize: '10px', fontWeight: 800, backgroundColor: '#d32f2f', color: '#ffffff' }}
-                                    />
-                                  </Box>
-                                ) : (
-                                  <Typography variant="caption" sx={{ display: 'block', fontSize: '10.5px', color: '#9e9e9e', fontWeight: 500, mt: 0.2 }}>
-                                    {`>24H: 0`}
-                                  </Typography>
-                                )}
-                              </TableCell>
-
-                              <TableCell align="center" sx={{ borderRight: '1px solid #d2e3fc' }}>
-                                <Typography variant="body2" sx={{ fontWeight: 600, color: '#5f6368' }}>
-                                  {emp.tk_swap_volume || 0}
-                                </Typography>
-                              </TableCell>
-
-                              {/* Progress RT Columns */}
-                              <TableCell align="center">
-                                {emp.rt_tk_hours !== null && emp.rt_tk_hours !== undefined && !isNaN(emp.rt_tk_hours) && emp.rt_tk_hours > 72.0 ? (
-                                  <Chip
-                                    label={emp.rt_tk_fmt || '-'}
-                                    size="small"
-                                    sx={{ height: 22, fontSize: '11px', fontWeight: 900, backgroundColor: '#d32f2f', color: '#ffffff', boxShadow: '0 2px 4px rgba(211,47,47,0.4)' }}
-                                  />
-                                ) : (
-                                  <Typography variant="body2" sx={{
-                                    fontWeight: 800,
-                                    color: (emp.rt_tk_hours !== null && emp.rt_tk_hours !== undefined && !isNaN(emp.rt_tk_hours))
-                                      ? (emp.rt_tk_hours <= 18.0 ? '#2e7d32' : '#d32f2f')
-                                      : '#5f6368'
-                                  }}>
-                                    {emp.rt_tk_fmt || '-'}
-                                  </Typography>
-                                )}
-                              </TableCell>
-
-                              <TableCell align="center" sx={{ borderRight: '1px solid #ffe0b2' }}>
-                                {emp.rt_bt_hours !== null && emp.rt_bt_hours !== undefined && !isNaN(emp.rt_bt_hours) && emp.rt_bt_hours > 24.0 ? (
-                                  <Chip
-                                    label={emp.rt_bt_fmt || '-'}
-                                    size="small"
-                                    sx={{ height: 22, fontSize: '11px', fontWeight: 900, backgroundColor: '#d32f2f', color: '#ffffff', boxShadow: '0 2px 4px rgba(211,47,47,0.4)' }}
-                                  />
-                                ) : (
-                                  <Typography variant="body2" sx={{
-                                    fontWeight: 800,
-                                    color: (emp.rt_bt_hours !== null && emp.rt_bt_hours !== undefined && !isNaN(emp.rt_bt_hours))
-                                      ? (emp.rt_bt_hours <= 8.0 ? '#2e7d32' : '#d32f2f')
-                                      : '#5f6368'
-                                  }}>
-                                    {emp.rt_bt_fmt || '-'}
-                                  </Typography>
-                                )}
-                              </TableCell>
-
-                              {/* CLL30N Column */}
-                              <TableCell align="center" sx={{ backgroundColor: '#fcf8fe', borderRight: '1px solid #e1bee7' }}>
-                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.2 }}>
-                                  <Typography variant="body2" sx={{ fontWeight: 800, color: emp.cll30n_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
-                                    {emp.cll30n_pct || 0}%
-                                  </Typography>
-                                  <Typography variant="caption" sx={{ color: '#5f6368', fontSize: '10px' }}>
-                                    {emp.kh_cls_count > 0 ? `(${emp.cll30n_count || 0}/${emp.kh_cls_count} HĐ)` : `(${emp.cll30n_count || 0} HĐ)`}
-                                  </Typography>
-                                </Box>
-                              </TableCell>
-
-                              {/* CLPS 7N BT Column */}
-                              <TableCell align="center" sx={{ backgroundColor: '#fcf8fe', borderRight: '1px solid #e1bee7' }}>
-                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.2 }}>
-                                  <Typography variant="body2" sx={{ fontWeight: 800, color: emp.clps7n_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
-                                    {emp.clps7n_pct || 0}%
-                                  </Typography>
-                                  <Typography variant="caption" sx={{ color: '#5f6368', fontSize: '10px' }}>
-                                    {emp.kh_cls_count > 0 ? `(${emp.clps7n_count || 0}/${emp.kh_cls_count} HĐ)` : `(${emp.clps7n_count || 0} HĐ)`}
-                                  </Typography>
-                                </Box>
-                              </TableCell>
-
-                              {/* Total Đúng Hẹn Percentage Column */}
-                              <TableCell align="center" sx={{ backgroundColor: '#f6fbf7' }}>
-                                <Chip
-                                  label={emp.total_dung_hen_pct >= 97.2 ? `${emp.total_dung_hen_pct || 0}% Đạt` : `${emp.total_dung_hen_pct || 0}% Không Đạt`}
-                                  size="small"
-                                  color={emp.total_dung_hen_pct >= 97.2 ? 'success' : 'error'}
-                                  sx={{ fontWeight: 800, borderRadius: '12px' }}
-                                />
-                              </TableCell>
-
-                              <TableCell align="center" sx={{ color: emp.tk_dung_hen_pct >= 97.2 ? '#2e7d32' : '#d32f2f', fontWeight: 800 }}>
-                                {emp.tk_dung_hen_pct || 0}%
-                              </TableCell>
-                              <TableCell align="center" sx={{ color: emp.bt_dung_hen_pct >= 97.2 ? '#2e7d32' : '#d32f2f', fontWeight: 800, borderRight: '1px solid #ceead6' }}>
-                                {emp.bt_dung_hen_pct || 0}%
-                              </TableCell>
-
-                              <TableCell align="center">
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  onClick={() => handleOpenEmployee(emp)}
-                                  sx={{ borderRadius: '12px', textTransform: 'none', px: 1.5, fontSize: '11px', fontWeight: 700 }}
-                                >
-                                  Xem Chi Tiết
-                                </Button>
-                              </TableCell>
-                            </TableRow>
+                        <TableBody sx={{ '& tr:nth-of-type(even)': { backgroundColor: '#fafafa' } }}>
+                          {sortedEmployees.slice(0, visibleCount).map((emp, idx) => (
+                            <EmployeeRow key={emp.account} emp={emp} idx={idx} onOpen={handleOpenEmployee} />
                           ))}
                         </TableBody>
                       </Table>
                     </TableContainer>
-                  )}
-                </Paper>
+                    {visibleCount < sortedEmployees.length && (
+                      <Box sx={{ textAlign: 'center', py: 1.5 }}>
+                        <Button onClick={() => setVisibleCount(c => c + 100)}>
+                          Xem thêm ({sortedEmployees.length - visibleCount} nhân viên)
+                        </Button>
+                      </Box>
+                    )}
+                  </Box>
+                )}
+              </Paper>
 
-              </Box>
+            </Box>
   );
 }
+
+export default React.memo(KpisView);

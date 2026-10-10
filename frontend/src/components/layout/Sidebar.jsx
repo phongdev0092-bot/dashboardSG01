@@ -19,6 +19,7 @@ import {
   PendingActions as PendingActionsIcon,
   AdminPanelSettings as AdminPanelSettingsIcon,
   Refresh as RefreshIcon,
+  Widgets as WidgetsIcon,
 } from '@mui/icons-material';
 
 export default function Sidebar({
@@ -56,6 +57,12 @@ export default function Sidebar({
       sublabel: 'Tồn triển khai & bảo trì',
       icon: <PendingActionsIcon />,
       badge: totalBacklogSummary && totalBacklogSummary.total > 0 ? totalBacklogSummary.total : null
+    },
+    {
+      id: 'khac',
+      label: 'Khác',
+      sublabel: 'Gia cố modem & tiện ích',
+      icon: <WidgetsIcon />
     },
     {
       id: 'admin',

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   ThemeProvider,
   CssBaseline,
@@ -18,6 +18,7 @@ import KpisView from './components/kpi/KpisView';
 import LichTrucView from './components/lich_truc/LichTrucView';
 import TonTkBtView from './components/ton_tk_bt/TonTkBtView';
 import AdminView from './components/admin/AdminView';
+import KhacView from './components/khac/KhacView';
 import LichTrucChiTietView from './components/lich_truc/LichTrucChiTietView';
 import { EmployeeDrawer } from './components/drawers';
 import {
@@ -73,16 +74,27 @@ export default function App() {
     regions: [],
     partners: [],
     blocks: [],
+    phuongs: [],
     blocks_by_teamlead: {},
+    blocks_by_phuong: {},
     last_sync_time: null,
     is_syncing: false
   });
 
   const [startDate, setStartDate] = useState(() => localStorage.getItem('kpi_startDate') || initialDates.start);
   const [endDate, setEndDate] = useState(() => localStorage.getItem('kpi_endDate') || initialDates.end);
-  const [selectedTeamLead, setSelectedTeamLead] = useState(() => localStorage.getItem('kpi_teamLead') || '');
+  const loadMulti = (key) => {
+    try {
+      const raw = localStorage.getItem(key) || '';
+      if (!raw) return [];
+      if (raw.startsWith('[')) { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; }
+      return [raw];
+    } catch (e) { return []; }
+  };
+  const [selectedTeamLead, setSelectedTeamLead] = useState(() => loadMulti('kpi_teamLead'));
   const [selectedRegion, setSelectedRegion] = useState(() => localStorage.getItem('kpi_region') || '');
-  const [selectedBlock, setSelectedBlock] = useState(() => localStorage.getItem('kpi_block') || '');
+  const [selectedPhuong, setSelectedPhuong] = useState(() => loadMulti('kpi_phuong'));
+  const [selectedBlock, setSelectedBlock] = useState(() => loadMulti('kpi_block'));
   const [searchQuery, setSearchQuery] = useState('');
   const [datePreset, setDatePreset] = useState(() => localStorage.getItem('kpi_datePreset') || 'month_to_yesterday');
 
@@ -91,11 +103,12 @@ export default function App() {
       localStorage.setItem('kpi_startDate', startDate || '');
       localStorage.setItem('kpi_endDate', endDate || '');
       localStorage.setItem('kpi_datePreset', datePreset || '');
-      localStorage.setItem('kpi_teamLead', selectedTeamLead || '');
+      localStorage.setItem('kpi_teamLead', JSON.stringify(selectedTeamLead));
       localStorage.setItem('kpi_region', selectedRegion || '');
-      localStorage.setItem('kpi_block', selectedBlock || '');
+      localStorage.setItem('kpi_phuong', JSON.stringify(selectedPhuong));
+      localStorage.setItem('kpi_block', JSON.stringify(selectedBlock));
     } catch (e) {}
-  }, [startDate, endDate, datePreset, selectedTeamLead, selectedRegion, selectedBlock]);
+  }, [startDate, endDate, datePreset, selectedTeamLead, selectedRegion, selectedPhuong, selectedBlock]);
 
   // KPI Data State
   const [reportData, setReportData] = useState(null);
@@ -123,13 +136,36 @@ export default function App() {
     }
   };
 
-  // Computed: Danh sách Block phụ thuộc vào Đội trưởng đang chọn
-  // Nếu chọn Đội trưởng A thì chỉ hiện blocks của A, không hiện tất cả
-  const filteredBlocks = useMemo(() => {
-    if (!selectedTeamLead) return options.blocks || [];
+  // Computed: Danh sách Phường phụ thuộc vào Đội trưởng đang chọn
+  const filteredPhuongs = useMemo(() => {
+    const allPhuongs = options.phuongs || [];
+    if (!selectedTeamLead.length) return allPhuongs;
     const byTl = options.blocks_by_teamlead || {};
-    return byTl[selectedTeamLead] || options.blocks || [];
-  }, [selectedTeamLead, options.blocks, options.blocks_by_teamlead]);
+    const phSet = new Set();
+    selectedTeamLead.forEach((tl) => (byTl[tl] || []).forEach((b) => {
+      const ph = b.replace(/-\d+$/, '').trim();
+      if (ph) phSet.add(ph);
+    }));
+    return phSet.size ? Array.from(phSet).sort() : allPhuongs;
+  }, [selectedTeamLead, options.phuongs, options.blocks_by_teamlead]);
+
+  // Computed: Danh sách Block phụ thuộc vào Đội trưởng và Phường đang chọn
+  const filteredBlocks = useMemo(() => {
+    const byTl = options.blocks_by_teamlead || {};
+    const byPh = options.blocks_by_phuong || {};
+    let base = options.blocks || [];
+    if (selectedTeamLead.length) {
+      const tlSet = new Set();
+      selectedTeamLead.forEach((tl) => (byTl[tl] || []).forEach((b) => tlSet.add(b)));
+      base = tlSet.size ? Array.from(tlSet).sort() : base;
+    }
+    if (selectedPhuong.length) {
+      const phSet = new Set();
+      selectedPhuong.forEach((ph) => (byPh[ph] || []).forEach((b) => phSet.add(b)));
+      base = base.filter((b) => phSet.has(b));
+    }
+    return base;
+  }, [selectedTeamLead, selectedPhuong, options.blocks, options.blocks_by_teamlead, options.blocks_by_phuong]);
 
 
   // Sorting & Pagination
@@ -816,28 +852,30 @@ export default function App() {
     }
   };
 
-  // Fetch KPI Report (with auto-retry on transient error)
-  const fetchReport = async (retryCount = 0) => {
+  // Memoized query string from all KPI filters
+  const reportParams = useMemo(() => {
+    const sp = new URLSearchParams();
+    if (startDate) sp.append('start_date', startDate);
+    if (endDate) sp.append('end_date', endDate);
+    if (selectedTeamLead && selectedTeamLead.length) sp.append('team_lead', selectedTeamLead.join('|'));
+    if (selectedRegion) sp.append('region', selectedRegion);
+    if (selectedPhuong && selectedPhuong.length) sp.append('phuong', selectedPhuong.join('|'));
+    if (selectedBlock && selectedBlock.length) sp.append('block', selectedBlock.join('|'));
+    if (searchQuery && searchQuery.trim()) sp.append('search', searchQuery.trim());
+    return sp.toString();
+  }, [startDate, endDate, selectedTeamLead, selectedRegion, selectedPhuong, selectedBlock, searchQuery]);
+
+  // Fetch KPI Report (manual call e.g. after sync)
+  const fetchReport = async () => {
     setLoading(true);
     setError(null);
     try {
-      const params = {};
-      if (startDate) params.start_date = startDate;
-      if (endDate) params.end_date = endDate;
-      if (selectedTeamLead) params.team_lead = selectedTeamLead;
-      if (selectedRegion) params.region = selectedRegion;
-      if (selectedBlock) params.block = selectedBlock;
-      if (searchQuery) params.search = searchQuery;
-
-      const res = await axios.get(`${API_BASE}/report`, { params });
-      setReportData(res.data);
+      const res = await fetch(`/api/kpi/report?${reportParams}`);
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+      setReportData(data);
     } catch (err) {
       console.error("Failed to fetch report:", err);
-      if (retryCount < 2) {
-        // Auto-retry up to 2 times with 1.5s delay (handles cold-start / transient errors)
-        setTimeout(() => fetchReport(retryCount + 1), 1500);
-        return;
-      }
       setError("Không thể tải dữ liệu báo cáo KPI. Vui lòng thử lại!");
     } finally {
       setLoading(false);
@@ -1038,7 +1076,6 @@ export default function App() {
     fetchOptions();
     fetchTonTkBtDashboard();
     fetchAdminLoadingSlides();
-    fetchDichVu();
   }, []);
 
   // Smooth loading progress animation
@@ -1067,9 +1104,35 @@ export default function App() {
     return () => clearInterval(timer);
   }, [appInitializing]);
 
+  // 3. debounce bộ lọc + hủy request cũ
   useEffect(() => {
-    fetchReport();
-  }, [startDate, endDate, selectedTeamLead, selectedRegion, selectedBlock, searchQuery]);
+    const ctrl = new AbortController();
+    const t = setTimeout(async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/kpi/report?${reportParams}`, { signal: ctrl.signal });
+        if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+        const data = await res.json();
+        setReportData(data);
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          console.error("Failed to fetch report:", e);
+          setError(String(e));
+        }
+      } finally {
+        if (!ctrl.signal.aborted) {
+          setLoading(false);
+          appInitRef.current.reportDone = true;
+          _checkAppInitDone();
+        }
+      }
+    }, 400);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [reportParams]);
 
   useEffect(() => {
     if (currentNav === 'lich_truc') {
@@ -1183,15 +1246,16 @@ export default function App() {
     }
   };
 
-  // Sort Handler
-  const handleRequestSort = (property) => {
-    const isAsc = orderBy === property && order === 'asc';
-    setOrder(isAsc ? 'desc' : 'asc');
-    setOrderBy(property);
-  };
+  // Sort Handler (stable callback)
+  const handleRequestSort = useCallback((property) => {
+    setOrderBy((prevOrderBy) => {
+      setOrder((prevOrder) => (prevOrderBy === property && prevOrder === 'asc' ? 'desc' : 'asc'));
+      return property;
+    });
+  }, []);
 
-  // Employee Detail Drawer Open
-  const handleOpenEmployee = async (emp) => {
+  // Employee Detail Drawer Open (stable callback)
+  const handleOpenEmployee = useCallback(async (emp) => {
     setSelectedEmployee(emp);
     setDrawerOpen(true);
     setLoadingDetails(true);
@@ -1207,7 +1271,7 @@ export default function App() {
     } finally {
       setLoadingDetails(false);
     }
-  };
+  }, [startDate, endDate]);
 
   // Export to Excel for KPI
   const handleExportExcel = () => {
@@ -1220,6 +1284,8 @@ export default function App() {
       'Họ và Tên': emp.name,
       'Đội Trưởng': emp.team_lead,
       'Vùng': emp.region,
+      'Phường': emp.phuong || '',
+      'Block': emp.block || '',
       '% Công Nợ': emp.dv_ti_le_da_tt !== null && emp.dv_ti_le_da_tt !== undefined ? `${emp.dv_ti_le_da_tt.toFixed(2)}%` : '',
       'RM Kế Hoạch Tháng': emp.dv_roi_mang_kh ?? '',
       'Rời Mạng Dự Kiến': emp.dv_roi_mang_du_kien ?? '',
@@ -1228,11 +1294,13 @@ export default function App() {
       'TK Đúng Hẹn': emp.tk_dung_hen_1,
       'TK Trễ Hẹn': emp.tk_dung_hen_0,
       'Đúng Hẹn TK (%)': emp.tk_dung_hen_pct,
+      'RT-TK (h)': emp.rt_tk_hours ?? '',
       'RT-TK': emp.rt_tk_fmt,
       'Bảo Trì': emp.bt_volume,
       'BT Đúng Hẹn': emp.bt_dung_hen_1,
       'BT Trễ Hẹn': emp.bt_dung_hen_0,
       'Đúng Hẹn BT (%)': emp.bt_dung_hen_pct,
+      'RT-BT (h)': emp.rt_bt_hours ?? '',
       'RT-BT': emp.rt_bt_fmt,
       'Khối Lượng Swap': emp.tk_swap_volume,
       'TỔNG ĐÚNG HẸN (%)': emp.total_dung_hen_pct,
@@ -1243,6 +1311,50 @@ export default function App() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "KPI_Report");
     XLSX.writeFile(wb, `KPI_Report_SG01_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  // Export to Excel by Phường (1 sheet duy nhất, sắp xếp theo Phường rồi Block)
+  const handleExportExcelByPhuong = () => {
+    if (!reportData || !reportData.employees) return;
+    const emps = reportData.employees;
+    if (!emps.length) { alert('Không có dữ liệu để xuất!'); return; }
+
+    // Sắp xếp theo Phường -> Block -> Tên, tất cả trong 1 sheet
+    const sorted = [...emps].sort((a, b) => {
+      const phCmp = (a.phuong || '').localeCompare(b.phuong || '', 'vi');
+      if (phCmp !== 0) return phCmp;
+      const blkCmp = (a.block || '').localeCompare(b.block || '', 'vi');
+      if (blkCmp !== 0) return blkCmp;
+      return (a.name || '').localeCompare(b.name || '', 'vi');
+    });
+
+    const exportRows = sorted.map((emp, idx) => ({
+      'STT': idx + 1,
+      'Inside Account': emp.account,
+      'Mã NV': emp.code,
+      'Họ và Tên': emp.name,
+      'Đội Trưởng': emp.team_lead,
+      'Phường': emp.phuong || '',
+      'Block': emp.block || '',
+      'TK (KPI)': emp.tk_kpi_volume,
+      'TK Đúng Hẹn': emp.tk_dung_hen_1,
+      'TK Trễ Hẹn': emp.tk_dung_hen_0,
+      'TK Đúng Hẹn (%)': emp.tk_dung_hen_pct,
+      'RT-TK (h)': emp.rt_tk_hours ?? '',
+      'RT-TK': emp.rt_tk_fmt,
+      'Bảo Trì': emp.bt_volume,
+      'BT Đúng Hẹn': emp.bt_dung_hen_1,
+      'BT Trễ Hẹn': emp.bt_dung_hen_0,
+      'RT-BT (h)': emp.rt_bt_hours ?? '',
+      'RT-BT': emp.rt_bt_fmt,
+      'Swap': emp.tk_swap_volume,
+      'TỔNG ĐÚNG HẸN (%)': emp.total_dung_hen_pct,
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(exportRows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'KPI_Theo_Phuong');
+    XLSX.writeFile(wb, `KPI_Report_TheoPhuong_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   // Export CSV for Lịch Trực with Padded CodeStaff (8 digits)
@@ -1621,22 +1733,21 @@ export default function App() {
     reader.readAsText(file, 'utf-8');
   };
 
-  // Sort Employees for KPI
+  // Sort Employees for KPI (đẩy null xuống cuối, dùng localeCompare 'vi')
   const sortedEmployees = useMemo(() => {
-    if (!reportData || !reportData.employees) return [];
-    return [...reportData.employees].sort((a, b) => {
-      let aVal = a[orderBy];
-      let bVal = b[orderBy];
-      
-      if (aVal === null || aVal === undefined) aVal = -999999;
-      if (bVal === null || bVal === undefined) bVal = -999999;
-
-      if (typeof aVal === 'string') {
-        return order === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-      }
-      return order === 'asc' ? aVal - bVal : bVal - aVal;
+    const employees = reportData?.employees || [];
+    if (!employees.length) return [];
+    const arr = [...employees];
+    arr.sort((a, b) => {
+      const x = a[orderBy], y = b[orderBy];
+      if (x == null && y == null) return 0;
+      if (x == null) return 1;
+      if (y == null) return -1;
+      const c = typeof x === 'number' ? x - y : String(x).localeCompare(String(y), 'vi');
+      return order === 'asc' ? c : -c;
     });
-  }, [reportData, orderBy, order]);
+    return arr;
+  }, [reportData?.employees, orderBy, order]);
 
   const summary = reportData?.overall_summary || {};
   const meta = reportData?.metadata || {};
@@ -1752,6 +1863,7 @@ export default function App() {
             isMobile={isMobile}
             setMobileOpen={setMobileOpen}
             handleExportExcel={handleExportExcel}
+            handleExportExcelByPhuong={handleExportExcelByPhuong}
             tonTkBtData={tonTkBtData}
             tonSyncing={tonSyncing}
             handleSyncTonTkBt={handleSyncTonTkBt}
@@ -1781,6 +1893,8 @@ export default function App() {
                 setSelectedRegion={setSelectedRegion}
                 selectedTeamLead={selectedTeamLead}
                 setSelectedTeamLead={setSelectedTeamLead}
+                selectedPhuong={selectedPhuong}
+                setSelectedPhuong={setSelectedPhuong}
                 selectedBlock={selectedBlock}
                 setSelectedBlock={setSelectedBlock}
                 options={options}
@@ -1795,6 +1909,7 @@ export default function App() {
                 dichVuData={dichVuData}
                 dichVuLoading={dichVuLoading}
                 filteredBlocks={filteredBlocks}
+                filteredPhuongs={filteredPhuongs}
                 error={error}
               />
             )}
@@ -1895,7 +2010,12 @@ export default function App() {
             )}
 
             {/* ========================================================================= */}
-            {/* MAIN NAVIGATION TAB 4: TRANG QUẢN TRỊ (ADMIN PAGE) */}
+            {/* VIEW 4: TIỆN ÍCH & MỞ RỘNG (GIA CỐ MODEM) */}
+            {/* ========================================================================= */}
+            {currentNav === 'khac' && <KhacView />}
+
+            {/* ========================================================================= */}
+            {/* MAIN NAVIGATION TAB 5: TRANG QUẢN TRỊ (ADMIN PAGE) */}
             {/* ========================================================================= */}
             {currentNav === 'admin' && (
               <AdminView

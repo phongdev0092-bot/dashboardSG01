@@ -19,6 +19,7 @@ export default function TopHeader({
   isMobile,
   setMobileOpen,
   handleExportExcel,
+  handleExportExcelByPhuong,
   tonTkBtData,
   tonSyncing,
   handleSyncTonTkBt,
@@ -49,6 +50,7 @@ export default function TopHeader({
             {currentNav === 'kpis' && '📊 Dashboard KPIs Hiệu Suất Kỹ Thuật - Chi Nhánh SG01'}
             {currentNav === 'lich_truc' && '📅 Dashboard Lịch Trực Kỹ Thuật - Chi Nhánh SG01'}
             {currentNav === 'ton_tk_bt' && '⏳ Quản Lý Tồn Triển Khai & Bảo Trì - Chi Nhánh SG01'}
+            {currentNav === 'khac' && '🧩 Tiện Ích & Danh Mục Khác - Chi Nhánh SG01'}
             {currentNav === 'admin' && '⚙️ Trang Quản Trị Hệ Thống - Chi Nhánh SG01'}
           </Typography>
           <Typography variant="caption" sx={{ color: '#5f6368' }}>
@@ -59,16 +61,28 @@ export default function TopHeader({
 
       {/* Quick Header Actions */}
       {currentNav === 'kpis' && (
-        <Button
-          variant="contained"
-          color="success"
-          size="small"
-          startIcon={<DownloadIcon />}
-          onClick={handleExportExcel}
-          sx={{ borderRadius: '18px', textTransform: 'none', px: 2, fontWeight: 700, backgroundColor: '#0f9d58' }}
-        >
-          Xuất Excel
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button
+            variant="contained"
+            color="success"
+            size="small"
+            startIcon={<DownloadIcon />}
+            onClick={handleExportExcel}
+            sx={{ borderRadius: '18px', textTransform: 'none', px: 2, fontWeight: 700, backgroundColor: '#0f9d58' }}
+          >
+            Xuất Excel
+          </Button>
+          <Button
+            variant="outlined"
+            color="success"
+            size="small"
+            startIcon={<DownloadIcon />}
+            onClick={handleExportExcelByPhuong}
+            sx={{ borderRadius: '18px', textTransform: 'none', px: 2, fontWeight: 700, borderColor: '#0f9d58', color: '#0f9d58' }}
+          >
+            Xuất Theo Phường
+          </Button>
+        </Box>
       )}
 
       {currentNav === 'ton_tk_bt' && (
