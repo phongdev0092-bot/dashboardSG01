@@ -44,6 +44,7 @@ class KPIEngine:
         self.lt_df = pd.DataFrame()
         self.cll30n_df = pd.DataFrame()
         self.kh_cls_df = pd.DataFrame()
+        self.clpn7n_pairs = pd.DataFrame()
         self.emp_map = {}
         self.team_leads = []
         self.regions = []
@@ -130,6 +131,7 @@ class KPIEngine:
             pass
         # Load cleared flags AFTER DATABASE_URL is fully set, so Supabase fallback works
         self._enrich_dirty = True
+        self._clpn7n_dirty = True
         self._enrich_lock = threading.RLock()
         self._ds_miss_ts = {}
         self.data_version = 0
@@ -141,6 +143,7 @@ class KPIEngine:
 
     def _mark_data_changed(self):
         self._enrich_dirty = True
+        self._clpn7n_dirty = True
         self._ds_miss_ts.clear()
         self.data_version += 1
 
@@ -387,7 +390,9 @@ class KPIEngine:
     _NATIVE_UNDERSCORE_COLS = {
         'is_gsafe', 'is_swap', 'dung_hen', 'dt_complete', 'dt_created', 'sort_dt',
         'date_complete', 'rt_hours', 'tinh_trang_dau_vao', 'huong_xu_ly', 'so_lan_lap',
-        'is_clps_7n_bt', 'is_cll30n', 'tg_hoan_tat', 'ngay_hoan_tat'
+        'is_clps_7n_bt', 'is_cll30n', 'tg_hoan_tat', 'ngay_hoan_tat',
+        'is_clpn7n_tk', 'clpn7n_tk_complete', 'clpn7n_tk_nv', 'clpn7n_gap_days',
+        'clpn7n_bt_created', 'clpn7n_bt_nv'
     }
 
     def _load_df_from_supabase(self, table_name: str) -> pd.DataFrame:
@@ -408,11 +413,11 @@ class KPIEngine:
                         new_cols.append(c.replace('_', ' '))
                 df.columns = new_cols
                 # Normalize datetime columns to pandas datetime64 to avoid type mismatch
-                for dt_col in ['dt_complete', 'dt_created', 'sort_dt', 'date_complete']:
+                for dt_col in ['dt_complete', 'dt_created', 'sort_dt', 'date_complete', 'clpn7n_tk_complete', 'clpn7n_bt_created']:
                     if dt_col in df.columns:
                         df[dt_col] = pd.to_datetime(df[dt_col], errors='coerce')
                 # Normalize boolean columns
-                for bool_col in ['is_clps_7n_bt', 'is_cll30n', 'is_gsafe', 'is_swap']:
+                for bool_col in ['is_clps_7n_bt', 'is_cll30n', 'is_gsafe', 'is_swap', 'is_clpn7n_tk']:
                     if bool_col in df.columns:
                         df[bool_col] = df[bool_col].astype(str).str.strip().str.lower().isin(['true', '1', 't'])
                 return df
@@ -1204,8 +1209,6 @@ class KPIEngine:
             candidate_datasets.append(('tk', self.tk_df))
         if self.bt_df is not None and not self.bt_df.empty:
             candidate_datasets.append(('bt', self.bt_df))
-        if hasattr(self, 'kh_cls_df') and self.kh_cls_df is not None and not self.kh_cls_df.empty:
-            candidate_datasets.append(('kh_cls', self.kh_cls_df))
         if hasattr(self, 'cll30n_df') and self.cll30n_df is not None and not self.cll30n_df.empty:
             candidate_datasets.append(('cll30n', self.cll30n_df))
 
@@ -1357,12 +1360,14 @@ class KPIEngine:
             if self.hr_df is not None and not self.hr_df.empty:
                 self._process_metadata()
 
-        # 2 to 5. Datasets
+        # 2 to 4. Datasets
         self._load_ds('tk', 'tk_df', self._enrich_tk_df)
         self._load_ds('bt', 'bt_df', self._enrich_bt_df)
-        self._load_ds('kh_cls', 'kh_cls_df')
         self._load_ds('cll30n', 'cll30n_df')
         self._auto_enrich_hr_from_tickets()   # giờ chỉ chạy khi dữ liệu đổi
+        if getattr(self, '_clpn7n_dirty', True):
+            self._build_clpn7n_tk()
+            self._clpn7n_dirty = False
 
     def _prepaid_contracts(self):
         if getattr(self, '_pp_ver', None) != self.data_version:
@@ -1417,17 +1422,6 @@ class KPIEngine:
             if not bt.empty and 'date_complete' in bt.columns:
                 bt = bt[bt['date_complete'] <= e_d_end]
 
-        # Filter KH Co Cls by date range
-        cls = self.kh_cls_df.copy() if hasattr(self, 'kh_cls_df') and not self.kh_cls_df.empty else pd.DataFrame()
-
-        if not cls.empty and 'date_complete' in cls.columns:
-            cls['date_complete'] = pd.to_datetime(cls['date_complete'], errors='coerce')
-            if s_d:
-                cls = cls[cls['date_complete'] >= s_d]
-            if e_d:
-                e_d_end_cls = e_d + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-                cls = cls[cls['date_complete'] <= e_d_end_cls]
-
         # Get list of accounts matching metadata filters
         allowed_accounts = set(self.emp_map.keys())
 
@@ -1457,12 +1451,10 @@ class KPIEngine:
                 if s in k or s in v['name'].upper() or s in str(v['code']).upper()
             }
 
-        # Filter TK & BT & CLS by allowed accounts if any filter is set
+        # Filter TK & BT by allowed accounts if any filter is set
         if team_lead or region or partner or phuong or block or search:
             tk = tk[tk['Nhân viên'].isin(allowed_accounts)]
             bt = bt[bt['Nhân viên'].isin(allowed_accounts)]
-            if not cls.empty and 'Nhân viên' in cls.columns:
-                cls = cls[cls['Nhân viên'].isin(allowed_accounts)]
 
         # Filter CLL30N dataset by date range (derived from Column AC: Tg hoàn tất CLPS)
         cll = self.cll30n_df.copy() if hasattr(self, 'cll30n_df') and not self.cll30n_df.empty else pd.DataFrame()
@@ -1550,6 +1542,14 @@ class KPIEngine:
         else:
             bt_all = bt
 
+        if not bt_all.empty:
+            _hd_col = 'Số HĐ' if 'Số HĐ' in bt_all.columns else ('Số hợp đồng' if 'Số hợp đồng' in bt_all.columns else None)
+            _key = [c for c in (_hd_col, 'Nhân viên', 'date_complete') if c and c in bt_all.columns]
+            # Giữ cấu trúc cũ của kh_cls: 1 KH (HĐ + NV + ngày hoàn tất) = 1 dòng
+            cls = bt_all.drop_duplicates(subset=_key) if len(_key) == 3 else bt_all
+        else:
+            cls = bt_all
+
         tk_1 = int((tk_valid['dung_hen'] == 1).sum())
         tk_0 = int((tk_valid['dung_hen'] == 0).sum())
         tk_tot = tk_1 + tk_0
@@ -1585,17 +1585,39 @@ class KPIEngine:
         cll30n_pct = round((cll_tot / cls_tot * 100), 2) if cls_tot > 0 else 0.0
         clps7n_pct = round((clps7n_tot / cls_tot * 100), 2) if cls_tot > 0 else 0.0
 
+        # CLPN 7N TK (Bảo trì phát sinh trong 7 ngày sau Triển khai)
+        # Bảng cặp self.clpn7n_pairs lọc theo ngày hoàn tất của PTC (tk_complete)
+        pairs = getattr(self, 'clpn7n_pairs', pd.DataFrame())
+        if pairs is not None and not pairs.empty:
+            pp = pairs.copy()
+            if s_d:
+                pp = pp[pp['tk_complete'] >= s_d]
+            if e_d:
+                e_d_end_tk = e_d + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                pp = pp[pp['tk_complete'] <= e_d_end_tk]
+            if team_lead or region or partner or phuong or block or search:
+                pp = pp[pp['tk_nv'].isin(allowed_accounts)]
+            clpn7n_tk_tot = int(pp['tk_pos'].nunique())
+            clpn_by_nv = pp.drop_duplicates('tk_pos').groupby('tk_nv').size().to_dict()
+        else:
+            clpn7n_tk_tot = 0
+            clpn_by_nv = {}
+
+        clpn7n_tk_pct = round((clpn7n_tk_tot / tk_tot * 100), 2) if tk_tot > 0 else 0.0
+
         # Status rules:
         # 1. Đúng Hẹn >= 97.2% -> PASS
         # 2. RT-TK <= 18H -> PASS
         # 3. RT-BT <= 8H -> PASS
         # 4. CLL30N <= 7% -> PASS
         # 5. CLPS 7N BT <= 3% -> PASS
+        # 6. CLPN 7N TK <= 3% -> PASS
         dung_hen_status = 'PASS' if total_dh_pct >= 97.2 else 'FAIL'
         rt_tk_status = 'PASS' if (rt_tk_avg is None or rt_tk_avg <= 18.0) else 'FAIL'
         rt_bt_status = 'PASS' if (rt_bt_avg is None or rt_bt_avg <= 8.0) else 'FAIL'
         cll30n_status = 'PASS' if cll30n_pct <= 7.0 else 'FAIL'
         clps7n_status = 'PASS' if clps7n_pct <= 3.0 else 'FAIL'
+        clpn7n_tk_status = 'PASS' if clpn7n_tk_pct <= 3.0 else 'FAIL'
 
         # Swap breakdown by transaction type
         _loai_col = 'Loại giao dịch' if 'Loại giao dịch' in tk_swap.columns else None
@@ -1631,6 +1653,7 @@ class KPIEngine:
                 'rt_avg': rt_s.mean() if not rt_s.dropna().empty else None,
                 'gt_24h': int((rt_s > 24.0).sum()),
                 'gt_72h': int((rt_s > 72.0).sum()),
+                'clpn7n_count': int(clpn_by_nv.get(acc, 0)),
                 'total': len(group)
             }
 
@@ -1709,12 +1732,17 @@ class KPIEngine:
             e_cll30n_pct = round((e_cll_count / e_denom * 100), 2) if e_denom > 0 else 0.0
             e_clps7n_pct = round((e_clps7n_count / e_denom * 100), 2) if e_denom > 0 else 0.0
 
+            # Employee CLPN 7N TK calculation
+            e_clpn7n_tk_count = int(e_tk_v.get('clpn7n_count', 0))
+            e_clpn7n_tk_pct = round((e_clpn7n_tk_count / e_tk_tot * 100), 2) if e_tk_tot > 0 else 0.0
+
             # Employee evaluation rule statuses
             e_dh_status = 'PASS' if e_tot_dh >= 97.2 else 'FAIL'
             e_rt_tk_status = 'PASS' if (rt_tk_val is not None and not pd.isna(rt_tk_val) and rt_tk_val <= 18.0) else ('FAIL' if (rt_tk_val is not None and not pd.isna(rt_tk_val)) else 'NONE')
             e_rt_bt_status = 'PASS' if (rt_bt_val is not None and not pd.isna(rt_bt_val) and rt_bt_val <= 8.0) else ('FAIL' if (rt_bt_val is not None and not pd.isna(rt_bt_val)) else 'NONE')
             e_cll30n_status = 'PASS' if e_cll30n_pct <= 7.0 else 'FAIL'
             e_clps7n_status = 'PASS' if e_clps7n_pct <= 3.0 else 'FAIL'
+            e_clpn7n_tk_status = 'PASS' if e_clpn7n_tk_pct <= 3.0 else 'FAIL'
 
             e_tk_gt_24h = int(e_tk_v.get('gt_24h', 0))
             e_tk_gt_72h = int(e_tk_v.get('gt_72h', 0))
@@ -1769,6 +1797,11 @@ class KPIEngine:
                 'clps7n_pct': e_clps7n_pct,
                 'cll30n_status': e_cll30n_status,
                 'clps7n_status': e_clps7n_status,
+
+                # CLPN 7N TK KPIs
+                'clpn7n_tk_count': e_clpn7n_tk_count,
+                'clpn7n_tk_pct': e_clpn7n_tk_pct,
+                'clpn7n_tk_status': e_clpn7n_tk_status,
 
                 # Overall Total
                 'total_dung_hen_pct': e_tot_dh,
@@ -1847,6 +1880,11 @@ class KPIEngine:
                 'cll30n_status': cll30n_status,
                 'clps7n_status': clps7n_status,
 
+                # CLPN 7N TK
+                'clpn7n_tk_count': clpn7n_tk_tot,
+                'clpn7n_tk_pct': clpn7n_tk_pct,
+                'clpn7n_tk_status': clpn7n_tk_status,
+
                 # Total
                 'total_dung_hen_pct': total_dh_pct,
                 'dung_hen_status': dung_hen_status,
@@ -1858,6 +1896,10 @@ class KPIEngine:
         }
 
     def get_employee_details(self, account: str, start_date=None, end_date=None):
+        self._ensure_kpi_datasets_loaded()
+        if getattr(self, '_clpn7n_dirty', True) or getattr(self, 'clpn7n_pairs', None) is None:
+            self._build_clpn7n_tk()
+            self._clpn7n_dirty = False
         acc = account.strip().upper()
         meta = self.emp_map.get(acc, {'account': acc, 'name': acc})
 
@@ -1951,12 +1993,49 @@ class KPIEngine:
                     'is_clps_7n_bt': bool(row.get('is_clps_7n_bt', False))
                 })
 
+        # CLPN 7N TK tickets list
+        # Hiển thị nguyên các dòng cặp theo ngày hoàn tất PTC của nhân viên này
+        clpn7n_tickets = []
+        pairs = getattr(self, 'clpn7n_pairs', pd.DataFrame())
+        if pairs is not None and not pairs.empty and hasattr(self, 'bt_df') and self.bt_df is not None and not self.bt_df.empty:
+            acc_clean = str(acc).strip().upper()
+            pp = pairs[pairs['tk_nv'].astype(str).str.strip().str.upper() == acc_clean].copy()
+            if s_d:
+                pp = pp[pp['tk_complete'] >= s_d]
+            if e_d:
+                e_d_end = e_d + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                pp = pp[pp['tk_complete'] <= e_d_end]
+
+            bt = self.bt_df
+            tk = self.tk_df
+            for _, r in pp.iterrows():
+                b_pos = int(r['bt_pos'])
+                t_pos = int(r['tk_pos'])
+                b_rec = bt.iloc[b_pos] if b_pos < len(bt) else {}
+                t_rec = tk.iloc[t_pos] if (tk is not None and t_pos < len(tk)) else {}
+                clpn7n_tickets.append({
+                    'so_hd': str(r.get('hd') or b_rec.get('Số HĐ') or b_rec.get('Số hợp đồng') or ''),
+                    'khach_hang': str(b_rec.get('Khách hàng') or b_rec.get('Tên Khách Hàng') or b_rec.get('Tên khách hàng') or (t_rec.get('Tên khách hàng') if hasattr(t_rec, 'get') else '') or ''),
+                    'nv_bao_tri': str(b_rec.get('Nhân viên') or '') if hasattr(b_rec, 'get') else '',
+                    'tg_tao': str(b_rec.get('TG Tạo') or '') if hasattr(b_rec, 'get') else '',
+                    'tg_hoan_tat': str(b_rec.get('TG Hoàn Tất') or '') if hasattr(b_rec, 'get') else '',
+                    'tinh_trang': str(b_rec.get('Tình trạng') or '-') if hasattr(b_rec, 'get') else '-',
+                    'ly_do': str(b_rec.get('Lý do') or '-') if hasattr(b_rec, 'get') else '-',
+                    'mo_ta': str(b_rec.get('Mô tả nguyên nhân') or '-') if hasattr(b_rec, 'get') else '-',
+                    'nguon': str(b_rec.get('Nguồn') or '-') if hasattr(b_rec, 'get') else '-',
+                    'tk_hoan_tat': str(r.get('tk_complete') or ''),
+                    'nv_trien_khai': str(r.get('tk_nv') or ''),
+                    'so_ngay': round(float(r.get('gap_days')), 2) if pd.notna(r.get('gap_days')) else None
+                })
+
         return {
             'employee_info': meta,
             'tk_tickets': tk_list,
             'bt_tickets': bt_list,
             'cll_tickets': cll_list,
-            'clps7n_tickets': [t for t in cll_list if t.get('is_clps_7n_bt')]
+            'clps7n_tickets': [t for t in cll_list if t.get('is_clps_7n_bt')],
+            'clpn7n_tickets': clpn7n_tickets,
+            'clpn7n_tk_tickets': clpn7n_tickets
         }
 
     # =========================================================================
@@ -3623,7 +3702,101 @@ class KPIEngine:
         df['rt_hours'] = np.where(rt_sec_bt >= 0, rt_sec_bt / 3600.0, np.nan)
         return df
 
-    def import_database_dataset(self, file_bytes: bytes, filename: str, target: str = "kh_cls", rule: str = "MERGE_NO_OVERWRITE"):
+    def _build_clpn7n_tk(self):
+        tk, bt = getattr(self, 'tk_df', None), getattr(self, 'bt_df', None)
+        if tk is None or tk.empty or bt is None or bt.empty:
+            self.clpn7n_pairs = pd.DataFrame()
+            return
+        key = lambda s: s.astype(str).str.strip().str.upper()
+        hd_tk = 'Số hợp đồng' if 'Số hợp đồng' in tk.columns else ('Số HĐ' if 'Số HĐ' in tk.columns else None)
+        hd_bt = 'Số HĐ' if 'Số HĐ' in bt.columns else ('Số hợp đồng' if 'Số hợp đồng' in bt.columns else None)
+        if not hd_tk or not hd_bt or 'dt_complete' not in tk.columns or 'dt_created' not in bt.columns:
+            self.clpn7n_pairs = pd.DataFrame()
+            return
+
+        def _is_prepaid_wifi(frame):
+            for cname in ['Gói dịch vụ', 'goi_dich_vu', 'Gói dịch vụ ']:
+                if cname in frame.columns:
+                    return frame[cname].astype(str).str.strip().str.lower().str.replace(r'\s+', ' ', regex=True) == 'prepaid wifi'
+            return pd.Series(False, index=frame.index)
+
+        is_gsafe = tk['is_gsafe'] if 'is_gsafe' in tk.columns else pd.Series(False, index=tk.index)
+        is_swap = tk['is_swap'] if 'is_swap' in tk.columns else pd.Series(False, index=tk.index)
+        is_pp = _is_prepaid_wifi(tk)
+        valid_mask = (~is_gsafe) & (~is_swap) & (~is_pp)
+
+        t = pd.DataFrame({
+            'hd': key(tk[hd_tk]),
+            'tk_complete': pd.to_datetime(tk['dt_complete'], errors='coerce'),
+            'tk_nv': tk['Nhân viên'].values if 'Nhân viên' in tk.columns else [''] * len(tk),
+            'tk_pos': np.arange(len(tk), dtype=np.int64),
+        }).dropna(subset=['tk_complete'])
+        t = t[valid_mask.to_numpy()[t['tk_pos'].to_numpy()]]
+        t = t.drop_duplicates(['hd', 'tk_complete', 'tk_nv'])
+
+        b = pd.DataFrame({
+            'hd': key(bt[hd_bt]),
+            'bt_created': pd.to_datetime(bt['dt_created'], errors='coerce'),
+            'bt_pos': np.arange(len(bt), dtype=np.int64),
+        }).dropna(subset=['bt_created'])
+
+        p = t.merge(b, on='hd', how='inner')
+        p['gap_days'] = (p['bt_created'] - p['tk_complete']).dt.total_seconds() / 86400
+        self.clpn7n_pairs = p[(p['gap_days'] >= 0) & (p['gap_days'] <= 7.0)].copy()
+
+    def get_clpn7n_tk_list(self, start_date=None, end_date=None, team_lead=None):
+        self._ensure_kpi_datasets_loaded()
+        if getattr(self, '_clpn7n_dirty', True) or getattr(self, 'clpn7n_pairs', None) is None:
+            self._build_clpn7n_tk()
+            self._clpn7n_dirty = False
+        pairs = getattr(self, 'clpn7n_pairs', pd.DataFrame())
+        if pairs is None or pairs.empty or self.bt_df is None or self.bt_df.empty:
+            return []
+        pp = pairs.copy()
+        s_d = self._parse_date_param(start_date)
+        e_d = self._parse_date_param(end_date)
+        if s_d:
+            pp = pp[pp['tk_complete'] >= s_d]
+        if e_d:
+            e_d_end = e_d + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            pp = pp[pp['tk_complete'] <= e_d_end]
+        if team_lead:
+            tl_set = {x.strip() for x in str(team_lead).split('|') if x.strip()}
+            allowed = {acc for acc, meta in self.emp_map.items() if meta.get('team_lead') in tl_set}
+            pp = pp[pp['tk_nv'].isin(allowed)]
+
+        bt = self.bt_df
+        tk = self.tk_df
+        res = []
+        for _, row in pp.iterrows():
+            b_pos = int(row['bt_pos'])
+            t_pos = int(row['tk_pos'])
+            b_rec = bt.iloc[b_pos] if b_pos < len(bt) else {}
+            t_rec = tk.iloc[t_pos] if t_pos < len(tk) else {}
+            nv_tk = row.get('tk_nv') or ''
+            meta = self.emp_map.get(str(nv_tk).strip().upper(), {})
+            res.append({
+                'so_hd': str(row.get('hd') or b_rec.get('Số HĐ') or b_rec.get('Số hợp đồng') or ''),
+                'khach_hang': str(b_rec.get('Khách hàng') or b_rec.get('Tên Khách Hàng') or b_rec.get('Tên khách hàng') or t_rec.get('Tên khách hàng') or ''),
+                'nv_trien_khai': nv_tk,
+                'ten_nv_tk': meta.get('name', nv_tk),
+                'team_lead': meta.get('team_lead', '-'),
+                'tk_hoan_tat': str(row.get('tk_complete') or ''),
+                'nv_bao_tri': str(b_rec.get('Nhân viên') or ''),
+                'tg_tao_bt': str(b_rec.get('TG Tạo') or ''),
+                'tg_hoan_tat_bt': str(b_rec.get('TG Hoàn Tất') or ''),
+                'so_ngay': round(float(row.get('gap_days')), 2) if pd.notna(row.get('gap_days')) else None,
+                'tinh_trang': str(b_rec.get('Tình trạng') or '-'),
+                'ly_do': str(b_rec.get('Lý do') or '-'),
+                'mo_ta': str(b_rec.get('Mô tả nguyên nhân') or '-'),
+                'nguon': str(b_rec.get('Nguồn') or '-')
+            })
+        return res
+
+    def import_database_dataset(self, file_bytes: bytes, filename: str, target: str = "cll30n", rule: str = "MERGE_NO_OVERWRITE"):
+        if target == "kh_cls":
+            return {"ok": False, "error": "KH Có Cls không còn import; hệ thống tính từ Data Bảo Trì."}
+
         try:
             df_incoming = self._read_any_dataframe(file_bytes, filename)
         except Exception as e:

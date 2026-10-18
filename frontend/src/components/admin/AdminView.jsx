@@ -755,15 +755,6 @@ export default function AdminView({
                       <Grid container spacing={2}>
                         {[
                           {
-                            id: 'kh_cls',
-                            title: 'KH Có Cls',
-                            sheetInfo: 'Kho Data Base: kh_cls',
-                            count: dbCounts.kh_cls || 0,
-                            color: '#2563eb',
-                            bg: '#eff6ff',
-                            desc: 'Danh sách KH có chỉ số chất lượng / CLS'
-                          },
-                          {
                             id: 'cll30n',
                             title: 'CLL30N (CLL30)',
                             sheetInfo: 'Kho Data Base: cll30n',

@@ -11,22 +11,34 @@ from fastapi import FastAPI, Query, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, Response
-import orjson
-from cachetools import TTLCache
-from fastapi.middleware.gzip import GZipMiddleware
+try:
+    import orjson
+    class FastJSON(Response):
+        media_type = "application/json"
+        def render(self, content):
+            return orjson.dumps(content, default=str,
+                                option=orjson.OPT_SERIALIZE_NUMPY | orjson.OPT_NON_STR_KEYS)
+    default_response_cls = FastJSON
+except Exception:
+    default_response_cls = JSONResponse
 
-class FastJSON(Response):
-    media_type = "application/json"
-    def render(self, content):
-        return orjson.dumps(content, default=str,
-                            option=orjson.OPT_SERIALIZE_NUMPY | orjson.OPT_NON_STR_KEYS)
+try:
+    from cachetools import TTLCache
+except Exception:
+    class TTLCache(dict):
+        def __init__(self, maxsize=200, ttl=300):
+            super().__init__()
+            self.maxsize = maxsize
+            self.ttl = ttl
+
+from fastapi.middleware.gzip import GZipMiddleware
 
 # Ensure sys.path includes backend directory for internal imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from engine import KPIEngine
 
-app = FastAPI(title="Ultra-Fast HR KPI System", version="1.0.0", default_response_class=FastJSON)
+app = FastAPI(title="Ultra-Fast HR KPI System", version="1.0.0", default_response_class=default_response_cls)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # Enable CORS for development
@@ -112,10 +124,19 @@ def _get_dv_map(ttl=300):
             _dv_cache["ts"] = time.time() - ttl + 30   # lỗi: dùng bản cũ, thử lại sau 30s
         return _dv_cache["map"]
 
-threading.Thread(target=_get_dv_map, daemon=True).start()   # làm nóng lúc khởi động
+if not os.environ.get("VERCEL") and not os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    threading.Thread(target=_get_dv_map, daemon=True).start()   # làm nóng lúc khởi động (chỉ trên server persistent)
 
 _report_cache = TTLCache(maxsize=200, ttl=300)
 _cache_lock = threading.Lock()
+
+@app.get("/api/health")
+def api_health():
+    return {
+        "status": "ok",
+        "vercel": bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")),
+        "time": time.time()
+    }
 
 @app.get("/api/kpi/options")
 def get_filter_options():
@@ -212,6 +233,14 @@ def get_employee_details(
 ):
     return engine.get_employee_details(account, start_date=start_date, end_date=end_date)
 
+@app.get("/api/kpi/clpn7n-tk")
+def get_clpn7n_tk_list(
+    start_date: Optional[str] = Query(default=None),
+    end_date: Optional[str] = Query(default=None),
+    team_lead: Optional[str] = Query(default=None)
+):
+    return engine.get_clpn7n_tk_list(start_date=start_date, end_date=end_date, team_lead=team_lead)
+
 @app.get("/api/kpi/ton-tk-bt/dashboard")
 def get_ton_tk_bt_dashboard(force: bool = Query(default=False)):
     return engine.get_ton_tk_bt_dashboard(force=force)
@@ -274,7 +303,7 @@ def get_debug_data_status():
 @app.post("/api/admin/import-dataset")
 async def import_database_dataset(
     file: UploadFile = File(...),
-    target: Optional[str] = Form("kh_cls"),
+    target: Optional[str] = Form("cll30n"),
     rule: Optional[str] = Form("MERGE_NO_OVERWRITE")
 ):
     contents = await file.read()

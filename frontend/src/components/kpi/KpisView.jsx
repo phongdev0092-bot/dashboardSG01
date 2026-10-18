@@ -222,6 +222,18 @@ const EmployeeRow = memo(function EmployeeRow({ emp, idx, onOpen }) {
         </Box>
       </TableCell>
 
+      {/* CLPN 7N TK Column */}
+      <TableCell align="center" sx={{ backgroundColor: '#fcf8fe', borderRight: '1px solid #e1bee7' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.2 }}>
+          <Typography variant="body2" sx={{ fontWeight: 800, color: emp.clpn7n_tk_status === 'PASS' ? '#2e7d32' : '#d32f2f' }}>
+            {emp.clpn7n_tk_pct || 0}%
+          </Typography>
+          <Typography variant="caption" sx={{ color: '#5f6368', fontSize: '10px' }}>
+            {emp.tk_kpi_volume > 0 ? `(${emp.clpn7n_tk_count || 0}/${emp.tk_kpi_volume} HĐ)` : `(${emp.clpn7n_tk_count || 0} HĐ)`}
+          </Typography>
+        </Box>
+      </TableCell>
+
       {/* Total Đúng Hẹn Percentage Column */}
       <TableCell align="center" sx={{ backgroundColor: '#f6fbf7' }}>
         <Chip
@@ -259,6 +271,7 @@ function KpisView({
   fetchDichVu,
   setBtDetailModalOpen,
   setClps7nDetailModalOpen,
+  setClpn7nTkDetailModalOpen,
   datePreset,
   setDatePreset,
   handleDatePreset,
@@ -335,7 +348,7 @@ function KpisView({
 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 
                 {/* OVERALL KPI METRIC CARDS ROW - FULL WIDTH GRID */}
-                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(7, 1fr)' }, gap: 2, width: '100%' }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)', lg: 'repeat(8, 1fr)' }, gap: 2, width: '100%' }}>
                   
                   {/* Card 1: Triển khai */}
                   <Card elevation={0} sx={{ borderRadius: 3, border: '1px solid #d2e3fc', borderLeft: '6px solid #1a73e8', backgroundColor: '#ffffff', height: '100%' }}>
@@ -566,7 +579,48 @@ function KpisView({
                     </CardContent>
                   </Card>
 
-                  {/* Card 6: TỔNG ĐÚNG HẸN */}
+                  {/* Card 7: CLPN 7N TK */}
+                  <Card elevation={0} sx={{ borderRadius: 3, border: `1px solid ${summary.clpn7n_tk_status === 'PASS' ? '#e1bee7' : '#ffcdd2'}`, borderLeft: `6px solid ${summary.clpn7n_tk_status === 'PASS' ? '#7b1fa2' : '#d32f2f'}`, backgroundColor: '#ffffff', height: '100%' }}>
+                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                        <Typography variant="overline" sx={{ color: '#7b1fa2', fontWeight: 800 }}>
+                          {"CLPN 7N TK (<= 3%)"}
+                        </Typography>
+                        <TrendingUpIcon sx={{ color: summary.clpn7n_tk_status === 'PASS' ? '#7b1fa2' : '#d32f2f', fontSize: 22 }} />
+                      </Box>
+                      <Typography variant="h4" sx={{ fontWeight: 800, color: summary.clpn7n_tk_status === 'PASS' ? '#7b1fa2' : '#d32f2f', letterSpacing: '-1px' }}>
+                        {`${summary.clpn7n_tk_pct || 0}%`}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#5f6368', fontWeight: 500, display: 'block', mt: 0.2 }}>
+                        {`HĐ: ${summary.clpn7n_tk_count || 0} / ${summary.tk_volume_kpi || 0}`}
+                      </Typography>
+                      <Box sx={{ mt: 0.8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <Chip
+                          label={summary.clpn7n_tk_status === 'PASS' ? "ĐẠT (<= 3%)" : "KHÔNG ĐẠT (> 3%)"}
+                          size="small"
+                          color={summary.clpn7n_tk_status === 'PASS' ? 'success' : 'error'}
+                          sx={{ fontWeight: 800, fontSize: '11px', height: 22 }}
+                        />
+                        <Button
+                          size="small"
+                          startIcon={<InfoIcon sx={{ fontSize: '14px !important' }} />}
+                          onClick={() => setClpn7nTkDetailModalOpen && setClpn7nTkDetailModalOpen(true)}
+                          sx={{
+                            p: 0,
+                            textTransform: 'none',
+                            fontWeight: 700,
+                            color: '#7b1fa2',
+                            fontSize: '11px',
+                            '&:hover': { backgroundColor: 'transparent', textDecoration: 'underline' }
+                          }}
+                        >
+                          Chi tiết
+                        </Button>
+                      </Box>
+                    </CardContent>
+                  </Card>
+
+                  {/* Card 8: TỔNG ĐÚNG HẸN */}
                   <Card elevation={0} sx={{ borderRadius: 3, border: `1px solid ${summary.dung_hen_status === 'PASS' ? '#c8e6c9' : '#ffcdd2'}`, borderLeft: `6px solid ${summary.dung_hen_status === 'PASS' ? '#2e7d32' : '#d32f2f'}`, backgroundColor: '#ffffff', height: '100%' }}>
                     <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
@@ -1078,7 +1132,7 @@ function KpisView({
                               TIẾN ĐỘ (RT)
                             </TableCell>
 
-                            <TableCell colSpan={2} align="center" sx={{ top: 0, zIndex: 11, height: '38px', py: '6px', boxSizing: 'border-box', fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7', borderBottom: '1px solid #e1bee7', fontSize: '13px' }}>
+                            <TableCell colSpan={3} align="center" sx={{ top: 0, zIndex: 11, height: '38px', py: '6px', boxSizing: 'border-box', fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7', borderBottom: '1px solid #e1bee7', fontSize: '13px' }}>
                               CHẤT LƯỢNG (CLL)
                             </TableCell>
 
@@ -1200,6 +1254,16 @@ function KpisView({
                                 onClick={() => handleRequestSort('clps7n_pct')}
                               >
                                 {"CLPS 7N BT (%) (<=3%)"}
+                              </TableSortLabel>
+                            </TableCell>
+
+                            <TableCell align="center" sx={{ top: '38px !important', zIndex: 11, borderBottom: '2px solid #cbd5e1', fontWeight: 800, backgroundColor: '#f3e5f5', color: '#7b1fa2', borderRight: '1px solid #e1bee7' }}>
+                              <TableSortLabel
+                                active={orderBy === 'clpn7n_tk_pct'}
+                                direction={orderBy === 'clpn7n_tk_pct' ? order : 'asc'}
+                                onClick={() => handleRequestSort('clpn7n_tk_pct')}
+                              >
+                                {"CLPN 7N TK (%) (<=3%)"}
                               </TableSortLabel>
                             </TableCell>
 

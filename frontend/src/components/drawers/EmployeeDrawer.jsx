@@ -59,6 +59,7 @@ export const EmployeeDrawer = ({
             <Tab label={`Bảo Trì (BT) (${empDetails?.bt_tickets?.length || 0})`} />
             <Tab label={`CLL30N (Ca Lặp) (${empDetails?.cll_tickets?.length || 0})`} />
             <Tab label={`CLPS 7N BT (${empDetails?.clps7n_tickets?.length || empDetails?.cll_tickets?.filter(t => t.is_clps_7n_bt)?.length || 0})`} />
+            <Tab label={`CLPN 7N TK (${empDetails?.clpn7n_tickets?.length || 0})`} />
           </Tabs>
 
           {loadingDetails ? (
@@ -228,7 +229,7 @@ export const EmployeeDrawer = ({
                 </TableBody>
               </Table>
             </TableContainer>
-          ) : (
+          ) : activeTab === 3 ? (
             <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e0e0e0', borderRadius: 2 }}>
               <Table size="small">
                 <TableHead sx={{ backgroundColor: '#f8f9fa' }}>
@@ -263,6 +264,57 @@ export const EmployeeDrawer = ({
                     <TableRow>
                       <TableCell colSpan={6} align="center" sx={{ py: 3, color: '#5f6368' }}>
                         Không có phiếu CLPS 7N BT trong khoảng thời gian này
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          ) : (
+            <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #e0e0e0', borderRadius: 2 }}>
+              <Table size="small">
+                <TableHead sx={{ backgroundColor: '#f8f9fa' }}>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 700, width: 40 }}>STT</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Số HĐ</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Khách Hàng</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Hoàn Tất TK</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>TG Tạo BT</TableCell>
+                    <TableCell align="center" sx={{ fontWeight: 700 }}>Cách (Ngày)</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>KTV Bảo Trì</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }}>Lý Do / Nguyên Nhân</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {empDetails?.clpn7n_tickets?.map((t, idx) => (
+                    <TableRow key={idx}>
+                      <TableCell sx={{ color: '#5f6368' }}>{idx + 1}</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>
+                        {t.so_hd}
+                        <Chip label="CLPN 7N TK" size="small" sx={{ ml: 1, height: 18, fontSize: '10px', backgroundColor: '#f3e5f5', color: '#7b1fa2', fontWeight: 700 }} />
+                      </TableCell>
+                      <TableCell>{t.khach_hang || '-'}</TableCell>
+                      <TableCell sx={{ whiteSpace: 'nowrap' }}>{t.tk_hoan_tat || '-'}</TableCell>
+                      <TableCell sx={{ whiteSpace: 'nowrap' }}>{t.tg_tao || '-'}</TableCell>
+                      <TableCell align="center">
+                        <Chip
+                          label={t.so_ngay !== null && t.so_ngay !== undefined ? `${t.so_ngay} ngày` : '-'}
+                          size="small"
+                          sx={{ height: 20, fontSize: '10px', fontWeight: 800, backgroundColor: '#ffebee', color: '#c62828' }}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#00897b' }}>{t.nv_bao_tri || '-'}</Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>{t.ly_do || t.mo_ta || t.tinh_trang || '-'}</Typography>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {(!empDetails?.clpn7n_tickets || empDetails.clpn7n_tickets.length === 0) && (
+                    <TableRow>
+                      <TableCell colSpan={8} align="center" sx={{ py: 3, color: '#5f6368' }}>
+                        Không có phiếu CLPN 7N TK trong khoảng thời gian này
                       </TableCell>
                     </TableRow>
                   )}

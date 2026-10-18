@@ -5,6 +5,7 @@ export { AdminSlideEditModal } from './AdminSlideEditModal';
 export { DetailModal } from './DetailModal';
 export { BtDetailModal } from './BtDetailModal';
 export { Clps7nDetailModal } from './Clps7nDetailModal';
+export { Clpn7nTkDetailModal } from './Clpn7nTkDetailModal';
 export { AuthModal } from './AuthModal';
 export { UserDeleteModal } from './UserDeleteModal';
 export { HrDeleteModal } from './HrDeleteModal';

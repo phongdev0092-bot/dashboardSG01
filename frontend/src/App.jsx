@@ -28,6 +28,7 @@ import {
   DetailModal,
   BtDetailModal,
   Clps7nDetailModal,
+  Clpn7nTkDetailModal,
   AuthModal,
   UserDeleteModal,
   HrDeleteModal,
@@ -183,6 +184,7 @@ export default function App() {
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [btDetailModalOpen, setBtDetailModalOpen] = useState(false);
   const [clps7nDetailModalOpen, setClps7nDetailModalOpen] = useState(false);
+  const [clpn7nTkDetailModalOpen, setClpn7nTkDetailModalOpen] = useState(false);
 
   // ================= LỊCH TRỰC SYSTEM STATES =================
   const [ltTab, setLtTab] = useState('dashboard'); // 'dashboard' | 'chitiet'
@@ -331,7 +333,7 @@ export default function App() {
 
   // Data Base Dataset Import States
   const [dbCounts, setDbCounts] = useState({ kh_cls: 0, cll30n: 0, ton_tk: 0, ton_bt: 0 });
-  const [importTarget, setImportTarget] = useState('kh_cls'); // 'kh_cls', 'cll30n', 'ton_tk', 'ton_bt'
+  const [importTarget, setImportTarget] = useState('cll30n'); // 'cll30n', 'tk', 'bt', 'ton_tk', 'ton_bt'
   const [importRule, setImportRule] = useState('MERGE_NO_OVERWRITE');
   const [dbFile, setDbFile] = useState(null);
   const [dbUploading, setDbUploading] = useState(false);
@@ -1882,6 +1884,7 @@ export default function App() {
                 fetchDichVu={fetchDichVu}
                 setBtDetailModalOpen={setBtDetailModalOpen}
                 setClps7nDetailModalOpen={setClps7nDetailModalOpen}
+                setClpn7nTkDetailModalOpen={setClpn7nTkDetailModalOpen}
                 datePreset={datePreset}
                 setDatePreset={setDatePreset}
                 handleDatePreset={handleDatePreset}
@@ -2121,6 +2124,15 @@ export default function App() {
           open={clps7nDetailModalOpen}
           onClose={() => setClps7nDetailModalOpen(false)}
           summary={summary}
+        />
+
+        {/* CLPN 7N TK DETAILS MODAL */}
+        <Clpn7nTkDetailModal
+          open={clpn7nTkDetailModalOpen}
+          onClose={() => setClpn7nTkDetailModalOpen(false)}
+          summary={summary}
+          startDate={startDate}
+          endDate={endDate}
         />
 
         {/* EMPLOYEE TICKET DETAILS DRAWER */}
